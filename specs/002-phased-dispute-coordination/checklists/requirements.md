@@ -6,7 +6,7 @@
 
 ## Content Quality
 
-- [x] No implementation details (languages, frameworks, APIs)
+- [x] No ad-hoc implementation details (does not prohibit documented fixed technical constraints; prohibits undocumented implementation choices)
 - [x] Focused on user value and business needs
 - [x] Written for non-technical stakeholders
 - [x] All mandatory sections completed
@@ -27,7 +27,7 @@
 - [x] All functional requirements have clear acceptance criteria
 - [x] User scenarios cover primary flows
 - [x] Feature meets measurable outcomes defined in Success Criteria
-- [x] No implementation details leak into specification
+- [x] No ad-hoc implementation details leak into specification (fixed project constraints such as Rust, nostr-sdk v0.44.1, SQLite are permitted)
 
 ## Notes
 

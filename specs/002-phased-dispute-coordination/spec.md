@@ -44,6 +44,10 @@ Across all phases, the following invariants hold:
 ### Session 2026-04-16
 
 - Q: What does "initiator" mean in notification content — pubkey, identity, or trade role? → A: Initiator means the trade role (buyer or seller) as provided in the `initiator` tag of Mostro's kind 38386 dispute event. The initiator's pubkey MUST NOT be included in notifications to preserve privacy. Solvers learn pubkeys only after taking the dispute via Mostro's `admin-took-dispute` flow.
+- Q: Should Phase 1 queue failed notifications for later delivery or only log failures? → A: Phase 1 logs failures only, no queuing or retry. New disputes detected after reconnection are notified normally. Notification queuing may be introduced in later phases if needed.
+- Q: How should Cancerbero behave when SQLite persistence fails during deduplication? → A: Cancerbero halts notifications when SQLite is unreadable and resumes when persistence recovers. Deduplication integrity is prioritized over delivery.
+- Q: Should Phase 2 require solver status queries via encrypted Nostr DMs? → A: No. Phase 2 tracks state internally and surfaces it passively in re-notifications and assignment update notifications. No interactive query protocol is required.
+- Q: Should success criteria avoid invented KPI-style percentages? → A: Yes. Success criteria are rewritten as testable behavioral pass/fail properties. No invented percentages without empirical basis.
 
 ## Technical Constraints
 
@@ -137,8 +141,8 @@ dispute in Mostro and verifying Cancerbero transitions its state to
 
 1. **Given** Cancerbero has detected and notified solvers about a
    dispute,
-   **When** a solver queries the dispute status,
-   **Then** Cancerbero responds with the current lifecycle state
+   **When** Cancerbero sends a re-notification or assignment update,
+   **Then** the message includes the current lifecycle state
    (new, notified, taken, waiting, escalated, or resolved), the
    dispute identifier, and time elapsed since creation.
 
@@ -149,10 +153,11 @@ dispute in Mostro and verifying Cancerbero transitions its state to
    suppresses further notifications for that dispute.
 
 3. **Given** a dispute has been taken by a solver,
-   **When** another solver queries the status,
-   **Then** Cancerbero responds indicating the dispute is taken and
-   by whom, without exposing private details of the dispute parties
-   beyond what is necessary for coordination.
+   **When** Cancerbero detects the assignment,
+   **Then** Cancerbero sends an assignment notification to all
+   registered solvers indicating the dispute is taken, without
+   exposing private details of the dispute parties beyond what is
+   necessary for coordination.
 
 4. **Given** a dispute remains in "notified" state beyond a
    configurable timeout,
@@ -277,8 +282,8 @@ regardless of which backend generated the classification.
    **When** a dispute requires classification or mediation support,
    **Then** the reasoning request is routed through a defined
    interface that accepts structured input and returns structured
-   output (classification, confidence, suggested actions, reasoning
-   trace).
+   output (classification, confidence, suggested actions, structured
+   rationale).
 
 2. **Given** the reasoning backend returns a suggestion,
    **When** Cancerbero's policy layer receives the output,
@@ -297,8 +302,9 @@ regardless of which backend generated the classification.
 
 - What happens when the Nostr relay is unreachable during
   notification? Cancerbero retries reconnection with backoff and
-  logs the failure. Notifications are queued and sent once
-  connectivity is restored.
+  logs the failure. In Phase 1, failed notifications are logged but
+  not queued for retry. New disputes detected after reconnection are
+  notified normally.
 
 - What happens when Cancerbero restarts and there are disputes it
   previously detected but did not finish processing? On startup,
@@ -335,9 +341,9 @@ sends an encrypted notification to all registered solvers.
 - Cancerbero MUST run as a long-lived daemon process.
 - It MUST connect to the configured Nostr relay(s) on startup and
   maintain persistent subscriptions.
-- It MUST subscribe to Mostro dispute events using filters scoped to
-  the configured Mostro instance's public key and the relevant event
-  kinds for disputes.
+- It MUST subscribe to Mostro dispute events filtered to kind 38386,
+  the configured Mostro instance's public key, and the required tags
+  (`z` = `dispute`, `s` = `initiated`).
 - If a relay connection drops, Cancerbero MUST attempt reconnection
   with backoff and resume listening without manual intervention.
 
@@ -453,13 +459,16 @@ State transitions MUST be persisted in SQLite with timestamps.
   unattended.
 - Re-notification frequency MUST be configurable.
 
-#### Status Queries
+#### Status Visibility
 
-- Solvers MUST be able to query Cancerbero for the current state of
-  a dispute via encrypted Nostr direct messages.
-- Responses MUST include only the minimum information necessary for
-  coordination: dispute ID, current state, time elapsed, and
-  assigned solver identity (if taken).
+- Phase 2 does NOT require an interactive solver query protocol.
+- Cancerbero MUST surface dispute status passively: through
+  re-notification messages (which include current state) and through
+  assignment update notifications.
+- Solvers learn dispute status from the notifications they receive,
+  not by querying Cancerbero directly.
+- An interactive query protocol may be introduced in a later phase
+  if justified.
 
 #### Persistence (Phase 2)
 
@@ -577,8 +586,9 @@ richer coordination workflows.
 - Cancerbero's policy layer owns all decisions about escalation
   routing, permissions, and dispute authority.
 - The reasoning backend provides advisory outputs: classification,
-  confidence scores, suggested mediation responses, and escalation
-  summaries.
+  confidence scores, suggested mediation responses, structured
+  rationale (key factors and reasons for the classification), and
+  escalation summaries.
 - The policy layer MUST independently validate all reasoning output
   before acting on it.
 
@@ -598,7 +608,8 @@ The reasoning backend MUST produce structured outputs containing:
 - Classification (dispute category)
 - Confidence score
 - Suggested actions
-- Reasoning trace
+- Structured rationale (key factors considered and reasons for the
+  classification — not a full execution trace)
 - Flags (fraud-risk, conflicting-claims, low-info)
 
 #### Fallback Behavior
@@ -714,9 +725,9 @@ specification amendments that preserve constitutional constraints.
 
 ### Phase 1 Acceptance Criteria
 
-- **SC-001**: Solvers receive dispute notifications within 30 seconds
-  of a new dispute event being published, at least 99% of the time
-  when relays are reachable.
+- **SC-001**: When relays are reachable, solvers receive dispute
+  notifications within 30 seconds of a new dispute event being
+  published.
 
 - **SC-002**: No dispute is notified more than once for the same
   detection (zero duplicate notifications).
@@ -735,8 +746,9 @@ specification amendments that preserve constitutional constraints.
 
 ### Phase 2 Success Criteria
 
-- **SC-007**: Solvers can determine whether a dispute is already
-  being handled before deciding to act.
+- **SC-007**: Solvers receive assignment notifications that indicate
+  when a dispute has been taken, so they can determine whether a
+  dispute is already being handled.
 
 - **SC-008**: Once a solver takes a dispute, further notifications
   for that dispute are suppressed.
@@ -746,9 +758,11 @@ specification amendments that preserve constitutional constraints.
 
 ### Phase 3 Success Criteria
 
-- **SC-010**: At least 30% of coordination-type disputes reach a
-  cooperative resolution suggestion without requiring direct solver
-  intervention.
+- **SC-010**: Coordination-type disputes (payment delays,
+  unresponsive counterparties, process confusion) that receive
+  cooperative responses from both parties result in a resolution
+  suggestion delivered to the assigned solver without requiring
+  direct solver intervention in the mediation flow.
 
 - **SC-011**: Cancerbero never presents itself as the final authority
   in any user-facing message.
@@ -759,8 +773,10 @@ specification amendments that preserve constitutional constraints.
   indicators, or low confidence are escalated to a write-permission
   solver — zero autonomous closures.
 
-- **SC-013**: Solvers receiving escalation summaries can understand
-  the dispute context within 2 minutes of reading the summary.
+- **SC-013**: Escalation summaries include all required fields
+  (dispute ID, timeline, party claims, mediation actions, escalation
+  reason, confidence assessment) so that a solver can act on the
+  dispute without requesting additional context from Cancerbero.
 
 ### Phase 5 Success Criteria
 
@@ -777,7 +793,7 @@ specification amendments that preserve constitutional constraints.
 |--------------------------------|-----------------------------------------------------------|
 | All relays unreachable         | Cancerbero retries reconnection; logs degraded mode       |
 | Single relay drops             | Continues on remaining relays; reconnects dropped relay   |
-| SQLite write failure           | Logs error; continues attempting; does not crash          |
+| SQLite read/write failure      | Halts notifications; logs error; retries SQLite access. Resumes notification when persistence recovers. Deduplication integrity is prioritized over delivery. |
 | Notification delivery failure  | Logs failure in SQLite; does not retry in Phase 1         |
 | Reasoning backend unavailable  | Falls back to immediate operator escalation (Phase 5)     |
 | Cancerbero fully offline       | Mostro operates normally; solvers resolve manually        |
