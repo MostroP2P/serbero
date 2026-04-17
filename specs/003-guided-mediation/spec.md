@@ -242,10 +242,11 @@ the same prompt bundle.
    `coordination_failure_resolvable`,
    **When** Serbero runs the summarization step,
    **Then** the reasoning provider's structured response is persisted
-   to `mediation_summaries`, a gift-wrapped DM is sent to every
-   configured solver via the Phase 1/2 notifier with a Phase 3
-   notification type (e.g. `mediation_summary`), and the session
-   transitions to `summary_delivered`.
+   to `mediation_summaries`, a gift-wrapped DM is sent via the
+   Phase 1/2 notifier following the routing model defined in
+   "Solver-Facing Routing" below (targeted to the assigned solver if
+   one exists, broadcast to all configured solvers otherwise), and the
+   session transitions to `summary_delivered`.
 
 2. **Given** the summary has been delivered,
    **When** Serbero runs any further mediation logic for the same
@@ -484,9 +485,19 @@ provider.
   decrypted content that was actually wrapped, the outbound event id,
   and the prompt bundle that produced it.
 
-- **FR-120**: Serbero MUST log the classification, confidence score,
-  and rationale fields returned by the reasoning provider alongside
-  the prompt-bundle reference used to produce them.
+- **FR-120**: Serbero MUST emit, in general application logs, only
+  the classification label, the confidence score, and a reference id
+  (content-addressed hash or session-scoped rationale id) pointing to
+  the full rationale. The full rationale text returned by the
+  reasoning provider MUST NOT be written to general logs; it MUST be
+  persisted to a controlled audit store (a dedicated SQLite table is
+  the default — see the Mediation Memory Model section) alongside the
+  session id, `prompt_bundle_id`, `policy_hash`, and provider/model
+  identifiers, with the log-side reference id linking back to the
+  stored rationale. This protects against accidentally leaking
+  dispute details, party statements, or PII into aggregate log
+  streams while preserving the full evidence trail for operator
+  review.
 
 ### Key Entities *(include if feature involves data)*
 
@@ -519,6 +530,16 @@ provider.
   session id, event kind, payload (structured, reference-only — no
   large free-text blobs), timestamp.
 
+- **ReasoningRationale**: A controlled audit store for the full,
+  unredacted rationale text returned by the reasoning provider, kept
+  separate from general application logs (see FR-120). Key
+  attributes: rationale id (content-addressed hash and/or
+  session-scoped id — the same id that appears in general logs),
+  session id, provider name, model identifier, `policy_hash`,
+  `prompt_bundle_id`, rationale text, generated-at timestamp. Access
+  MUST be operator-scoped; general log readers MUST see only the
+  reference id.
+
 - **PromptBundle**: The versioned set of prompt and policy files
   loaded at daemon startup (or on demand). Not a DB table per se, but
   its content hash MUST be referenced from every MediationSession.
@@ -533,65 +554,90 @@ provider.
 
 This section is normative. It expands TC-101.
 
-- Serbero MUST derive a per-party shared key using ECDH between its
-  own configured Nostr secret key and the counterparty's pubkey, for
-  each party in a mediation session (buyer and seller).
-- Serbero MUST reconstruct that shared key as Nostr `Keys` material
-  and address outbound mediation events to the shared public key, not
-  to the party's own pubkey.
-- Outbound mediation content MUST be wrapped as a NIP-44-encrypted
+The Mostro chat transport is defined by Mostro's own protocol and its
+solver-take flow. It is NOT a generic ECDH shortcut between Serbero's
+identity and a party's pubkey. Implementers MUST follow the
+protocol-defined flow and the Mostrix reference implementation; any
+apparent simplification that skips the take-dispute handshake is a
+protocol violation and MUST be rejected in review.
+
+- **Shared-key material is obtained through the Mostro-defined
+  solver-take flow**, not invented by Serbero. When Serbero, acting
+  with its registered solver identity, takes a dispute through
+  Mostro, the protocol establishes the shared-key context required to
+  address party chat messages for that dispute. The concrete flow —
+  including which key material is exchanged, how it is tied to the
+  dispute and the counterparties, and how both sides reconstruct a
+  chat-addressing key — is the one implemented in Mostrix's
+  `src/util/order_utils/execute_take_dispute.rs` and documented in
+  `https://mostro.network/protocol/chat.html`. Serbero MUST follow
+  that flow; it MUST NOT derive a chat-addressing key from a
+  standalone ECDH between its own secret key and a party pubkey as a
+  generic shortcut.
+- **Outbound messages are addressed to the shared pubkey produced by
+  the protocol**, not to a party's own pubkey. Serbero reconstructs
+  the protocol-provided shared-key material as Nostr `Keys` (matching
+  Mostrix's `chat_utils.rs`) and uses that keypair for addressing and
+  signing the inner event, per protocol/chat.html.
+- **Outbound mediation content MUST be wrapped as a NIP-44-encrypted
   inner event (`kind 1`) embedded in a NIP-59 gift-wrap
-  (`kind 1059`), with a `p` tag pointing at the shared pubkey. This
-  matches the pattern implemented in Mostrix's
-  `src/util/chat_utils.rs`.
-- On the inbound path, Serbero MUST: fetch gift-wraps addressed to the
-  shared pubkey, decrypt with the shared key, parse and verify the
-  inner event, and treat the inner event's content and `created_at`
-  as authoritative mediation-session facts.
+  (`kind 1059`)** with a `p` tag pointing at the shared pubkey, as
+  modeled in Mostrix's `src/util/chat_utils.rs`.
+- **On the inbound path**, Serbero MUST: fetch gift-wraps addressed
+  to the shared pubkey, decrypt with the shared-key material
+  established by the take flow, parse and verify the inner event, and
+  treat the inner event's content and `created_at` as authoritative
+  mediation-session facts.
 - The outer gift-wrap's timestamp MUST NOT be used as a session-fact
   timestamp. All mediation ordering, round counting, and timeout
   evaluation MUST be driven by inner-event timestamps.
 - Direct DMs to a party's primary pubkey MUST NOT be used for
   mediation content. Solver-facing DMs (Phase 1/2 notifications) are
   unrelated and continue to use the Phase 1/2 notifier unchanged.
+- If Serbero has not completed the Mostro-defined solver-take flow
+  for a dispute (e.g. another solver took it first, or the flow
+  failed), Serbero MUST NOT address mediation messages for that
+  dispute. In that case the dispute is handled by the human solver
+  via Mostro; Phase 3 transitions the session to `superseded_by_human`
+  or closes it without sending party messages.
 
 ## Reasoning Provider Configuration
 
-This section is normative. It expands TC-102, TC-105, and FR-102
-through FR-104.
+This section is normative and expands TC-102, TC-105, and
+FR-102–FR-104. The mandatory configuration fields (provider, model,
+API base URL, credential source, request timeout, retry / failure
+behavior) are defined in FR-104 and are not restated here.
 
-- The daemon MUST accept a reasoning provider configuration consisting
-  of at minimum: provider name (`openai`, `anthropic`,
-  `openai-compatible`, etc.), model identifier, API base URL when
-  applicable, credential source (environment variable name), request
-  timeout in seconds, and failure / retry behavior.
-- Provider-specific request shaping MAY live behind a small provider
-  abstraction in code, but the mediation call sites MUST NOT switch
-  on provider-specific types; they see a single "reasoning request →
-  reasoning response" shape.
-- Credentials MUST NOT be stored in `config.toml` directly. The config
-  references an environment variable name, and the operator supplies
-  the credential via the environment (or a secrets mechanism that
-  populates the environment).
-- If the provider is absent, unreachable, or returns malformed output,
-  mediation MUST NOT fabricate classifications, summaries, or
-  messages. Bounded retry is allowed per the failure-behavior config;
-  if the bound is exhausted, the session escalates with trigger
-  `reasoning_unavailable`.
-- A provider health check SHOULD run at startup and whenever the
-  config is reloaded, so unreachability surfaces before an actual
-  mediation session is impacted.
+- **Provider abstraction boundary**: provider-specific request
+  shaping MAY live behind a small provider adapter in code, but the
+  mediation call sites MUST NOT switch on provider-specific types —
+  they see a single "reasoning request → reasoning response" shape.
+  A new provider is added by writing an adapter, not by editing
+  mediation logic.
+- **Credentials**: MUST NOT be stored in `config.toml` directly. The
+  config references an environment variable name (`api_key_env`);
+  the operator supplies the credential via the environment or a
+  secrets mechanism that populates the environment.
+- **Failure behavior**: if the provider is absent, unreachable, or
+  returns malformed output, mediation MUST NOT fabricate
+  classifications, summaries, or messages. Bounded retry is allowed
+  per the failure-behavior config; if the bound is exhausted, the
+  session escalates with trigger `reasoning_unavailable`.
+- **Health checks**: a provider health check SHOULD run at startup
+  and whenever the configuration is reloaded, so unreachability
+  surfaces before it impacts an actual mediation session.
 
 ## Instruction and Policy Storage
 
-This section is normative. It expands TC-103 and FR-105–FR-106.
+This section is normative and expands TC-103 and FR-105–FR-106. The
+core "versioned files are the source of truth" rule is stated in
+those requirements and is not restated here.
 
-- The repository MUST contain a `prompts/` (or similarly named)
-  directory with versioned files covering at least: system
-  instructions and mediator identity, classification criteria,
-  escalation policy, message templates, mediation style and tone,
-  honesty and uncertainty rules.
-- Example structure:
+- **Repository layout**: the repository MUST contain a `prompts/`
+  (or similarly named) directory with versioned files covering at
+  least: system instructions and mediator identity, classification
+  criteria, escalation policy, message templates, mediation style
+  and tone, and honesty / uncertainty rules. Example:
 
   ```text
   prompts/
@@ -602,18 +648,15 @@ This section is normative. It expands TC-103 and FR-105–FR-106.
     phase3-mediation-style.md
   ```
 
-- The daemon MUST compute a deterministic `policy_hash` over the
-  exact bytes of the bundle it loaded at session start, and MUST
-  store this hash alongside every `MediationSession`, `MediationEvent`,
-  and `MediationSummary` row that it produces during that session.
-- SQLite MAY store lightweight references such as
-  `instructions_version`, `policy_hash`, and `prompt_bundle_id`, but
-  MUST NOT become the primary source of truth for the prompt and
-  policy contents.
-- Rationale: auditability, git reviewability, deterministic behavior
-  control, and easier PR review and diffing of behavioral changes.
-  These properties are lost when behavior is primarily stored in a
-  database.
+- **Bundle hashing and pinning**: the daemon MUST compute a
+  deterministic `policy_hash` over the exact bytes of the bundle it
+  loaded at session start, and MUST store that hash alongside every
+  `MediationSession`, `MediationEvent`, and `MediationSummary` row it
+  produces during that session.
+- **Why files, not DB**: committed prompt files are auditable and
+  git-reviewable, diffable in PRs, and deterministically reconstructable
+  from history alone. Primary-sourcing these artifacts from the
+  database erases every one of those properties.
 
 ## Mediation Memory Model
 
@@ -685,6 +728,42 @@ explicit behavioral and authority boundaries.
   layer (code + prompt files), not in the model alone. "The model
   will handle it" is not an acceptable control.
 
+## Solver-Facing Routing
+
+Phase 3 solver-facing notifications (progress updates, cooperative
+summaries, escalation recommendations) use the Phase 1/2 notifier but
+follow a single, explicit routing rule, resolving the ambiguity
+between "the assigned solver" and "every configured solver":
+
+- **If the underlying dispute has a Phase 2 `assigned_solver` set**
+  (Phase 2 recorded an `s=in-progress` assignment event and captured
+  the taking solver's pubkey), all Phase 3 solver-facing DMs for that
+  dispute MUST route ONLY to that assigned solver. A human has taken
+  ownership; broadcasting Phase 3 output to every configured solver
+  at that point is noise.
+- **If the underlying dispute has no `assigned_solver` yet**, Phase 3
+  solver-facing DMs MUST be broadcast to every configured solver via
+  the Phase 1/2 notifier, mirroring how Phase 1/2 handles initial and
+  re-notifications. There is no separate "assigned solver" concept
+  for Phase 3 prior to Phase 2 assignment.
+- **`MediationSession.assigned_solver`** is a mirror of the Phase 2
+  `disputes.assigned_solver` column at the time the routing decision
+  is made. Phase 3 does not introduce an independent assignment.
+- **Escalation-recommendation notifications** follow the same rule:
+  broadcast while unassigned, targeted once assigned. When Phase 4 is
+  deployed, it MAY additionally re-route escalation handoffs to
+  write-permission solvers — that routing layer is Phase 4's
+  responsibility and sits on top of this rule, not in place of it.
+- **Re-routing on assignment change**: if a dispute gains an
+  `assigned_solver` while a mediation session is open, subsequent
+  Phase 3 solver-facing DMs MUST switch from broadcast to targeted.
+  Already-delivered broadcasts are not recalled.
+
+Every reference to "the assigned solver" elsewhere in this spec
+resolves through this section. US3 Scenario 1, FR-112, FR-113, the
+`assigned solver reference` attribute in the `MediationSession`
+entity, and any later reference all use the same rule.
+
 ## Solver Identity and Authorization
 
 - Serbero MUST act under a Nostr keypair loaded from config (same
@@ -695,14 +774,36 @@ explicit behavioral and authority boundaries.
   `read` permission *before* Phase 3 starts mediating.
 - Registration is an operator action outside Serbero's scope. Serbero
   MUST NOT attempt to grant, elevate, or repair its own permission.
-- If the precondition cannot be confirmed at startup (for example, a
-  startup-time verification via Mostro fails or returns no solver
-  record for Serbero's pubkey), Serbero MUST log an actionable error
-  and refuse to open any mediation session. Phase 1/2 behavior is
-  unaffected.
+- If the precondition cannot be confirmed (the startup verification
+  against Mostro fails or returns no solver record for Serbero's
+  pubkey), Serbero MUST log an actionable ERROR-level message,
+  refuse to open any new mediation session, and enter a bounded
+  revalidation loop. The loop MUST:
+  - run an immediate verification attempt at daemon startup;
+  - re-run verification on any operator-triggered configuration
+    reload;
+  - otherwise retry on a truncated exponential backoff starting at
+    `solver_auth_retry_initial_seconds` (default 60) and doubling up
+    to `solver_auth_retry_max_interval_seconds` (default 3600);
+  - terminate after the first of
+    `solver_auth_retry_max_total_seconds` (default 86400) or
+    `solver_auth_retry_max_attempts` (default 24) is exceeded, at
+    which point Serbero MUST stop retrying and emit a terminal
+    WARN-or-higher alert explicitly recommending operator action;
+  - run entirely in the background: Phase 1/2 detection, notification,
+    and re-notification MUST remain fully operational throughout the
+    retry window and after termination.
+  If revalidation succeeds at any point — Mostro returns a valid
+  solver record for Serbero's pubkey with at least `read` permission
+  — Serbero resumes normal Phase 3 operation without requiring a
+  restart and MAY open mediation sessions for disputes that are still
+  in a mediation-eligible state.
 - If solver permission is revoked mid-session, outbound mediation
   traffic will fail or be rejected. Serbero MUST treat this as
-  `authorization_lost` and escalate the session.
+  `authorization_lost` and escalate the affected session; it MUST
+  also re-enter the revalidation loop described above rather than
+  silently continuing to attempt mediation on unaffected sessions
+  under presumed-good permission.
 
 ## Configuration Surface
 
