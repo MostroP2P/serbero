@@ -1,16 +1,16 @@
 <p align="center">
-  <img src="cancerbero.jpg" alt="Cancerbero" width="400">
+  <img src="serbero.jpg" alt="Serbero" width="400">
 </p>
 
-# Cancerbero
+# Serbero
 
 Dispute coordination, notification, and assistance system for the [Mostro](https://mostro.network/) ecosystem.
 
-Cancerbero helps operators and users handle disputes more quickly, more consistently, and with better visibility — without expanding the system's fund-risk surface.
+Serbero helps operators and users handle disputes more quickly, more consistently, and with better visibility — without expanding the system's fund-risk surface.
 
 ## What It Does
 
-Cancerbero sits alongside Mostro as a coordination layer that:
+Serbero sits alongside Mostro as a coordination layer that:
 
 - **Detects disputes** by subscribing to Mostro's dispute events on Nostr relays.
 - **Notifies operators** promptly via encrypted gift-wrap messages, with re-notification and escalation when disputes go unattended.
@@ -20,15 +20,15 @@ Cancerbero sits alongside Mostro as a coordination layer that:
 
 ## What It Does Not Do
 
-Cancerbero never moves funds. It cannot sign `admin-settle` or `admin-cancel`, and it is never granted credentials that would allow it to do so. Dispute closure authority belongs to Mostro and its human operators.
+Serbero never moves funds. It cannot sign `admin-settle` or `admin-cancel`, and it is never granted credentials that would allow it to do so. Dispute closure authority belongs to Mostro and its human operators.
 
-Mostro operates normally with or without Cancerbero. If Cancerbero is offline, operators continue resolving disputes manually as they always have.
+Mostro operates normally with or without Serbero. If Serbero is offline, operators continue resolving disputes manually as they always have.
 
 ## Architecture
 
 ```
 ┌─────────────┐       Nostr Events        ┌─────────────────┐
-│   Mostro    │ ──────────────────────────>│   Cancerbero    │
+│   Mostro    │ ──────────────────────────>│   Serbero    │
 │             │                            │                 │
 │  - Escrow   │                            │  - Detection    │
 │  - Settle   │       Gift Wraps           │  - Notification │
@@ -45,7 +45,7 @@ Mostro operates normally with or without Cancerbero. If Cancerbero is offline, o
 ```
 
 - **Mostro** owns escrow state, permissions, and dispute-closing authority.
-- **Cancerbero** owns notification, coordination, assistance, and escalation support.
+- **Serbero** owns notification, coordination, assistance, and escalation support.
 - The **reasoning backend** (direct API by default, OpenClaw optional) is behind a defined interface and replaceable without changing core logic.
 
 ## Technical Constraints
@@ -56,7 +56,7 @@ Mostro operates normally with or without Cancerbero. If Cancerbero is offline, o
 
 ## Project Principles
 
-Cancerbero is governed by a [constitution](.specify/memory/constitution.md) that defines non-negotiable rules. The key principles:
+Serbero is governed by a [constitution](.specify/memory/constitution.md) that defines non-negotiable rules. The key principles:
 
 1. **Fund Isolation First** — never touch funds or sign dispute-closing actions
 2. **Protocol-Enforced Security** — safety boundaries enforced by Mostro, not by prompts or model behavior
@@ -64,7 +64,7 @@ Cancerbero is governed by a [constitution](.specify/memory/constitution.md) that
 4. **Operator Notification as Core** — detecting and notifying operators is a primary responsibility, not a secondary feature
 5. **Assistance Without Authority** — assist and guide, never impose outcomes
 6. **Auditability by Design** — every action, classification, and state transition is logged
-7. **Graceful Degradation** — Mostro works fine without Cancerbero
+7. **Graceful Degradation** — Mostro works fine without Serbero
 8. **Privacy by Default** — minimum necessary information to each participant
 9. **Nostr-Native Coordination** — encrypted messaging first, external integrations second
 10. **Portable Reasoning Backends** — no lock-in to any single AI provider or runtime
@@ -78,4 +78,4 @@ Early development. The initial specification covers dispute detection, operator 
 
 ## License
 
-Cancerbero is licensed under the [MIT License](LICENSE).
+Serbero is licensed under the [MIT License](LICENSE).
