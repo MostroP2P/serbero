@@ -15,7 +15,8 @@ Stores detected dispute events. Primary deduplication table.
 |-----------------|---------|--------------------------|--------------------------------------------------|
 | dispute_id      | TEXT    | PRIMARY KEY              | From `d` tag of kind 38386 event                 |
 | event_id        | TEXT    | NOT NULL, UNIQUE         | Nostr event ID                                   |
-| mostro_pubkey   | TEXT    | NOT NULL                 | Mostro instance pubkey (from `y` tag)            |
+| mostro_pubkey   | TEXT    | NOT NULL                 | Mostro pubkey from the dispute event `pubkey` field |
+| mostro_instance_name | TEXT | NULL                 | Optional Mostro instance name from `y[2]`        |
 | initiator_role  | TEXT    | NOT NULL                 | "buyer" or "seller" (from `initiator` tag)       |
 | dispute_status  | TEXT    | NOT NULL DEFAULT 'initiated' | From `s` tag: "initiated", "in-progress"     |
 | event_timestamp | INTEGER | NOT NULL                 | Unix timestamp from the Nostr event              |
