@@ -48,7 +48,14 @@ async fn detects_new_dispute_and_notifies_all_solvers() {
 
     let ts = event.created_at.as_secs().to_string();
     for (label, listener) in [("A", &solver_a), ("B", &solver_b)] {
-        let msg = listener.messages().await.pop().unwrap();
+        let msgs = listener.messages().await;
+        // Assert the INITIAL notification (first message), not the most
+        // recent — if something ever causes a spurious extra message we
+        // want the test to surface that rather than silently pop it.
+        let msg = msgs
+            .first()
+            .cloned()
+            .unwrap_or_else(|| panic!("solver {label} received no messages"));
         assert!(
             msg.contains("dispute-001"),
             "solver {label} missing dispute id: {msg}"

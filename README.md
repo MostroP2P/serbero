@@ -171,7 +171,7 @@ SERBERO_LOG=debug ./target/release/serbero
 SERBERO_LOG="serbero=debug,nostr_sdk=info" ./target/release/serbero
 ```
 
-Shut down with `Ctrl-C` — Serbero handles `SIGINT`/`SIGTERM` cooperatively, aborts the re-notification timer, and exits cleanly.
+Shut down with `Ctrl-C` (SIGINT). On Unix hosts Serbero also catches SIGTERM (so `systemctl stop`, `kill`, and container shutdowns work). Both paths abort the re-notification timer and exit cleanly.
 
 ### Verify Phase 1
 

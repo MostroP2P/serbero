@@ -89,9 +89,14 @@ pub enum LifecycleState {
 impl LifecycleState {
     pub fn can_transition_to(self, next: LifecycleState) -> bool {
         use LifecycleState::*;
+        // `(New, Taken)` is intentionally allowed: it covers the race where
+        // a solver takes the dispute via Mostro before Serbero has managed
+        // to deliver its initial notification (or before any notification
+        // succeeded and moved the dispute to `Notified`).
         matches!(
             (self, next),
             (New, Notified)
+                | (New, Taken)
                 | (New, Resolved)
                 | (Notified, Notified)
                 | (Notified, Taken)
@@ -147,6 +152,7 @@ mod tests {
     fn allowed_transitions_pass() {
         use LifecycleState::*;
         assert!(New.can_transition_to(Notified));
+        assert!(New.can_transition_to(Taken));
         assert!(Notified.can_transition_to(Notified));
         assert!(Notified.can_transition_to(Taken));
         assert!(Taken.can_transition_to(Waiting));
@@ -159,8 +165,12 @@ mod tests {
         use LifecycleState::*;
         assert!(!Resolved.can_transition_to(Notified));
         assert!(!Taken.can_transition_to(New));
-        assert!(!New.can_transition_to(Taken));
         assert!(!Resolved.can_transition_to(Escalated));
+        // Self-transitions are rejected unless explicitly allowed
+        // (only Notified→Notified is permitted, for re-notification).
+        assert!(!Resolved.can_transition_to(Resolved));
+        assert!(!Taken.can_transition_to(Taken));
+        assert!(!New.can_transition_to(New));
     }
 
     #[test]

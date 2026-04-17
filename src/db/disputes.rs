@@ -77,7 +77,11 @@ pub fn set_lifecycle_state(
             )))
         }
     };
-    if from != new_state && !from.can_transition_to(new_state) {
+    // Delegate every case (including self-transitions) to the state
+    // machine so only explicitly allowed transitions succeed —
+    // e.g. Notified→Notified is permitted for re-notify, but
+    // Resolved→Resolved is not.
+    if !from.can_transition_to(new_state) {
         return Err(Error::InvalidStateTransition {
             from: from.to_string(),
             to: new_state.to_string(),
@@ -106,28 +110,50 @@ pub fn set_lifecycle_state(
 }
 
 pub fn set_assigned_solver(conn: &Connection, dispute_id: &str, solver_pubkey: &str) -> Result<()> {
-    conn.execute(
+    let affected = conn.execute(
         "UPDATE disputes SET assigned_solver = ?1 WHERE dispute_id = ?2",
         params![solver_pubkey, dispute_id],
     )?;
+    if affected == 0 {
+        return Err(Error::InvalidEvent(format!(
+            "dispute {dispute_id} not found when setting assigned_solver"
+        )));
+    }
     Ok(())
 }
 
 pub fn update_last_notified_at(conn: &Connection, dispute_id: &str, ts: i64) -> Result<()> {
-    conn.execute(
+    let affected = conn.execute(
         "UPDATE disputes SET last_notified_at = ?1 WHERE dispute_id = ?2",
         params![ts, dispute_id],
     )?;
+    if affected == 0 {
+        return Err(Error::InvalidEvent(format!(
+            "dispute {dispute_id} not found when updating last_notified_at"
+        )));
+    }
     Ok(())
+}
+
+/// Return the maximum `event_timestamp` across all stored disputes.
+/// Used on startup to resume the Nostr subscription from just before
+/// the last-seen event rather than dropping disputes that arrived
+/// while Serbero was offline.
+pub fn max_event_timestamp(conn: &Connection) -> Result<Option<i64>> {
+    let ts: Option<i64> =
+        conn.query_row("SELECT MAX(event_timestamp) FROM disputes", [], |row| {
+            row.get::<_, Option<i64>>(0)
+        })?;
+    Ok(ts)
 }
 
 fn row_to_dispute(row: &rusqlite::Row<'_>) -> rusqlite::Result<Dispute> {
     let initiator_role_str: String = row.get(3)?;
     let dispute_status_str: String = row.get(4)?;
     let lifecycle_state_str: String = row.get(7)?;
-    let parse_err = |field: &str, val: &str| {
+    let parse_err = |idx: usize, field: &str, val: &str| {
         rusqlite::Error::FromSqlConversionFailure(
-            0,
+            idx,
             rusqlite::types::Type::Text,
             Box::new(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
@@ -140,13 +166,13 @@ fn row_to_dispute(row: &rusqlite::Row<'_>) -> rusqlite::Result<Dispute> {
         event_id: row.get(1)?,
         mostro_pubkey: row.get(2)?,
         initiator_role: InitiatorRole::from_str(&initiator_role_str)
-            .map_err(|_| parse_err("initiator_role", &initiator_role_str))?,
+            .map_err(|_| parse_err(3, "initiator_role", &initiator_role_str))?,
         dispute_status: DisputeStatus::from_str(&dispute_status_str)
-            .map_err(|_| parse_err("dispute_status", &dispute_status_str))?,
+            .map_err(|_| parse_err(4, "dispute_status", &dispute_status_str))?,
         event_timestamp: row.get(5)?,
         detected_at: row.get(6)?,
         lifecycle_state: LifecycleState::from_str(&lifecycle_state_str)
-            .map_err(|_| parse_err("lifecycle_state", &lifecycle_state_str))?,
+            .map_err(|_| parse_err(7, "lifecycle_state", &lifecycle_state_str))?,
         assigned_solver: row.get(8)?,
         last_notified_at: row.get(9)?,
         last_state_change: row.get(10)?,

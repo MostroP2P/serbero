@@ -32,7 +32,13 @@ fn apply_env_overrides(config: &mut Config) {
 }
 
 fn non_empty_env(var: &str) -> Option<String> {
-    std::env::var(var).ok().filter(|v| !v.trim().is_empty())
+    // Return the trimmed value so callers like EnvFilter / hex parsers
+    // don't have to defend against accidental leading/trailing whitespace
+    // in shell exports.
+    std::env::var(var)
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
 }
 
 #[cfg(test)]
@@ -48,6 +54,30 @@ mod tests {
         std::env::remove_var("SERBERO_PRIVATE_KEY");
         std::env::remove_var("SERBERO_DB_PATH");
         std::env::remove_var("SERBERO_LOG");
+    }
+
+    /// RAII guard that holds the global env mutex and restores the env
+    /// on drop — including on test panic — so one flaky test cannot
+    /// poison the ENV_GUARD or leak vars into neighbouring tests.
+    struct EnvLock<'a> {
+        _guard: std::sync::MutexGuard<'a, ()>,
+    }
+
+    impl<'a> EnvLock<'a> {
+        fn new() -> Self {
+            let guard = match ENV_GUARD.lock() {
+                Ok(g) => g,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            clear_env();
+            Self { _guard: guard }
+        }
+    }
+
+    impl Drop for EnvLock<'_> {
+        fn drop(&mut self) {
+            clear_env();
+        }
     }
 
     fn write_tmp(contents: &str) -> tempfile::NamedTempFile {
@@ -83,8 +113,7 @@ renotification_check_interval_seconds = 30
 
     #[test]
     fn parses_full_valid_config() {
-        let _guard = ENV_GUARD.lock().unwrap();
-        clear_env();
+        let _lock = EnvLock::new();
         let f = write_tmp(VALID_CONFIG);
         let cfg = load_config(f.path()).expect("parse");
         assert_eq!(cfg.serbero.private_key, "aa11");
@@ -100,16 +129,25 @@ renotification_check_interval_seconds = 30
 
     #[test]
     fn env_overrides_apply() {
-        let _guard = ENV_GUARD.lock().unwrap();
-        clear_env();
+        let _lock = EnvLock::new();
         let f = write_tmp(VALID_CONFIG);
         std::env::set_var("SERBERO_PRIVATE_KEY", "env_override_key");
         std::env::set_var("SERBERO_DB_PATH", "/tmp/env.db");
         std::env::set_var("SERBERO_LOG", "debug");
         let cfg = load_config(f.path()).expect("parse");
-        clear_env();
         assert_eq!(cfg.serbero.private_key, "env_override_key");
         assert_eq!(cfg.serbero.db_path, "/tmp/env.db");
+        assert_eq!(cfg.serbero.log_level, "debug");
+    }
+
+    #[test]
+    fn env_overrides_are_trimmed() {
+        let _lock = EnvLock::new();
+        let f = write_tmp(VALID_CONFIG);
+        std::env::set_var("SERBERO_PRIVATE_KEY", "  abcd1234  ");
+        std::env::set_var("SERBERO_LOG", "  debug  ");
+        let cfg = load_config(f.path()).expect("parse");
+        assert_eq!(cfg.serbero.private_key, "abcd1234");
         assert_eq!(cfg.serbero.log_level, "debug");
     }
 
@@ -128,14 +166,12 @@ renotification_check_interval_seconds = 30
 
     #[test]
     fn empty_env_vars_are_ignored() {
-        let _guard = ENV_GUARD.lock().unwrap();
-        clear_env();
+        let _lock = EnvLock::new();
         let f = write_tmp(VALID_CONFIG);
         std::env::set_var("SERBERO_PRIVATE_KEY", "");
         std::env::set_var("SERBERO_DB_PATH", "   ");
         std::env::set_var("SERBERO_LOG", "");
         let cfg = load_config(f.path()).expect("parse");
-        clear_env();
         // File values survive when env vars are empty/whitespace.
         assert_eq!(cfg.serbero.private_key, "aa11");
         assert_eq!(cfg.serbero.db_path, "serbero.db");

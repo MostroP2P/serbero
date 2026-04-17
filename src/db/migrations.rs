@@ -2,6 +2,7 @@ use rusqlite::{params, Connection, Transaction};
 
 use crate::error::Result;
 
+#[cfg(test)]
 const CURRENT_SCHEMA_VERSION: i64 = 2;
 
 pub fn run_migrations(conn: &mut Connection) -> Result<()> {
@@ -11,11 +12,12 @@ pub fn run_migrations(conn: &mut Connection) -> Result<()> {
         );",
     )?;
 
+    // Propagate SELECT errors — swallowing them with unwrap_or would mask
+    // a corrupt DB as "no migrations applied yet" and re-run Phase 1 DDL.
     let applied: i64 = conn
         .query_row("SELECT MAX(version) FROM schema_version", [], |row| {
             row.get::<_, Option<i64>>(0)
-        })
-        .unwrap_or(Some(0))
+        })?
         .unwrap_or(0);
 
     if applied < 1 {
@@ -25,7 +27,6 @@ pub fn run_migrations(conn: &mut Connection) -> Result<()> {
         run_versioned(conn, 2, apply_v2)?;
     }
 
-    debug_assert_eq!(CURRENT_SCHEMA_VERSION, 2);
     Ok(())
 }
 

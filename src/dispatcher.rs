@@ -39,7 +39,7 @@ pub async fn dispatch(ctx: &HandlerContext, event: &Event) -> Result<()> {
             warn!(
                 event_id = %event.id,
                 tag_count = event.tags.len(),
-                tags = ?event.tags.iter().map(|t| t.as_slice().to_vec()).collect::<Vec<_>>(),
+                tags = ?event.tags,
                 "dispatcher: dispute event has no `s` tag — cannot route"
             );
             Ok(())

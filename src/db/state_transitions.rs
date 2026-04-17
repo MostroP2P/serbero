@@ -19,9 +19,9 @@ pub fn list_unattended_disputes(conn: &Connection, cutoff_ts: i64) -> Result<Vec
         let initiator_role_str: String = row.get(3)?;
         let dispute_status_str: String = row.get(4)?;
         let lifecycle_state_str: String = row.get(7)?;
-        let invalid = |field: &str, val: &str| {
+        let invalid = |idx: usize, field: &str, val: &str| {
             rusqlite::Error::FromSqlConversionFailure(
-                0,
+                idx,
                 rusqlite::types::Type::Text,
                 Box::new(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
@@ -34,13 +34,13 @@ pub fn list_unattended_disputes(conn: &Connection, cutoff_ts: i64) -> Result<Vec
             event_id: row.get(1)?,
             mostro_pubkey: row.get(2)?,
             initiator_role: InitiatorRole::from_str(&initiator_role_str)
-                .map_err(|_| invalid("initiator_role", &initiator_role_str))?,
+                .map_err(|_| invalid(3, "initiator_role", &initiator_role_str))?,
             dispute_status: DisputeStatus::from_str(&dispute_status_str)
-                .map_err(|_| invalid("dispute_status", &dispute_status_str))?,
+                .map_err(|_| invalid(4, "dispute_status", &dispute_status_str))?,
             event_timestamp: row.get(5)?,
             detected_at: row.get(6)?,
             lifecycle_state: LifecycleState::from_str(&lifecycle_state_str)
-                .map_err(|_| invalid("lifecycle_state", &lifecycle_state_str))?,
+                .map_err(|_| invalid(7, "lifecycle_state", &lifecycle_state_str))?,
             assigned_solver: row.get(8)?,
             last_notified_at: row.get(9)?,
             last_state_change: row.get(10)?,

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use nostr_sdk::{PublicKey, RelayPoolNotification};
+use nostr_sdk::{PublicKey, RelayPoolNotification, Timestamp};
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tracing::{debug, error, info, warn};
@@ -13,11 +13,44 @@ use crate::handlers::dispute_detected::{current_timestamp, HandlerContext};
 use crate::models::{Config, LifecycleState, NotificationStatus, NotificationType};
 use crate::nostr::{build_client, dispute_filter, send_gift_wrap_notification};
 
+/// Small buffer (seconds) subtracted from the last-seen event timestamp
+/// when computing the `since` filter on warm restart. Accounts for
+/// clock skew between Mostro, relays, and Serbero so we do not miss
+/// events published near the previous shutdown moment.
+const SINCE_SKEW_SECONDS: u64 = 60;
+
 pub async fn run(config: Config) -> Result<()> {
-    run_with_shutdown(config, async {
+    run_with_shutdown(config, wait_for_shutdown_signal()).await
+}
+
+/// Resolve shutdown on either SIGINT (Ctrl-C) or, on Unix, SIGTERM.
+/// On non-Unix targets only ctrl_c is awaited.
+async fn wait_for_shutdown_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+        let mut sigterm = match signal(SignalKind::terminate()) {
+            Ok(s) => s,
+            Err(e) => {
+                warn!(error = %e, "failed to install SIGTERM handler; only SIGINT will stop the daemon");
+                let _ = tokio::signal::ctrl_c().await;
+                return;
+            }
+        };
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {
+                info!("received SIGINT (Ctrl-C)");
+            }
+            _ = sigterm.recv() => {
+                info!("received SIGTERM");
+            }
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
         let _ = tokio::signal::ctrl_c().await;
-    })
-    .await
+    }
 }
 
 pub async fn run_with_shutdown<F>(config: Config, shutdown: F) -> Result<()>
@@ -32,6 +65,28 @@ where
     let mut conn = db::open_connection(&config.serbero.db_path)?;
     db::migrations::run_migrations(&mut conn)?;
     info!(db_path = %config.serbero.db_path, "database opened and migrations applied");
+
+    // Resume from just before the last-seen Mostro dispute event so we
+    // do not miss events that arrived while Serbero was offline. Fall
+    // back to "now" on a cold start (empty DB) to avoid replaying the
+    // full relay history.
+    let since = match db::disputes::max_event_timestamp(&conn)? {
+        Some(ts) => {
+            let resume = (ts as u64).saturating_sub(SINCE_SKEW_SECONDS);
+            info!(
+                last_seen_event_ts = ts,
+                resume_since_ts = resume,
+                skew_seconds = SINCE_SKEW_SECONDS,
+                "resuming Nostr subscription from last-seen event timestamp (minus skew buffer)"
+            );
+            Timestamp::from_secs(resume)
+        }
+        None => {
+            info!("no prior disputes recorded; subscribing from current time");
+            Timestamp::now()
+        }
+    };
+
     let conn = Arc::new(Mutex::new(conn));
 
     if config.solvers.is_empty() {
@@ -45,11 +100,12 @@ where
 
     let client = build_client(&config).await?;
 
-    let filter = dispute_filter(&mostro_pubkey);
+    let filter = dispute_filter(&mostro_pubkey, since);
     info!(
         kind = 38386,
         author = %mostro_pubkey.to_hex(),
-        "subscribing to dispute events (kind=38386, author=<mostro_pubkey>, since=now)"
+        since_ts = since.as_secs(),
+        "subscribing to dispute events (kind=38386, author=<mostro_pubkey>)"
     );
     let sub = client
         .subscribe(filter, None)
@@ -211,6 +267,7 @@ async fn run_renotification_cycle(
              time_elapsed_seconds: {}",
             dispute.dispute_id, dispute.lifecycle_state, elapsed
         );
+        let mut sent_any = false;
         for solver in solvers {
             let pk = match nostr_sdk::PublicKey::parse(&solver.pubkey) {
                 Ok(pk) => pk,
@@ -230,6 +287,7 @@ async fn run_renotification_cycle(
             };
             match send_gift_wrap_notification(client, &pk, &message).await {
                 Ok(()) => {
+                    sent_any = true;
                     info!(
                         dispute_id = %dispute.dispute_id,
                         solver = %solver.pubkey,
@@ -266,9 +324,21 @@ async fn run_renotification_cycle(
                 }
             }
         }
-        let conn = conn.lock().await;
-        if let Err(e) = db::disputes::update_last_notified_at(&conn, &dispute.dispute_id, now) {
-            warn!(error = %e, "failed to update last_notified_at after re-notification");
+
+        // Only advance `last_notified_at` when at least one solver
+        // actually received the re-notification. If every send failed
+        // we want the next timer tick to retry instead of silently
+        // suppressing the dispute for another full window.
+        if sent_any {
+            let conn = conn.lock().await;
+            if let Err(e) = db::disputes::update_last_notified_at(&conn, &dispute.dispute_id, now) {
+                warn!(error = %e, "failed to update last_notified_at after re-notification");
+            }
+        } else {
+            warn!(
+                dispute_id = %dispute.dispute_id,
+                "all re-notification sends failed; keeping last_notified_at so the next tick retries"
+            );
         }
     }
 

@@ -207,7 +207,12 @@ pub fn spawn_daemon(
     (tx, handle)
 }
 
-/// Wait until a SQLite query returns a non-zero count, or time out.
+/// Poll a COUNT-style SQL query until it returns a value >= `expected`,
+/// or the timeout elapses. Returns true on success, false on timeout.
+///
+/// SQL errors fail the test fast via `expect` — a malformed query is a
+/// test bug, not a missing-row signal, and we should not silently
+/// convert it into a timeout.
 pub async fn wait_for_row_count(
     db_path: &str,
     query: &str,
@@ -216,10 +221,13 @@ pub async fn wait_for_row_count(
 ) -> bool {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(timeout_secs);
     loop {
-        let conn = rusqlite::Connection::open(db_path).unwrap();
-        let c: i64 = conn.query_row(query, [], |r| r.get(0)).unwrap_or(0);
-        if c >= expected {
-            return true;
+        let conn = rusqlite::Connection::open(db_path).expect("open test db");
+        match conn.query_row(query, [], |r| r.get::<_, i64>(0)) {
+            Ok(c) if c >= expected => return true,
+            Ok(_) => { /* not there yet — keep polling */ }
+            Err(rusqlite::Error::QueryReturnedNoRows) => { /* aggregate-less query — keep polling */
+            }
+            Err(e) => panic!("wait_for_row_count: SQL error for query `{query}`: {e}"),
         }
         if tokio::time::Instant::now() >= deadline {
             return false;

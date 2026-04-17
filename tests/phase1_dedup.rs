@@ -44,33 +44,44 @@ async fn duplicate_event_is_not_renotified_within_session_or_across_restart() {
     )
     .await;
 
-    // Wait for the first notification and then ensure no more arrive.
+    // Wait for the first notification to arrive.
     assert!(
         solver.wait_for(1, 30).await,
         "solver should receive first notification"
     );
-    tokio::time::sleep(Duration::from_secs(2)).await;
-    assert_eq!(
-        solver.count().await,
-        1,
-        "solver should not receive duplicate notification"
-    );
 
-    // Only one row in the disputes table.
+    // Wait for Serbero to persist the dedup'd duplicate event — the
+    // fact that we only ever expect ONE row is what we assert. Once the
+    // disputes row is present the dispatcher has processed both copies.
     assert!(
         wait_for_row_count(
             &harness.db_path,
             "SELECT COUNT(*) FROM disputes WHERE dispute_id='dispute-dup'",
             1,
-            5,
+            15,
         )
         .await,
-        "disputes table should contain exactly one row for dispute-dup"
+        "expected exactly one disputes row for dispute-dup"
     );
 
+    // Poll briefly to catch any spurious duplicate notification; if
+    // count stays at 1 across several short checks we trust the dedup.
+    for _ in 0..10 {
+        assert_eq!(
+            solver.count().await,
+            1,
+            "solver should not receive duplicate notification"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+
     // Stop daemon.
-    let _ = shutdown.send(());
-    let _ = tokio::time::timeout(Duration::from_secs(2), handle).await;
+    shutdown.send(()).expect("shutdown signal should send");
+    tokio::time::timeout(Duration::from_secs(2), handle)
+        .await
+        .expect("daemon should shut down within 2 seconds")
+        .expect("daemon handle should complete successfully")
+        .expect("daemon should exit cleanly");
 
     // Restart daemon, republish event. Expect no additional notification.
     let (shutdown2, handle2) = spawn_daemon(cfg);
@@ -84,13 +95,20 @@ async fn duplicate_event_is_not_renotified_within_session_or_across_restart() {
         vec![],
     )
     .await;
-    tokio::time::sleep(Duration::from_secs(2)).await;
-    assert_eq!(
-        solver.count().await,
-        1,
-        "restart should not re-notify for a known dispute"
-    );
+    // Poll for a stable count rather than a fixed sleep.
+    for _ in 0..20 {
+        assert_eq!(
+            solver.count().await,
+            1,
+            "restart should not re-notify for a known dispute"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
 
-    let _ = shutdown2.send(());
-    let _ = tokio::time::timeout(Duration::from_secs(2), handle2).await;
+    shutdown2.send(()).expect("shutdown signal should send");
+    tokio::time::timeout(Duration::from_secs(2), handle2)
+        .await
+        .expect("daemon should shut down within 2 seconds")
+        .expect("daemon handle should complete successfully")
+        .expect("daemon should exit cleanly");
 }

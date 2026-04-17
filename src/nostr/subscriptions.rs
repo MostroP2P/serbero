@@ -12,16 +12,14 @@ const DISPUTE_EVENT_KIND: u16 = 38386;
 /// `mostro-watchdog`. Per-status routing (`s=initiated` vs
 /// `s=in-progress`) happens in the dispatcher after the event arrives.
 ///
-/// `since(now)` avoids replaying historical disputes on every restart.
-pub fn dispute_filter(mostro_pubkey: &PublicKey) -> Filter {
+/// `since` is supplied by the caller. On first startup (empty DB)
+/// pass `Timestamp::now()` to avoid replaying historical disputes; on
+/// a warm restart pass the last-seen event timestamp (minus a small
+/// skew buffer) so disputes published while Serbero was offline are
+/// still delivered.
+pub fn dispute_filter(mostro_pubkey: &PublicKey, since: Timestamp) -> Filter {
     Filter::new()
         .kind(Kind::Custom(DISPUTE_EVENT_KIND))
         .author(*mostro_pubkey)
-        .since(Timestamp::now())
-}
-
-/// Back-compat alias retained for test readability.
-#[inline]
-pub fn phase2_filter(mostro_pubkey: &PublicKey) -> Filter {
-    dispute_filter(mostro_pubkey)
+        .since(since)
 }

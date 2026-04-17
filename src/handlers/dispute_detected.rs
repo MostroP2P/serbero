@@ -2,8 +2,6 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use nostr_sdk::{Event, PublicKey, TagKind};
-#[allow(unused_imports)]
-use tracing::trace;
 use tokio::sync::Mutex;
 use tracing::{debug, error, info, instrument, warn};
 

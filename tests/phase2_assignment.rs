@@ -43,7 +43,9 @@ async fn assignment_event_transitions_to_taken_and_notifies_all_solvers() {
     assert!(solver_b.wait_for(1, 30).await, "solver B initial missed");
 
     // Publish an in-progress event with a `p` tag naming the assigned solver.
-    let fake_solver_pk = "solver_assigned_pk_hex";
+    // Use a syntactically valid 64-char hex string so future validation
+    // (or a pubkey parse in the handler) won't reject it.
+    let fake_solver_pk = "0000000000000000000000000000000000000000000000000000000000000001";
     publish_dispute(
         &mostro_client,
         &harness.mostro_keys,
