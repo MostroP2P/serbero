@@ -37,7 +37,9 @@ Across all phases, the following invariants hold:
   escalation support, and its own internal coordination state.
 - If Serbero is offline, Mostro and its operators continue to
   resolve disputes manually.
-- All Serbero actions MUST be logged for audit purposes.
+- Serbero MUST record sufficient audit information about its actions,
+  state transitions, and notification attempts for operator oversight,
+  debugging, and postmortem analysis.
 
 ## Clarifications
 
@@ -120,11 +122,12 @@ containing the correct dispute metadata within 30 seconds.
 
 After receiving a dispute notification, a solver wants to know
 whether another solver has already taken the dispute before deciding
-to act. Serbero tracks dispute lifecycle states and can inform
-solvers whether a dispute is new, notified, taken by a specific
-solver, waiting, or escalated. When a solver takes a dispute via
-Mostro, Serbero detects the assignment and stops sending noisy
-re-notifications for that dispute.
+to act. Serbero tracks dispute lifecycle states and surfaces them
+through re-notifications and assignment update messages, so solvers
+learn whether a dispute is new, notified, taken, waiting, or
+escalated. When a solver takes a dispute via Mostro, Serbero detects
+the assignment and stops sending noisy re-notifications for that
+dispute.
 
 **Why this priority**: Without assignment visibility, multiple
 solvers may unknowingly work the same dispute, or solvers may
@@ -149,7 +152,7 @@ dispute in Mostro and verifying Serbero transitions its state to
 2. **Given** a dispute is in "notified" state,
    **When** a solver takes the dispute via Mostro,
    **Then** Serbero detects the assignment event, transitions the
-   dispute to "taken" state, records the solver's identity, and
+   dispute to "taken" state, records the solver's public key, and
    suppresses further notifications for that dispute.
 
 3. **Given** a dispute has been taken by a solver,
@@ -446,7 +449,7 @@ State transitions MUST be persisted in SQLite with timestamps.
 - Serbero MUST subscribe to Mostro events that indicate a solver
   has taken a dispute.
 - When an assignment event is detected, Serbero MUST transition
-  the dispute to "taken" state and record the solver's identity.
+  the dispute to "taken" state and record the solver's public key.
 - Once a dispute is taken, Serbero MUST suppress further
   notifications for that dispute.
 
