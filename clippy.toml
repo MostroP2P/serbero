@@ -1,0 +1,4 @@
+# Serbero is an internal daemon, not a published library — it has no
+# external API surface to preserve. Disabling this lint lets us evolve
+# types and function signatures freely during Phase 1-2 development.
+avoid-breaking-exported-api = false

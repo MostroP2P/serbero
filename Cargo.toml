@@ -1,0 +1,33 @@
+[package]
+name = "serbero"
+version = "0.1.0"
+edition = "2021"
+description = "Nostr-native dispute coordination daemon for the Mostro ecosystem"
+license = "MIT"
+readme = "README.md"
+
+[[bin]]
+name = "serbero"
+path = "src/main.rs"
+
+[dependencies]
+nostr-sdk = { version = "0.44.1", features = ["nip59", "nip44", "nip04"] }
+mostro-core = "0.8.4"
+rusqlite = { version = "0.31", features = ["bundled"] }
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+thiserror = "1"
+anyhow = "1"
+async-trait = "0.1"
+
+[dev-dependencies]
+tempfile = "3"
+serde_json = "1"
+nostr-relay-builder = "0.44.0"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
