@@ -154,8 +154,15 @@ bundle and identifying itself as an assistance system.
    in the target Mostro instance,
    **When** Phase 3 attempts to start a mediation session,
    **Then** Serbero MUST refuse to send any chat event, MUST log the
-   missing precondition at ERROR level, MUST NOT retry in a loop, and
-   MUST leave Phase 1/2 behavior unchanged.
+   missing precondition at ERROR level, and MUST enter the bounded
+   revalidation loop defined in the Solver Identity and Authorization
+   section (immediate check, config-reload re-check, truncated
+   exponential backoff between the configured initial and maximum
+   intervals, termination at the configured total-time or
+   total-attempts cap with one terminal WARN-or-higher alert). Phase
+   1/2 behavior MUST remain fully unaffected throughout the
+   revalidation window and after termination. If revalidation later
+   succeeds, Serbero resumes Phase 3 operation without a restart.
 
 ---
 
@@ -303,16 +310,21 @@ messages are sent to parties after the transition.
 
 ### User Story 5 - Operator swaps the reasoning provider without code changes (Priority: P3)
 
-A system operator wants to change the reasoning provider — for example
-from OpenAI to Anthropic, to a self-hosted OpenAI-compatible endpoint,
-or to PPQ.ai. They update the `[reasoning]` block of `config.toml`,
-rotate credentials via environment variables, and restart Serbero.
-Mediation resumes against the new provider with no code changes,
-using the same prompt bundle and the same mediation session tables.
+A system operator wants to move the reasoning endpoint — e.g. from
+OpenAI's hosted API to a self-hosted OpenAI-compatible gateway, a
+router proxy, or a third-party OpenAI-compatible provider. They
+update the `[reasoning]` block of `config.toml` (primarily
+`api_base`), rotate credentials via `api_key_env`, and restart
+Serbero. Mediation resumes against the new endpoint with no code
+changes. Selecting a provider that is not yet implemented in Phase 3
+(`anthropic`, `ppqai`, `openclaw`) MUST fail at startup with an
+actionable error rather than silently falling back to OpenAI —
+landing those additional adapters is explicit future work.
 
-**Why this priority**: Portability is a stated constitutional
-principle (no lock-in to any single vendor). It is not what unlocks
-mediation but what makes Phase 3 safe to deploy and iterate on.
+**Why this priority**: Portability across OpenAI-compatible endpoints
+(the shipped Phase 3 scope) is what makes Phase 3 safe to deploy and
+iterate on. The boundary design is what keeps the constitutional
+"no lock-in" principle reachable as additional adapters land later.
 
 **Independent Test**: Can be tested by running the same mediation
 fixture against two different provider configurations and asserting
@@ -324,8 +336,9 @@ provider.
 
 1. **Given** Serbero is running with `provider = "openai"` and an
    `OPENAI_API_KEY`,
-   **When** the operator changes `provider` and `api_base` to point at
-   an OpenAI-compatible endpoint and restarts Serbero,
+   **When** the operator keeps `provider = "openai"` but points
+   `api_base` at an OpenAI-compatible endpoint and rotates the
+   credential via `api_key_env`, then restarts Serbero,
    **Then** new mediation sessions call the new endpoint and succeed
    without any code rebuild.
 
@@ -336,6 +349,14 @@ provider.
    `followup_retry_count` and overall mediation timeout) or transition
    the session to `escalation_recommended` with trigger
    `reasoning_unavailable`.
+
+3. **Given** the operator sets `provider = "anthropic"` (or any
+   other value not implemented in Phase 3) in `config.toml` and
+   restarts Serbero,
+   **Then** Serbero MUST fail Phase 3 initialization at startup with
+   an actionable error naming the unsupported provider and MUST NOT
+   silently coerce to OpenAI. Phase 1/2 behavior MUST remain
+   unaffected.
 
 ---
 
@@ -389,10 +410,19 @@ provider.
   unreachability of the provider MUST halt mediation without
   affecting Phase 1/2 behavior.
 
-- **FR-103**: The reasoning provider configuration MUST be
-  vendor-neutral in the sense that switching between OpenAI,
-  Anthropic, PPQ.ai, or an OpenAI-compatible endpoint requires only
-  configuration and credential changes, not code changes.
+- **FR-103**: The reasoning provider boundary MUST be designed so new
+  providers can be added without changing mediation call sites. The
+  configuration surface MUST be provider-agnostic, and Phase 3 MUST
+  deliver configuration-only portability across **OpenAI and
+  OpenAI-compatible endpoints** (any endpoint that speaks the same
+  chat-completions shape — e.g. self-hosted OpenAI-compatible
+  gateways, router proxies, some third-party providers). Adapters for
+  Anthropic, PPQ.ai, and OpenClaw are in scope for the boundary but
+  out of scope as shipped implementations for this phase: they are
+  declared as `NotYetImplemented` stubs so selecting them fails
+  loudly at startup rather than silently coercing to OpenAI. Landing
+  those additional adapters is explicit future work (see Explicit
+  Non-Goals) and does NOT require changes to mediation call sites.
 
 - **FR-104**: The reasoning provider configuration MUST include at
   minimum: provider name, model identifier, API base URL (when
@@ -913,10 +943,17 @@ Environment variable overrides (including `SERBERO_PRIVATE_KEY`,
   `policy_hash`. Given only git history and the session's
   `policy_hash`, an auditor can reconstruct the exact prompt and
   policy bundle that governed that session's behavior.
-- **SC-104**: Swapping the reasoning provider from one vendor to
-  another (e.g. OpenAI → OpenAI-compatible endpoint, or → Anthropic)
-  requires only `config.toml` and environment-variable changes. No
-  code change is required to complete the swap.
+- **SC-104**: Within the shipped Phase 3 scope, swapping the
+  reasoning endpoint between OpenAI (`api_base =
+  https://api.openai.com/v1`) and any OpenAI-compatible endpoint
+  (different `api_base`, compatible chat-completions shape) requires
+  only `config.toml` and environment-variable changes — no code
+  change. Selecting `provider = "anthropic"` or `provider = "ppqai"`
+  in Phase 3 MUST fail at startup with an actionable error (via the
+  `NotYetImplemented` adapter stubs) rather than silently falling
+  back to OpenAI. Shipping those additional adapters is future work;
+  the boundary is designed so they can land without editing
+  mediation call sites.
 - **SC-105**: When the reasoning provider is unconfigured or
   unreachable, Phase 3 mediation is halted, the reason is visible in
   logs and in any affected session row, and Phase 1/2 dispute
@@ -1007,6 +1044,13 @@ Environment variable overrides (including `SERBERO_PRIVATE_KEY`,
 - Generic reasoning-backend abstraction beyond the provider-neutral
   configuration surface specified here (deeper abstraction is
   Phase 5).
+- Shipping reasoning adapters other than OpenAI / OpenAI-compatible
+  in this phase. Anthropic, PPQ.ai, and OpenClaw adapters are
+  declared as `NotYetImplemented` at the boundary so the mediation
+  call sites stay provider-agnostic and the config surface is stable,
+  but selecting them in Phase 3 fails at startup. Landing those
+  adapters is explicit future work and does not require changes to
+  mediation call sites.
 - Multi-instance Serbero coordination.
 - Replacing the Phase 1/2 notifier. Solver-facing DMs continue to use
   the existing notifier unchanged.
