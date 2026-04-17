@@ -1,0 +1,31 @@
+# Rust build artifacts
+/target
+**/*.rs.bk
+*.pdb
+
+# SQLite databases
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Local operator config overrides (never commit secrets)
+config.toml
+*.local.toml
+
+# Environment files (keep templates like .env.example tracked)
+.env
+.env.local
+.env.*.local
+.env.development
+.env.production
+!.env.example
+!.env.sample
+
+# Editor/OS
+.DS_Store
+Thumbs.db
+*.swp
+.vscode/
+.idea/
+*.log
