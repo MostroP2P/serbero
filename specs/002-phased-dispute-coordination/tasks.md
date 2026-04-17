@@ -75,8 +75,8 @@ SQLite-backed deduplication that survives relay replays, reconnects,
 and daemon restarts.
 
 **Independent Test**: With Serbero running against a local Nostr relay
-and a mock solver client, publish a kind 38386 event with
-`s=initiated`, `z=dispute`, `y=<mostro>`, `d=<dispute_id>`,
+and a mock solver client, publish a kind 38386 event whose `pubkey` is the configured Mostro pubkey, with
+`s=initiated`, `z=dispute`, `y=["mostro", "optional-instance-name"]`, `d=<dispute_id>`,
 `initiator=buyer`. Verify the mock solver receives a gift-wrap DM
 within 30 seconds containing the dispute ID, initiator role, and
 event timestamp. Publish the same event again and restart the daemon
