@@ -18,32 +18,32 @@ Templates requiring updates:
 Follow-up TODOs: None
 -->
 
-# Cancerbero Constitution
+# Serbero Constitution
 
 ## Scope and Context
 
-Cancerbero is a dispute coordination, notification, and assistance
+Serbero is a dispute coordination, notification, and assistance
 system for the Mostro ecosystem. Its purpose is to help operators
 and users handle disputes more quickly, more consistently, and with
 better visibility, without expanding the system's fund-risk surface.
 
 This constitution defines the non-negotiable principles that MUST
-guide all Cancerbero specifications, plans, tasks, and
+guide all Serbero specifications, plans, tasks, and
 implementations.
 
 ## Core Principles
 
 ### I. Fund Isolation First
 
-Cancerbero implementations MUST never directly move funds, settle
+Serbero implementations MUST never directly move funds, settle
 escrows, cancel escrows, or sign administrative actions that close
 disputes.
 
-- Cancerbero components MUST NOT execute or sign `admin-settle` or
+- Serbero components MUST NOT execute or sign `admin-settle` or
   `admin-cancel`, and they MUST never be granted credentials or
   permissions that would allow them to do so.
 - Any action that can release, refund, or otherwise move value MUST
-  remain outside Cancerbero.
+  remain outside Serbero.
 
 ### II. Protocol-Enforced Security Boundaries
 
@@ -51,7 +51,7 @@ All security-critical boundaries MUST be enforced by Mostro at the
 protocol, authorization, and permission layers — never by prompts,
 model instructions, UI restrictions, or operator assumptions alone.
 
-- Cancerbero may operate with read solver permissions, but its safety
+- Serbero may operate with read solver permissions, but its safety
   model MUST NOT depend on an AI model behaving correctly.
 - If a boundary matters for funds, dispute closure, or operator
   authority, that boundary MUST be enforced by the system that owns
@@ -59,12 +59,12 @@ model instructions, UI restrictions, or operator assumptions alone.
 
 ### III. Human Final Authority
 
-Cancerbero may assist, classify, summarize, notify, guide, and
+Serbero may assist, classify, summarize, notify, guide, and
 escalate, but final authority over ambiguous, adversarial, fraudulent,
 or non-cooperative disputes MUST remain with a human operator holding
 write permissions.
 
-Cancerbero specifications and implementations MUST support clean
+Serbero specifications and implementations MUST support clean
 handoff to human operators whenever:
 
 - Cooperative resolution is not emerging.
@@ -76,9 +76,9 @@ handoff to human operators whenever:
 ### IV. Operator Notification Is a Core Responsibility
 
 Operator notification is not an auxiliary feature. It is a core
-responsibility of the Cancerbero system.
+responsibility of the Serbero system.
 
-- Cancerbero implementations MUST detect new disputes and notify
+- Serbero implementations MUST detect new disputes and notify
   relevant operators reliably and promptly.
 - They MUST support re-notification and escalation when disputes
   remain unattended or require higher-authority intervention.
@@ -87,25 +87,25 @@ responsibility of the Cancerbero system.
 
 ### V. Assistance Without Authority
 
-Cancerbero components may communicate with users, collect context,
+Serbero components may communicate with users, collect context,
 ask clarifying questions, summarize dispute state, and guide parties
 toward safe cooperative outcomes.
 
 - They MUST NOT present themselves as the final authority on dispute
   outcomes, and they MUST NOT imply powers they do not possess.
-- Cancerbero may support dispute resolution, but it MUST NOT
+- Serbero may support dispute resolution, but it MUST NOT
   autonomously impose dispute closure.
 
 ### VI. Auditability by Design
 
-Cancerbero specifications and implementations MUST preserve enough
+Serbero specifications and implementations MUST preserve enough
 traceability for operators to understand:
 
 - What happened.
-- What Cancerbero observed.
-- What Cancerbero asked.
-- How Cancerbero classified or summarized a dispute.
-- Why Cancerbero escalated or re-notified.
+- What Serbero observed.
+- What Serbero asked.
+- How Serbero classified or summarized a dispute.
+- Why Serbero escalated or re-notified.
 - What information was available at each step.
 
 Auditability is required for trust, debugging, postmortems, and
@@ -113,18 +113,18 @@ safe human oversight.
 
 ### VII. Graceful Degradation
 
-The Mostro system MUST remain operational if Cancerbero is
+The Mostro system MUST remain operational if Serbero is
 unavailable, degraded, misconfigured, or offline.
 
-- Cancerbero is an assistance and coordination layer, not a hard
+- Serbero is an assistance and coordination layer, not a hard
   dependency for dispute closure.
-- Cancerbero designs MUST preserve manual resolution paths so that
+- Serbero designs MUST preserve manual resolution paths so that
   human operators can continue resolving disputes through Mostro
-  even when Cancerbero is absent.
+  even when Serbero is absent.
 
 ### VIII. Privacy by Default
 
-Cancerbero components MUST expose only the minimum information
+Serbero components MUST expose only the minimum information
 necessary to the relevant participants and operators.
 
 - Notifications, summaries, and mediation flows MUST avoid
@@ -137,7 +137,7 @@ necessary to the relevant participants and operators.
 
 ### IX. Nostr-Native Coordination
 
-Cancerbero SHOULD prefer Nostr-native communication primitives for
+Serbero SHOULD prefer Nostr-native communication primitives for
 notifications and dispute assistance, especially direct encrypted
 messaging such as gift wraps.
 
@@ -147,10 +147,10 @@ messaging such as gift wraps.
 
 ### X. Portable Reasoning Backends
 
-Cancerbero MUST NOT be architecturally bound to a single agent
+Serbero MUST NOT be architecturally bound to a single agent
 runtime or reasoning provider.
 
-- Cancerbero implementations may use LLMs or agentic systems for
+- Serbero implementations may use LLMs or agentic systems for
   classification, mediation support, summarization, and escalation
   decisions, but these capabilities MUST remain replaceable behind
   clear interfaces.
@@ -162,7 +162,7 @@ runtime or reasoning provider.
 
 ### XI. Incremental Scope and Clear Boundaries
 
-Cancerbero specifications and implementations MUST evolve in stages.
+Serbero specifications and implementations MUST evolve in stages.
 
 Initial scopes SHOULD focus on:
 
@@ -179,32 +179,32 @@ constitution.
 
 ### XII. Honest System Behavior
 
-Cancerbero components MUST NOT fabricate evidence, imply certainty
+Serbero components MUST NOT fabricate evidence, imply certainty
 they do not have, or misrepresent the basis for their
 classifications, summaries, or recommendations.
 
-- When information is incomplete, conflicting, or unclear, Cancerbero
+- When information is incomplete, conflicting, or unclear, Serbero
   implementations MUST surface uncertainty and escalate appropriately
   rather than pretending to know more than they do.
 
 ### XIII. Mostro Compatibility and Separation of Concerns
 
-Cancerbero exists to complement Mostro, not to duplicate or weaken
+Serbero exists to complement Mostro, not to duplicate or weaken
 its authority boundaries.
 
-Cancerbero specifications and implementations MUST preserve a clear
+Serbero specifications and implementations MUST preserve a clear
 division of responsibility:
 
 - **Mostro** owns escrow state, permissions, and dispute-closing
   authority.
-- **Cancerbero** owns notification, coordination, assistance, and
+- **Serbero** owns notification, coordination, assistance, and
   escalation support.
 
 Any design that blurs that boundary MUST be rejected or revised.
 
 ## Governance
 
-This constitution supersedes all other practices for the Cancerbero
+This constitution supersedes all other practices for the Serbero
 project. All specifications, plans, tasks, and implementations MUST
 comply with the principles defined above.
 
