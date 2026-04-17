@@ -411,7 +411,6 @@ Phase 1 explicitly excludes:
 - Operator assignment workflows beyond notification
 - Escalation summaries
 - Group Nostr notifications
-- Telegram integration
 - Dispute closure or any fund-related action
 - Signing or sending `admin-settle` / `admin-cancel`
 - Any Lightning interaction
@@ -474,7 +473,7 @@ State transitions MUST be persisted in SQLite with timestamps.
 
 - Extends the Phase 1 SQLite schema with:
   - Dispute state and state transition history
-  - Assignment records (solver identity, assignment timestamp)
+  - Assignment records (solver public key, assignment timestamp)
   - Re-notification records
 
 ---
@@ -683,8 +682,9 @@ specification amendments that preserve constitutional constraints.
   `admin-cancel`, or any action that moves funds or closes disputes
   (all phases).
 
-- **FR-017**: Serbero MUST log all actions, state transitions, and
-  notification attempts for audit purposes (all phases).
+- **FR-017**: Serbero MUST record sufficient audit information
+  about its actions, state transitions, and notification attempts for
+  operator oversight, debugging, and postmortem analysis (all phases).
 
 - **FR-018**: Serbero MUST expose only the minimum information
   necessary to each participant, scoped to their role (all phases).
@@ -829,7 +829,6 @@ specification amendments that preserve constitutional constraints.
 - Operator assignment workflows beyond notification
 - Escalation summaries
 - Group Nostr notifications
-- Telegram integration
 - Dispute closure
 - Signing or sending `admin-settle` / `admin-cancel`
 - Any Lightning interaction
