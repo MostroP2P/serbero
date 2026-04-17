@@ -59,12 +59,18 @@ New column on `disputes` table:
 | last_notified_at   | INTEGER | Timestamp of last notification sent              |
 | last_state_change  | INTEGER | Timestamp of last lifecycle state transition     |
 
-### Phase 3+ Additions (Schema Placeholders Only)
+### Phase 3+ Additions (Forward-Looking, Provisional)
 
-These tables are not implemented until their respective phases but
-are documented here for schema evolution awareness.
+> **Status**: The tables and columns in this section are **forward-looking
+> and provisional**. They are illustrative sketches to help reason about
+> schema evolution — not normative schema definitions. Phase 1 and Phase 2
+> implementations MUST NOT create these tables, add these columns, or
+> depend on their exact shape. When Phase 3 and Phase 4 are planned
+> through their own specification amendments, these shapes are expected
+> to be revisited and refined; treat anything here as subject to change
+> without a migration path from Phase 1/Phase 2 state.
 
-#### mediation_sessions (Phase 3)
+#### mediation_sessions (Phase 3 — provisional sketch)
 
 | Column           | Type    | Description                                    |
 |------------------|---------|------------------------------------------------|
@@ -76,7 +82,7 @@ are documented here for schema evolution awareness.
 | confidence_score | REAL    | 0.0 to 1.0                                    |
 | outcome          | TEXT    | "suggestion_sent", "escalated", "timed_out"    |
 
-#### escalation_records (Phase 4)
+#### escalation_records (Phase 4 — provisional sketch)
 
 | Column             | Type    | Description                                  |
 |--------------------|---------|----------------------------------------------|
@@ -126,6 +132,9 @@ Transitions recorded in `dispute_state_transitions`.
 ```
 disputes 1──N notifications
 disputes 1──N dispute_state_transitions
-disputes 1──1 mediation_sessions    (Phase 3)
-disputes 1──N escalation_records    (Phase 4)
+disputes 1──1 mediation_sessions    (Phase 3 — provisional)
+disputes 1──N escalation_records    (Phase 4 — provisional)
 ```
+
+The Phase 3+ relationships are drawn from the forward-looking sketches
+above and are themselves provisional.

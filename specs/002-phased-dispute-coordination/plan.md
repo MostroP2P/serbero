@@ -40,7 +40,7 @@ assignment visibility + re-notification).
 | VII. Graceful Degradation | PASS | Mostro operates independently. Relay disconnect = reconnect with backoff. SQLite failure = halt notifications. |
 | VIII. Privacy | PASS | Notifications contain initiator role (buyer/seller), not pubkey. Minimum necessary info. |
 | IX. Nostr-Native | PASS | All communication via gift-wrap encrypted messages on Nostr. |
-| X. Portable Backends | PASS | Reasoning backend trait defined but not implemented until Phase 5. Interface-first design. |
+| X. Portable Backends | PASS | Reasoning backend boundary described as a planning/contracts artifact only; no trait or module is scaffolded into the crate until Phase 5 actually implements it. |
 | XI. Incremental Scope | PASS | Phased implementation. Phase 1 → Phase 2 → future phases via explicit specs. |
 | XII. Honest Behavior | PASS | No classification or mediation in Phases 1-2. Later phases surface uncertainty. |
 | XIII. Mostro Compatibility | PASS | Serbero reads events, never writes dispute-closing actions. Clear boundary. |
@@ -199,7 +199,11 @@ Nostr Relay(s)
    - Extract `dispute_id` from the `d` tag.
    - Query SQLite: `SELECT 1 FROM disputes WHERE dispute_id = ?`.
    - If found: skip (already processed). Log at debug level.
-   - If not found: INSERT into `disputes` table, then notify solvers.
+   - If not found: INSERT into `disputes` table first, then notify solvers.
+     Notification is strictly contingent on a successful INSERT — there
+     is no in-memory notification queue in Phase 1. If the INSERT fails,
+     notification is skipped for that event and is not automatically
+     retried.
 2. If SQLite is unreadable: halt notification processing. Log error.
    Resume when SQLite recovers. Deduplication integrity > delivery.
 3. On restart: same logic. SQLite state survives restarts.
@@ -217,7 +221,7 @@ Same dedup for initial detection. Additionally:
 | Single relay drops | nostr-sdk auto-reconnects with backoff. Other relays continue. |
 | All relays drop | Auto-reconnect continues. Notifications halt. Log degraded mode. |
 | SQLite read failure | Halt all notification processing. Log error. Retry SQLite access periodically. Resume when recovered. |
-| SQLite write failure | Log error. If dispute INSERT fails, do not notify (dedup integrity). Retry on next event. |
+| SQLite write failure | Log error. If the dispute INSERT fails, do not notify (dedup integrity). No Phase 1 queue exists, so the dispute may not be notified at all unless the same event is observed again after persistence recovers (e.g., from a subsequent relay retransmission or operator replay). |
 | Notification send failure | Log failure in SQLite. Do not retry in Phase 1. Phase 2 re-notification covers unattended disputes. |
 | No solvers configured | Log warning at startup. Record disputes but do not attempt notifications. |
 
@@ -227,24 +231,34 @@ Same dedup for initial detection. Additionally:
 
 ```toml
 [serbero]
-private_key = "hex"  # Override: SERBERO_PRIVATE_KEY env var
+private_key = "<hex-encoded private key>"  # Override: SERBERO_PRIVATE_KEY env var
 db_path = "serbero.db"  # Override: SERBERO_DB_PATH env var
 log_level = "info"  # Override: SERBERO_LOG env var
 
 [mostro]
-pubkey = "hex"  # Mostro instance public key
+pubkey = "<hex-encoded public key>"  # Mostro instance public key
 
 [[relays]]
 url = "wss://relay.example.com"
 
 [[solvers]]
-pubkey = "hex"
-permission = "read"  # "read" or "write"
+pubkey = "<hex-encoded public key>"
+permission = "read"  # "read" or "write" — see note below
 
 [timeouts]
 renotification_seconds = 300  # Phase 2: re-notification interval
 renotification_check_interval_seconds = 60  # How often to check for unattended disputes
 ```
+
+**Solver permissions — scope in Phase 1**: The `permission` field may be
+set to `"read"` or `"write"` and is parsed and stored from the start,
+but **Phase 1 notification routing does not filter by permission**. In
+Phase 1, every configured solver is notified of every detected dispute
+regardless of their permission level. Permission levels become
+operationally relevant in later phases — most notably Phase 4
+(escalation), which routes escalation summaries specifically to
+write-permission solvers. Phase 2 may begin to use permission for
+differentiated messaging but does not restrict who is notified.
 
 ### Environment Variable Overrides
 
@@ -254,16 +268,25 @@ renotification_check_interval_seconds = 60  # How often to check for unattended 
 | `SERBERO_DB_PATH` | `serbero.db_path` | Database file location |
 | `SERBERO_LOG` | `serbero.log_level` | Log level (trace/debug/info/warn/error) |
 
-## Reasoning Backend Interface (Phase 5 — Design Only)
+## Reasoning Backend Interface (Phase 5 — Planning Artifact Only)
 
-Defined in [contracts/reasoning-backend.md](contracts/reasoning-backend.md).
+Described in [contracts/reasoning-backend.md](contracts/reasoning-backend.md).
 
-The `ReasoningBackend` trait is defined as an interface contract but
-NOT implemented until Phase 5. In Phases 1-4, no reasoning backend is
-invoked. The trait exists to ensure the architecture reserves the
-boundary.
+The `ReasoningBackend` trait is a **planning and contracts artifact
+only** for Phases 1 and 2. It is documented here to reserve the
+architectural boundary and to give future phases a stable target to
+design against. It is **not** scaffolded into the Rust source tree
+during Phase 1 or Phase 2 — no `trait ReasoningBackend`, no
+`reasoning/` module, and no reasoning-related types are added to the
+crate until Phase 5 actually needs them. This avoids dead
+architectural scaffolding that Phase 1 and Phase 2 do not exercise.
 
-**Key separation**:
+When Phase 5 is planned, the trait definition in
+`contracts/reasoning-backend.md` becomes the starting point for the
+actual Rust implementation; any refinements discovered then supersede
+the contract as documented today.
+
+**Key separation (applies once the backend is implemented in Phase 5)**:
 - Serbero's policy layer (dispatcher, handlers) owns all decisions.
 - The reasoning backend provides advisory structured outputs.
 - The policy layer validates all reasoning output before acting.

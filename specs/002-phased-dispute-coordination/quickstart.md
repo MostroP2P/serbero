@@ -4,8 +4,12 @@
 
 - Rust toolchain (stable, edition 2021)
 - Access to at least one Nostr relay
-- A Nostr key pair for Serbero (hex-encoded private key)
-- Nostr public keys of Mostro instance and solvers
+- A Nostr key pair for Serbero, in hex-encoded form
+- Hex-encoded Nostr public keys of the Mostro instance and each solver
+
+Serbero's configuration uses hex-encoded keys throughout. If you hold
+your keys in Bech32 form (`nsec...`, `npub...`), convert them to hex
+before placing them in the config.
 
 ## Configuration
 
@@ -13,24 +17,27 @@ Create `config.toml`:
 
 ```toml
 [serbero]
-# Serbero's private key (hex). Can be overridden with
+# Serbero's hex-encoded private key. Can be overridden with the
 # SERBERO_PRIVATE_KEY environment variable.
-private_key = "hex_encoded_nsec"
+private_key = "<hex-encoded private key>"
 
 [mostro]
-# Public key of the Mostro instance to monitor
-pubkey = "hex_encoded_npub"
+# Hex-encoded public key of the Mostro instance to monitor
+pubkey = "<hex-encoded public key>"
 
 [[relays]]
 url = "wss://relay.example.com"
 
 [[solvers]]
-pubkey = "hex_encoded_solver_npub"
-# Permission level: "read" or "write" (used from Phase 2+)
+pubkey = "<hex-encoded solver public key>"
+# Permission level: "read" or "write".
+# Phase 1 notifies ALL configured solvers regardless of this value.
+# Permission becomes operationally relevant in later phases (e.g.,
+# escalation routing in Phase 4).
 permission = "read"
 
 [[solvers]]
-pubkey = "hex_encoded_solver2_npub"
+pubkey = "<hex-encoded solver public key>"
 permission = "write"
 
 [timeouts]
@@ -40,15 +47,21 @@ renotification_seconds = 300
 
 ## Build and Run
 
+Serbero reads its configuration from `config.toml` in the working
+directory and applies environment-variable overrides for secrets and
+operational parameters. The Phase 1 / Phase 2 plan does not commit to
+a CLI flag surface, so the examples below only rely on the working
+directory and environment variables.
+
 ```bash
 # Build
 cargo build --release
 
-# Run (config file)
-./target/release/serbero --config config.toml
+# Run — expects config.toml in the current directory
+./target/release/serbero
 
-# Run (with env override for private key)
-SERBERO_PRIVATE_KEY=hex_key ./target/release/serbero --config config.toml
+# Run with env override for the private key
+SERBERO_PRIVATE_KEY=<hex-encoded private key> ./target/release/serbero
 ```
 
 ## Verify Phase 1
@@ -73,5 +86,7 @@ SERBERO_PRIVATE_KEY=hex_key ./target/release/serbero --config config.toml
 
 ## Database Location
 
-SQLite database is stored at `serbero.db` in the working directory
-(configurable via `--db-path` flag or `SERBERO_DB_PATH` env var).
+SQLite database is stored at the path given by the `serbero.db_path`
+value in `config.toml` (default `serbero.db` in the working
+directory). This path can be overridden with the `SERBERO_DB_PATH`
+environment variable.
