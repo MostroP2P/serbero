@@ -6,22 +6,11 @@
 //! provider-neutral.
 
 use std::fmt;
+use std::sync::Arc;
 
 use crate::models::dispute::InitiatorRole;
 use crate::models::mediation::{ClassificationLabel, Flag, TranscriptParty};
-
-/// View over the loaded prompt bundle passed into reasoning calls.
-/// Borrowed to avoid cloning large text payloads on every request.
-#[derive(Debug, Clone, Copy)]
-pub struct PromptBundleView<'a> {
-    pub id: &'a str,
-    pub policy_hash: &'a str,
-    pub system: &'a str,
-    pub classification_policy: &'a str,
-    pub mediation_style: &'a str,
-    pub message_templates: &'a str,
-    pub escalation_policy: &'a str,
-}
+use crate::prompts::PromptBundle;
 
 /// One transcript entry. Ordered by inner-event `created_at` per the
 /// mediation transport contract.
@@ -41,13 +30,19 @@ pub struct ReasoningContext {
 }
 
 /// Classification request.
+///
+/// Carries the full `PromptBundle` (via `Arc` for cheap sharing
+/// across sessions) rather than just its id+hash. The adapter MUST
+/// feed the bundle bytes to the model: hardcoded system prompts
+/// would break the `policy_hash` invariant (SC-103), because the
+/// hash would reference bundle bytes the model never saw. `Arc`
+/// avoids cloning the bundle text on every call.
 #[derive(Debug, Clone)]
 pub struct ClassificationRequest {
     pub session_id: String,
     pub dispute_id: String,
     pub initiator_role: InitiatorRole,
-    pub prompt_bundle_id: String,
-    pub policy_hash: String,
+    pub prompt_bundle: Arc<PromptBundle>,
     pub transcript: Vec<TranscriptEntry>,
     pub context: ReasoningContext,
 }
@@ -90,12 +85,15 @@ pub struct ClassificationResponse {
 }
 
 /// Summary request.
+///
+/// Same invariant as `ClassificationRequest`: carries the full
+/// `PromptBundle` so the adapter actually sends the bytes the
+/// `policy_hash` points at (SC-103).
 #[derive(Debug, Clone)]
 pub struct SummaryRequest {
     pub session_id: String,
     pub dispute_id: String,
-    pub prompt_bundle_id: String,
-    pub policy_hash: String,
+    pub prompt_bundle: Arc<PromptBundle>,
     pub transcript: Vec<TranscriptEntry>,
     pub classification: ClassificationLabel,
     pub confidence: f64,

@@ -68,7 +68,7 @@ pub struct ClassificationResponse {
 pub struct SummaryRequest {
     pub session_id: String,
     pub dispute_id: String,
-    pub prompt_bundle: PromptBundleView,
+    pub prompt_bundle: Arc<PromptBundle>,    // full bundle bytes — same invariant as above
     pub transcript: Vec<TranscriptEntry>,
     pub classification: ClassificationLabel,
     pub confidence: f64,
@@ -112,14 +112,18 @@ pub struct TranscriptEntry {
     pub content: String,
 }
 
-pub struct PromptBundleView<'a> {
-    pub id: &'a str,
-    pub policy_hash: &'a str,
-    pub system: &'a str,
-    pub classification_policy: &'a str,
-    pub mediation_style: &'a str,
-    pub message_templates: &'a str,
-    pub escalation_policy: &'a str,
+/// Loaded and hashed at startup by `src/prompts/mod.rs`. Passed to
+/// the reasoning adapter via `Arc<PromptBundle>`. Field names match
+/// the prompt files on disk (short `classification` / `escalation`
+/// rather than `*_policy`).
+pub struct PromptBundle {
+    pub id: String,
+    pub policy_hash: String,
+    pub system: String,
+    pub classification: String,
+    pub escalation: String,
+    pub mediation_style: String,
+    pub message_templates: String,
 }
 
 pub enum ReasoningError {

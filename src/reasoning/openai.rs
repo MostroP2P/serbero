@@ -128,14 +128,17 @@ impl ReasoningProvider for OpenAiProvider {
         &self,
         request: ClassificationRequest,
     ) -> std::result::Result<ClassificationResponse, ReasoningError> {
+        // The system message IS the versioned system prompt from the
+        // bundle. Hardcoding a different system message here would
+        // break the policy_hash invariant (SC-103).
+        let system = request.prompt_bundle.system.clone();
         let prompt = build_classification_prompt(&request);
         let body = ChatRequest {
             model: &self.model,
             messages: vec![
                 ChatMessage {
                     role: "system",
-                    content: "You are Serbero's Phase 3 classification subsystem. \
-                              Output ONLY valid JSON.",
+                    content: &system,
                 },
                 ChatMessage {
                     role: "user",
@@ -155,16 +158,14 @@ impl ReasoningProvider for OpenAiProvider {
         &self,
         request: SummaryRequest,
     ) -> std::result::Result<SummaryResponse, ReasoningError> {
+        let system = request.prompt_bundle.system.clone();
         let prompt = build_summary_prompt(&request);
         let body = ChatRequest {
             model: &self.model,
             messages: vec![
                 ChatMessage {
                     role: "system",
-                    content: "You are Serbero's Phase 3 summarization subsystem. \
-                              Produce a short cooperative-resolution summary for the \
-                              assigned solver. You are an assistance system, not the \
-                              final authority.",
+                    content: &system,
                 },
                 ChatMessage {
                     role: "user",
@@ -269,6 +270,10 @@ impl OpenAiProvider {
 }
 
 fn build_classification_prompt(r: &ClassificationRequest) -> String {
+    // Embed every policy section from the bundle so the model sees
+    // the exact bytes the session's `policy_hash` pins. An auditor
+    // can later grep the git-committed bundle for this hash and
+    // recover the full prompt context.
     let transcript = r
         .transcript
         .iter()
@@ -276,8 +281,19 @@ fn build_classification_prompt(r: &ClassificationRequest) -> String {
         .collect::<Vec<_>>()
         .join("\n");
     format!(
-        "session_id: {sid}\ndispute_id: {did}\ninitiator: {init}\npolicy_hash: {ph}\n\
-         round_count: {rc}\n\nTranscript:\n{tr}\n\n\
+        "## Session metadata\n\
+         session_id: {sid}\n\
+         dispute_id: {did}\n\
+         initiator: {init}\n\
+         prompt_bundle_id: {bid}\n\
+         policy_hash: {ph}\n\
+         round_count: {rc}\n\n\
+         ## Classification policy (from bundle)\n{cls}\n\n\
+         ## Escalation policy (from bundle)\n{esc}\n\n\
+         ## Mediation style (from bundle)\n{sty}\n\n\
+         ## Message templates (from bundle)\n{tpl}\n\n\
+         ## Transcript\n{tr}\n\n\
+         ## Output contract\n\
          Return JSON with keys: classification (one of coordination_failure_resolvable, \
          conflicting_claims, suspected_fraud, unclear, not_suitable_for_mediation), \
          confidence (0..1), suggested_action (ask_clarification|summarize|escalate), \
@@ -287,13 +303,20 @@ fn build_classification_prompt(r: &ClassificationRequest) -> String {
         sid = r.session_id,
         did = r.dispute_id,
         init = r.initiator_role,
-        ph = r.policy_hash,
+        bid = r.prompt_bundle.id,
+        ph = r.prompt_bundle.policy_hash,
         rc = r.context.round_count,
+        cls = r.prompt_bundle.classification,
+        esc = r.prompt_bundle.escalation,
+        sty = r.prompt_bundle.mediation_style,
+        tpl = r.prompt_bundle.message_templates,
         tr = transcript,
     )
 }
 
 fn build_summary_prompt(r: &SummaryRequest) -> String {
+    // As in the classification path, every relevant bundle section
+    // flows into the user prompt so the policy_hash pin is honest.
     let transcript = r
         .transcript
         .iter()
@@ -301,16 +324,30 @@ fn build_summary_prompt(r: &SummaryRequest) -> String {
         .collect::<Vec<_>>()
         .join("\n");
     format!(
-        "session_id: {sid}\ndispute_id: {did}\npolicy_hash: {ph}\n\
-         classification: {cls}\nconfidence: {cf}\n\nTranscript:\n{tr}\n\n\
+        "## Session metadata\n\
+         session_id: {sid}\n\
+         dispute_id: {did}\n\
+         prompt_bundle_id: {bid}\n\
+         policy_hash: {ph}\n\
+         classification: {cls}\n\
+         confidence: {cf}\n\n\
+         ## Mediation style (from bundle)\n{sty}\n\n\
+         ## Message templates (from bundle)\n{tpl}\n\n\
+         ## Escalation policy (from bundle, for reference)\n{esc}\n\n\
+         ## Transcript\n{tr}\n\n\
+         ## Output contract\n\
          Produce a short summary for the assigned solver, followed by a single-line \
          SUGGESTED_NEXT_STEP: line. Do NOT suggest fund actions. Do NOT claim final \
          authority. End with a RATIONALE: line.",
         sid = r.session_id,
         did = r.dispute_id,
-        ph = r.policy_hash,
+        bid = r.prompt_bundle.id,
+        ph = r.prompt_bundle.policy_hash,
         cls = r.classification,
         cf = r.confidence,
+        sty = r.prompt_bundle.mediation_style,
+        tpl = r.prompt_bundle.message_templates,
+        esc = r.prompt_bundle.escalation,
         tr = transcript,
     )
 }
@@ -587,5 +624,89 @@ mod tests {
                 "adapter must reflect the configured followup_retry_count"
             );
         }
+    }
+
+    // ---- policy_hash invariant regression tests ---------------------
+    //
+    // The old code hardcoded a system message and used only
+    // `prompt_bundle_id` / `policy_hash` as metadata in the user
+    // message. That breaks SC-103: the hash would reference bundle
+    // bytes the model never saw. These tests pin the fix.
+
+    use std::sync::Arc;
+
+    use crate::models::dispute::InitiatorRole;
+    use crate::models::reasoning::{ClassificationRequest, ReasoningContext, SummaryRequest};
+    use crate::prompts::PromptBundle;
+
+    fn fixture_bundle() -> Arc<PromptBundle> {
+        Arc::new(PromptBundle {
+            id: "phase3-test".to_string(),
+            policy_hash: "abc123".to_string(),
+            system: "SYSTEM_MARKER: you are serbero".to_string(),
+            classification: "CLASSIFICATION_MARKER: policy text".to_string(),
+            escalation: "ESCALATION_MARKER: escalation rules".to_string(),
+            mediation_style: "STYLE_MARKER: neutral tone".to_string(),
+            message_templates: "TEMPLATE_MARKER: templates here".to_string(),
+        })
+    }
+
+    #[test]
+    fn classify_prompt_includes_every_bundle_section() {
+        let req = ClassificationRequest {
+            session_id: "s1".into(),
+            dispute_id: "d1".into(),
+            initiator_role: InitiatorRole::Buyer,
+            prompt_bundle: fixture_bundle(),
+            transcript: vec![],
+            context: ReasoningContext {
+                round_count: 0,
+                last_classification: None,
+                last_confidence: None,
+            },
+        };
+        let user = build_classification_prompt(&req);
+        // The user-facing prompt must include every section whose
+        // bytes contribute to policy_hash — NOT just the id+hash.
+        for marker in [
+            "CLASSIFICATION_MARKER",
+            "ESCALATION_MARKER",
+            "STYLE_MARKER",
+            "TEMPLATE_MARKER",
+        ] {
+            assert!(
+                user.contains(marker),
+                "classification user prompt missing `{marker}`:\n{user}"
+            );
+        }
+        // The system prompt (verified in classify() itself) is the
+        // bundle's `system` field. The hash MUST also appear so the
+        // model's own output can reference it.
+        assert!(user.contains("policy_hash: abc123"));
+        assert!(user.contains("prompt_bundle_id: phase3-test"));
+    }
+
+    #[test]
+    fn summary_prompt_includes_every_relevant_bundle_section() {
+        let req = SummaryRequest {
+            session_id: "s1".into(),
+            dispute_id: "d1".into(),
+            prompt_bundle: fixture_bundle(),
+            transcript: vec![],
+            classification: ClassificationLabel::CoordinationFailureResolvable,
+            confidence: 0.9,
+        };
+        let user = build_summary_prompt(&req);
+        // The summary path embeds style + templates + escalation.
+        // (It does NOT re-embed the classification policy — the
+        // classification is already a decided label at this point.)
+        for marker in ["STYLE_MARKER", "TEMPLATE_MARKER", "ESCALATION_MARKER"] {
+            assert!(
+                user.contains(marker),
+                "summary user prompt missing `{marker}`:\n{user}"
+            );
+        }
+        assert!(user.contains("policy_hash: abc123"));
+        assert!(user.contains("prompt_bundle_id: phase3-test"));
     }
 }
