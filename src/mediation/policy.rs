@@ -68,20 +68,24 @@ pub enum PolicyDecision {
 /// Run the initial classification call for a just-opened session.
 ///
 /// Persists the rationale and emits a `classification_produced`
-/// audit event before returning. Validation order matches
-/// `contracts/reasoning-provider.md` §Policy-Layer Validation:
+/// audit event before returning. Validation order (critical signals
+/// first so they are never shadowed by softer ones):
 ///
 /// 1. `FraudRisk` / `ConflictingClaims` flags escalate regardless
 ///    of the suggested action.
-/// 2. Confidence below [`LOW_CONFIDENCE_THRESHOLD`] escalates with
+/// 2. `AuthorityBoundaryAttempt` flag escalates with
+///    `AuthorityBoundaryAttempt` — runs BEFORE low-confidence /
+///    model-suggested-escalate so the trigger is preserved verbatim.
+/// 3. Confidence below [`LOW_CONFIDENCE_THRESHOLD`] escalates with
 ///    `LowConfidence`.
-/// 3. A provider-suggested `Escalate(_)` is escalated under
+/// 4. A provider-suggested `Escalate(_)` is escalated under
 ///    `ReasoningUnavailable` (no free-form escalation reasons for
 ///    the mediation engine).
-/// 4. An `AuthorityBoundaryAttempt` flag (or an adapter that
-///    surfaces one via `suggested_action`) is always suppressed and
-///    escalated under `AuthorityBoundaryAttempt`.
-/// 5. Otherwise the classification's `suggested_action` is mapped
+/// 5. An `AskClarification(text)` whose text is empty / whitespace
+///    is treated as a malformed response and escalated under
+///    `ReasoningUnavailable` — blank text reaching the draft path
+///    would produce a meaningless outbound message.
+/// 6. Otherwise the classification's `suggested_action` is mapped
 ///    directly to a [`PolicyDecision`].
 #[allow(clippy::too_many_arguments)]
 pub async fn initial_classification(
@@ -186,26 +190,14 @@ fn classify_to_decision(classification: &ClassificationResponse) -> PolicyDecisi
         return PolicyDecision::Escalate(EscalationTrigger::ConflictingClaims);
     }
 
-    // Rule 2: low confidence. Using a strict `<` so a model that
-    // reports exactly the threshold is still trusted to proceed
-    // (matches contract wording: "below threshold").
-    if classification.confidence < LOW_CONFIDENCE_THRESHOLD {
-        return PolicyDecision::Escalate(EscalationTrigger::LowConfidence);
-    }
-
-    // Rule 3: model-suggested escalation funnels into
-    // `ReasoningUnavailable`. The mediation engine does not
-    // propagate adapter-free-form escalation reasons; US4 owns the
-    // finer-grained triggers.
-    if let SuggestedAction::Escalate(_) = &classification.suggested_action {
-        return PolicyDecision::Escalate(EscalationTrigger::ReasoningUnavailable);
-    }
-
-    // Rules 4+5: authority-boundary attempts are always suppressed.
-    // An adapter that detects one may surface it either via the
-    // flags vector or via the suggested action (for a future
-    // adapter-specific signal); either path escalates with the
-    // same trigger.
+    // Authority-boundary suppression runs BEFORE the low-confidence
+    // and model-suggested-escalate checks. Losing the
+    // `AuthorityBoundaryAttempt` trigger to `LowConfidence` would
+    // weaken the audit story: the operator needs to see *why* the
+    // response was suppressed, not a generic "confidence too low"
+    // tag. An adapter that detects an authority-boundary attempt
+    // may surface it via either the flags vector or (for future
+    // adapter-specific shapes) the `suggested_action` string.
     if classification
         .flags
         .contains(&Flag::AuthorityBoundaryAttempt)
@@ -213,25 +205,53 @@ fn classify_to_decision(classification: &ClassificationResponse) -> PolicyDecisi
         return PolicyDecision::Escalate(EscalationTrigger::AuthorityBoundaryAttempt);
     }
 
+    // Low confidence. Strict `<` so a model that reports exactly
+    // the threshold is still trusted to proceed (matches contract
+    // wording: "below threshold").
+    if classification.confidence < LOW_CONFIDENCE_THRESHOLD {
+        return PolicyDecision::Escalate(EscalationTrigger::LowConfidence);
+    }
+
+    // Model-suggested escalation funnels into `ReasoningUnavailable`.
+    // The mediation engine does not propagate adapter-free-form
+    // escalation reasons; US4 owns the finer-grained triggers.
+    if let SuggestedAction::Escalate(_) = &classification.suggested_action {
+        return PolicyDecision::Escalate(EscalationTrigger::ReasoningUnavailable);
+    }
+
     // Pass-through: map the suggested action to the decision.
     match &classification.suggested_action {
-        SuggestedAction::AskClarification(text) => PolicyDecision::AskClarification(text.clone()),
+        SuggestedAction::AskClarification(text) => {
+            // Reject empty / whitespace-only clarifications — the
+            // session-open draft path cannot build a meaningful
+            // gift-wrap from them, and letting the outbound message
+            // go as literal "Buyer: " / "Seller: " would be worse
+            // than escalating. Treated the same as a malformed
+            // provider response (rule 6 in the contract).
+            if text.trim().is_empty() {
+                return PolicyDecision::Escalate(EscalationTrigger::ReasoningUnavailable);
+            }
+            PolicyDecision::AskClarification(text.clone())
+        }
         SuggestedAction::Summarize => PolicyDecision::Summarize,
-        // Unreachable because rule 3 already handled this case; kept
-        // defensive so an accidental enum widening does not silently
-        // bypass the escalation path.
+        // Unreachable because the rule above already handled this
+        // case; kept defensive so an accidental enum widening does
+        // not silently bypass the escalation path.
         SuggestedAction::Escalate(_) => {
             PolicyDecision::Escalate(EscalationTrigger::ReasoningUnavailable)
         }
     }
 }
 
+/// Fail loudly on a clock-before-UNIX-EPOCH error. A silent `0`
+/// would corrupt rationale / event ordering; the audit store relies
+/// on `generated_at` / `occurred_at` being a real Unix timestamp.
 fn current_ts_secs() -> i64 {
     use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
+        .expect("system clock is before UNIX_EPOCH; refusing to persist audit rows with ts = 0")
+        .as_secs() as i64
 }
 
 #[cfg(test)]
@@ -459,6 +479,38 @@ mod tests {
         assert_eq!(
             decision,
             PolicyDecision::Escalate(EscalationTrigger::AuthorityBoundaryAttempt)
+        );
+    }
+
+    #[tokio::test]
+    async fn authority_boundary_flag_dominates_low_confidence() {
+        // Pin the ordering fix: when a response is *both* below the
+        // confidence threshold AND carries an authority-boundary
+        // flag, the policy must surface the authority-boundary
+        // trigger — losing that signal to LowConfidence would hide a
+        // critical class of escalation from the audit log.
+        let conn = fresh_conn();
+        let mut resp = base_response();
+        resp.confidence = 0.2;
+        resp.flags = vec![Flag::AuthorityBoundaryAttempt];
+        let provider = ScriptedProvider::ok(resp);
+        let decision = run_initial(&conn, &provider).await.unwrap();
+        assert_eq!(
+            decision,
+            PolicyDecision::Escalate(EscalationTrigger::AuthorityBoundaryAttempt)
+        );
+    }
+
+    #[tokio::test]
+    async fn empty_clarification_text_escalates_as_malformed() {
+        let conn = fresh_conn();
+        let mut resp = base_response();
+        resp.suggested_action = SuggestedAction::AskClarification("   \n\t".into());
+        let provider = ScriptedProvider::ok(resp);
+        let decision = run_initial(&conn, &provider).await.unwrap();
+        assert_eq!(
+            decision,
+            PolicyDecision::Escalate(EscalationTrigger::ReasoningUnavailable)
         );
     }
 }

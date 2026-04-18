@@ -50,6 +50,11 @@ const ENGINE_TICK_INTERVAL: Duration = Duration::from_secs(30);
 /// `session::open_session` that fills in the timeouts the engine
 /// uses today; kept as a separate entry point so the daemon and
 /// tests do not have to know about the inner param shape.
+///
+/// `provider_name` and `model_name` are threaded through to the
+/// audit store (`reasoning_rationales` rows) — the adapter trait
+/// itself does not expose them, so the caller (daemon config or
+/// integration test) supplies them explicitly.
 #[allow(clippy::too_many_arguments)]
 pub async fn open_dispute_session(
     conn: &Arc<AsyncMutex<rusqlite::Connection>>,
@@ -61,6 +66,8 @@ pub async fn open_dispute_session(
     dispute_id: &str,
     initiator_role: InitiatorRole,
     dispute_uuid: Uuid,
+    provider_name: &str,
+    model_name: &str,
 ) -> Result<session::OpenOutcome> {
     session::open_session(session::OpenSessionParams {
         conn,
@@ -74,6 +81,8 @@ pub async fn open_dispute_session(
         dispute_uuid,
         take_flow_timeout: Duration::from_secs(15),
         take_flow_poll_interval: Duration::from_millis(250),
+        provider_name,
+        model_name,
     })
     .await
 }
@@ -90,17 +99,23 @@ pub async fn open_dispute_session(
 /// Contract:
 /// - Builds per-party gift-wraps with role prefixes so the inner
 ///   event ids cannot collide on identical content.
-/// - Persists both outbound rows + two `outbound_sent` audit events
-///   in a single DB transaction; a crash between commit and publish
-///   leaves the DB in a retriable state (the unique index on
-///   `(session_id, inner_event_id)` makes a later retry idempotent).
+/// - Persists both outbound rows + the idempotent session-state
+///   sync in a single DB transaction (transactional outbox: a
+///   crash between commit and publish leaves the rows in place so a
+///   later retry can republish, and the unique index on
+///   `(session_id, inner_event_id)` keeps the table single-copy).
+/// - Publishes each wrap with bounded retry. The
+///   `outbound_sent` audit event is emitted AFTER its publish
+///   succeeds — a failed publish therefore does not produce a
+///   false "sent" entry in `mediation_events`. If a publish fails
+///   we surface the error and let the engine decide to escalate on
+///   a later tick.
 /// - Bumps the session state to `awaiting_response` if it is not
 ///   already there. The invariant is that [`session::open_session`]
 ///   inserts the session directly at `awaiting_response`, so the
 ///   transition here is almost always a no-op — but keeping the
 ///   write makes the helper safe against callers whose flow inserted
 ///   the session at `opening` or `follow_up_pending` first.
-/// - Publishes the two wraps with bounded retry AFTER the DB commit.
 #[instrument(skip_all, fields(session_id = %session_id))]
 #[allow(clippy::too_many_arguments)]
 pub async fn draft_and_send_initial_message(
@@ -139,11 +154,14 @@ pub async fn draft_and_send_initial_message(
 
     let buyer_shared_pubkey_hex = buyer_shared_keys.public_key().to_hex();
     let seller_shared_pubkey_hex = seller_shared_keys.public_key().to_hex();
+    let buyer_inner_id_hex = buyer_wrap.inner_event_id.to_hex();
+    let seller_inner_id_hex = seller_wrap.inner_event_id.to_hex();
     let now = current_ts_secs()?;
 
-    // One transaction for both outbound rows + both audit events +
-    // the (idempotent) session-state sync. Matches the outbox shape
-    // used by `session::open_session`: DB commit first, then publish.
+    // One transaction for both outbound rows + the session-state
+    // sync. Audit events (outbound_sent) are deferred to post-publish
+    // so the audit log only claims "sent" when the relay actually
+    // accepted the wrap.
     {
         let mut guard = conn.lock().await;
         let tx = guard.transaction()?;
@@ -153,7 +171,7 @@ pub async fn draft_and_send_initial_message(
                 session_id,
                 party: TranscriptParty::Buyer,
                 shared_pubkey: &buyer_shared_pubkey_hex,
-                inner_event_id: &buyer_wrap.inner_event_id.to_hex(),
+                inner_event_id: &buyer_inner_id_hex,
                 inner_event_created_at: buyer_wrap.inner_created_at,
                 outer_event_id: Some(&buyer_wrap.outer.id.to_hex()),
                 content: &buyer_content,
@@ -168,7 +186,7 @@ pub async fn draft_and_send_initial_message(
                 session_id,
                 party: TranscriptParty::Seller,
                 shared_pubkey: &seller_shared_pubkey_hex,
-                inner_event_id: &seller_wrap.inner_event_id.to_hex(),
+                inner_event_id: &seller_inner_id_hex,
                 inner_event_created_at: seller_wrap.inner_created_at,
                 outer_event_id: Some(&seller_wrap.outer.id.to_hex()),
                 content: &seller_content,
@@ -176,24 +194,6 @@ pub async fn draft_and_send_initial_message(
                 policy_hash: &prompt_bundle.policy_hash,
                 persisted_at: now,
             },
-        )?;
-        db::mediation_events::record_outbound_sent(
-            &tx,
-            session_id,
-            &buyer_shared_pubkey_hex,
-            &buyer_wrap.inner_event_id.to_hex(),
-            Some(&prompt_bundle.id),
-            Some(&prompt_bundle.policy_hash),
-            now,
-        )?;
-        db::mediation_events::record_outbound_sent(
-            &tx,
-            session_id,
-            &seller_shared_pubkey_hex,
-            &seller_wrap.inner_event_id.to_hex(),
-            Some(&prompt_bundle.id),
-            Some(&prompt_bundle.policy_hash),
-            now,
         )?;
         // Set-if-not-already — unconditional UPDATE with equality in
         // the WHERE keeps this a safe no-op when the session is
@@ -208,8 +208,29 @@ pub async fn draft_and_send_initial_message(
         tx.commit()?;
     }
 
+    // Publish first, THEN audit. A failed publish bubbles up; the
+    // `mediation_messages` row is already persisted so a later
+    // reconciliation pass can re-publish without duplicating the
+    // table row (unique index on `(session_id, inner_event_id)`).
     session::publish_with_bounded_retry(client, &buyer_wrap.outer, "buyer").await?;
+    record_outbound_sent_audit(
+        conn,
+        session_id,
+        &buyer_shared_pubkey_hex,
+        &buyer_inner_id_hex,
+        prompt_bundle,
+    )
+    .await?;
+
     session::publish_with_bounded_retry(client, &seller_wrap.outer, "seller").await?;
+    record_outbound_sent_audit(
+        conn,
+        session_id,
+        &seller_shared_pubkey_hex,
+        &seller_inner_id_hex,
+        prompt_bundle,
+    )
+    .await?;
 
     info!(
         session_id = %session_id,
@@ -217,6 +238,30 @@ pub async fn draft_and_send_initial_message(
         policy_hash = %prompt_bundle.policy_hash,
         "initial clarifying message dispatched to both parties"
     );
+    Ok(())
+}
+
+/// Record one `outbound_sent` audit row in its own short-lived
+/// transaction. Separate from the main outbound-persist tx because
+/// the row should only land once the relay has accepted the wrap.
+async fn record_outbound_sent_audit(
+    conn: &Arc<AsyncMutex<rusqlite::Connection>>,
+    session_id: &str,
+    shared_pubkey_hex: &str,
+    inner_event_id_hex: &str,
+    prompt_bundle: &Arc<PromptBundle>,
+) -> Result<()> {
+    let now = current_ts_secs()?;
+    let guard = conn.lock().await;
+    db::mediation_events::record_outbound_sent(
+        &guard,
+        session_id,
+        shared_pubkey_hex,
+        inner_event_id_hex,
+        Some(&prompt_bundle.id),
+        Some(&prompt_bundle.policy_hash),
+        now,
+    )?;
     Ok(())
 }
 
@@ -239,6 +284,7 @@ pub async fn draft_and_send_initial_message(
 ///   `abort()`s on shutdown. Keeping the function simple (no
 ///   shutdown channel parameter) mirrors the shape `renotif_handle`
 ///   uses today.
+#[allow(clippy::too_many_arguments)]
 pub async fn run_engine(
     conn: Arc<AsyncMutex<rusqlite::Connection>>,
     client: Client,
@@ -246,9 +292,13 @@ pub async fn run_engine(
     mostro_pubkey: PublicKey,
     reasoning: Arc<dyn ReasoningProvider>,
     prompt_bundle: Arc<PromptBundle>,
+    provider_name: String,
+    model_name: String,
 ) {
     info!(
         tick_seconds = ENGINE_TICK_INTERVAL.as_secs(),
+        provider = %provider_name,
+        model = %model_name,
         "mediation engine loop starting"
     );
     let mut ticker = tokio::time::interval(ENGINE_TICK_INTERVAL);
@@ -265,6 +315,8 @@ pub async fn run_engine(
             &mostro_pubkey,
             reasoning.as_ref(),
             &prompt_bundle,
+            &provider_name,
+            &model_name,
         )
         .await
         {
@@ -276,6 +328,7 @@ pub async fn run_engine(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_engine_tick(
     conn: &Arc<AsyncMutex<rusqlite::Connection>>,
     client: &Client,
@@ -283,6 +336,8 @@ async fn run_engine_tick(
     mostro_pubkey: &PublicKey,
     reasoning: &dyn ReasoningProvider,
     prompt_bundle: &Arc<PromptBundle>,
+    provider_name: &str,
+    model_name: &str,
 ) -> Result<()> {
     let eligible = list_eligible_disputes(conn).await?;
     if eligible.is_empty() {
@@ -319,6 +374,8 @@ async fn run_engine_tick(
             dispute_uuid,
             take_flow_timeout: Duration::from_secs(15),
             take_flow_poll_interval: Duration::from_millis(250),
+            provider_name,
+            model_name,
         })
         .await
         {
@@ -366,11 +423,21 @@ struct Eligible {
     initiator_role: InitiatorRole,
 }
 
-/// Disputes in `lifecycle_state = 'notified'` with no live mediation
-/// session. "Live" excludes `closed` and `escalation_recommended`
-/// so a previously handed-off dispute does not block a fresh
-/// attempt. Ordering is ascending by `event_timestamp` so the
-/// oldest disputes get worked first.
+/// Disputes in `lifecycle_state = 'notified'` that are eligible for
+/// a fresh mediation open:
+///
+/// - No existing session is in a live (non-terminal) state.
+///   "Live" here means anything other than `closed` — a dispute
+///   that already has an `opening` / `awaiting_response` / …
+///   session is being handled right now and MUST NOT be restarted.
+/// - No existing session is in `escalation_recommended`. Once a
+///   dispute has been handed off to a human solver the engine must
+///   not silently pull it back into mediation — the handoff is
+///   terminal. The separate `NOT EXISTS` makes this invariant
+///   explicit and resistant to future state-set tweaks.
+///
+/// Ordering is ascending by `event_timestamp` so the oldest
+/// disputes get worked first.
 async fn list_eligible_disputes(
     conn: &Arc<AsyncMutex<rusqlite::Connection>>,
 ) -> Result<Vec<Eligible>> {
@@ -384,7 +451,12 @@ async fn list_eligible_disputes(
            AND NOT EXISTS (
                SELECT 1 FROM mediation_sessions s
                WHERE s.dispute_id = d.dispute_id
-                 AND s.state NOT IN ('closed', 'escalation_recommended')
+                 AND s.state NOT IN ('closed')
+           )
+           AND NOT EXISTS (
+               SELECT 1 FROM mediation_sessions s
+               WHERE s.dispute_id = d.dispute_id
+                 AND s.state = 'escalation_recommended'
            )
          ORDER BY d.event_timestamp ASC",
     )?;

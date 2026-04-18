@@ -123,6 +123,8 @@ async fn refuses_session_open_when_reasoning_health_fails_and_phase12_still_noti
         dispute_id,
         InitiatorRole::Buyer,
         dispute_uuid,
+        "mock-provider",
+        "mock-model",
     )
     .await
     .expect("open_dispute_session must not return an Err for the health-check gate path");

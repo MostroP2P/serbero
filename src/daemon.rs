@@ -105,25 +105,35 @@ where
     // and the reasoning provider come up successfully we keep them
     // in-scope as `Arc`s so the engine task spawned below can share
     // them with no extra clones.
-    let phase3_runtime: Option<Phase3Runtime> = if config.mediation.enabled {
-        match phase3_bring_up(&config).await {
-            Some(rt) => {
-                info!(
-                    prompt_bundle_id = %rt.bundle.id,
-                    policy_hash = %rt.bundle.policy_hash,
-                    "Phase 3 mediation is fully configured; engine task will be spawned"
-                );
-                Some(rt)
+    let phase3_runtime: Option<Phase3Runtime> =
+        if config.mediation.enabled && config.reasoning.enabled {
+            match phase3_bring_up(&config).await {
+                Some(rt) => {
+                    info!(
+                        prompt_bundle_id = %rt.bundle.id,
+                        policy_hash = %rt.bundle.policy_hash,
+                        "Phase 3 mediation is fully configured; engine task will be spawned"
+                    );
+                    Some(rt)
+                }
+                None => {
+                    info!("Phase 3 partially configured; mediation will stay disabled this run");
+                    None
+                }
             }
-            None => {
-                info!("Phase 3 partially configured; mediation will stay disabled this run");
-                None
-            }
-        }
-    } else {
-        debug!("Phase 3 mediation disabled by configuration");
-        None
-    };
+        } else if config.mediation.enabled && !config.reasoning.enabled {
+            // Mediation enabled but reasoning is off: do not touch
+            // the prompt bundle or the provider factory — just log
+            // and keep Phase 1/2 running.
+            info!(
+                "Phase 3 mediation enabled but [reasoning].enabled = false; \
+                 skipping bring-up (provider + bundle not initialized this run)"
+            );
+            None
+        } else {
+            debug!("Phase 3 mediation disabled by configuration");
+            None
+        };
     // ----------------------------------------------------------------
 
     let client = build_client(&config).await?;
@@ -180,6 +190,8 @@ where
         let engine_mostro_pk = mostro_pubkey;
         let engine_bundle = rt.bundle;
         let engine_reasoning = rt.reasoning;
+        let engine_provider_name = config.reasoning.provider.clone();
+        let engine_model_name = config.reasoning.model.clone();
         Some(tokio::spawn(async move {
             crate::mediation::run_engine(
                 engine_conn,
@@ -188,6 +200,8 @@ where
                 engine_mostro_pk,
                 engine_reasoning,
                 engine_bundle,
+                engine_provider_name,
+                engine_model_name,
             )
             .await
         }))
@@ -275,7 +289,7 @@ async fn phase3_bring_up(config: &Config) -> Option<Phase3Runtime> {
             Arc::new(b)
         }
         Err(e) => {
-            warn!(
+            error!(
                 error = %e,
                 "Phase 3 prompt bundle failed to load; mediation will stay disabled this run"
             );
@@ -286,7 +300,7 @@ async fn phase3_bring_up(config: &Config) -> Option<Phase3Runtime> {
     let reasoning = match crate::reasoning::build_provider(&config.reasoning) {
         Ok(p) => p,
         Err(e) => {
-            warn!(
+            error!(
                 provider = %config.reasoning.provider,
                 error = %e,
                 "Phase 3 reasoning provider could not be built; \
@@ -296,7 +310,7 @@ async fn phase3_bring_up(config: &Config) -> Option<Phase3Runtime> {
         }
     };
     if let Err(e) = crate::reasoning::health::run_startup_health_check(&*reasoning).await {
-        warn!(
+        error!(
             provider = %config.reasoning.provider,
             model = %config.reasoning.model,
             api_base = %config.reasoning.api_base,
