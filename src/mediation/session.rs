@@ -42,6 +42,7 @@ use tokio::sync::Mutex as AsyncMutex;
 use tracing::{debug, info, instrument, warn};
 use uuid::Uuid;
 
+use crate::chat::inbound::InboundEnvelope;
 use crate::chat::{dispute_chat_flow, outbound};
 use crate::db;
 use crate::error::{Error, Result};
@@ -326,6 +327,129 @@ pub async fn open_session(params: OpenSessionParams<'_>) -> Result<OpenOutcome> 
         "mediation session opened; first clarifying message dispatched to both parties"
     );
     Ok(OpenOutcome::Opened { session_id })
+}
+
+/// Outcome of a single-envelope ingest attempt.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IngestOutcome {
+    /// The envelope was new and has been persisted. `round_count_after`
+    /// reflects the recomputed round counter.
+    Fresh { round_count_after: i64 },
+    /// The envelope's inner event id was already in
+    /// `mediation_messages` for this session. No rows written, no
+    /// session-state change.
+    Duplicate,
+    /// The envelope was persisted with `stale = 1` because its inner
+    /// `created_at` predated the party's last-seen marker. Last-seen
+    /// is NOT updated and `round_count` is unchanged (stale rows do
+    /// not count toward round boundaries).
+    Stale,
+}
+
+/// Persist one inbound envelope against the named session.
+///
+/// Transactional boundary:
+/// - Look up the per-party last-seen marker.
+/// - Decide `stale` (inner ts <= last-seen).
+/// - `INSERT OR IGNORE` the row. On duplicate the transaction
+///   commits cleanly as a no-op — idempotency without exception
+///   gymnastics.
+/// - On a fresh, non-stale insert: update the party's last-seen
+///   marker and recompute `round_count` from the transcript.
+///
+/// This function does NOT transition session state; `awaiting_response`
+/// -> `classified` / further transitions belong to the policy layer
+/// (US3 / US4). It also does NOT publish anything on the relay —
+/// that's the outbound side of the transport.
+pub async fn ingest_inbound(
+    conn: &Arc<AsyncMutex<rusqlite::Connection>>,
+    session_id: &str,
+    envelope: &InboundEnvelope,
+) -> Result<IngestOutcome> {
+    // Serbero never appears as an inbound author; reject the
+    // enum-widening mistake up front rather than writing a malformed
+    // row.
+    if matches!(envelope.party, TranscriptParty::Serbero) {
+        return Err(Error::InvalidEvent(
+            "ingest_inbound refused: envelope.party = Serbero".into(),
+        ));
+    }
+
+    let now = current_ts_secs()?;
+    let mut conn = conn.lock().await;
+
+    // Read the per-party last-seen marker that the stale-check
+    // depends on.
+    let (buyer_last, seller_last) = db::mediation::get_last_seen(&conn, session_id)?;
+    let last_seen_for_party = match envelope.party {
+        TranscriptParty::Buyer => buyer_last,
+        TranscriptParty::Seller => seller_last,
+        TranscriptParty::Serbero => unreachable!("guarded above"),
+    };
+    let is_stale = last_seen_for_party
+        .map(|prev| envelope.inner_created_at <= prev)
+        .unwrap_or(false);
+
+    let tx = conn.transaction()?;
+
+    let inserted = db::mediation::insert_inbound_message(
+        &tx,
+        &db::mediation::NewInboundMessage {
+            session_id,
+            party: envelope.party,
+            shared_pubkey: &envelope.shared_pubkey,
+            inner_event_id: &envelope.inner_event_id,
+            inner_event_created_at: envelope.inner_created_at,
+            outer_event_id: Some(&envelope.outer_event_id),
+            content: &envelope.content,
+            persisted_at: now,
+            stale: is_stale,
+        },
+    )?;
+
+    if !inserted {
+        // Unique-index dedup kicked in. Commit the no-op transaction
+        // so any reads in the next tick see a consistent state.
+        tx.commit()?;
+        debug!(
+            session_id = %session_id,
+            party = %envelope.party,
+            inner_event_id = %envelope.inner_event_id,
+            "inbound replay ignored (already persisted)"
+        );
+        return Ok(IngestOutcome::Duplicate);
+    }
+
+    if is_stale {
+        tx.commit()?;
+        debug!(
+            session_id = %session_id,
+            party = %envelope.party,
+            inner_event_id = %envelope.inner_event_id,
+            inner_created_at = envelope.inner_created_at,
+            "inbound persisted as stale; last-seen and round_count unchanged"
+        );
+        return Ok(IngestOutcome::Stale);
+    }
+
+    db::mediation::update_last_seen_inner_ts(
+        &tx,
+        session_id,
+        envelope.party,
+        envelope.inner_created_at,
+    )?;
+    let round_count_after = db::mediation::recompute_round_count(&tx, session_id)?;
+    tx.commit()?;
+
+    info!(
+        session_id = %session_id,
+        party = %envelope.party,
+        inner_event_id = %envelope.inner_event_id,
+        inner_created_at = envelope.inner_created_at,
+        round_count_after = round_count_after,
+        "inbound ingested"
+    );
+    Ok(IngestOutcome::Fresh { round_count_after })
 }
 
 /// Publish one outer gift-wrap with a tiny bounded retry. No generic
