@@ -3,15 +3,24 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use async_trait::async_trait;
+use mostro_core::dispute::SolverDisputeInfo;
+use mostro_core::message::{Action, Message, Payload};
 use nostr_relay_builder::MockRelay;
 use nostr_sdk::{
-    Alphabet, Client, Event, EventBuilder, Filter, Keys, Kind, RelayPoolNotification,
+    Alphabet, Client, Event, EventBuilder, Filter, Keys, Kind, PublicKey, RelayPoolNotification,
     SingleLetterTag, Tag, TagKind, Timestamp,
+};
+use serbero::models::mediation::ClassificationLabel;
+use serbero::models::reasoning::{
+    ClassificationRequest, ClassificationResponse, RationaleText, ReasoningError, SuggestedAction,
+    SummaryRequest, SummaryResponse,
 };
 use serbero::models::{
     Config, MostroConfig, RelayConfig, SerberoConfig, SolverConfig, SolverPermission,
     TimeoutsConfig,
 };
+use serbero::reasoning::ReasoningProvider;
 use tempfile::TempDir;
 use tokio::sync::oneshot;
 use tokio::sync::Mutex;
@@ -238,5 +247,209 @@ pub async fn wait_for_row_count(
             return false;
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Phase 3 shared fixtures — MostroChatSim + reasoning-provider stubs.
+//
+// These were previously inline inside individual Phase 3 integration
+// tests. Promoted here (T024 / T025) so new US2+ integration tests
+// can reuse them without copy-pasting the full Mostro take-flow
+// simulation or the provider scripted behaviors.
+// ---------------------------------------------------------------------------
+
+/// Plays the Mostro side of the dispute-chat take-flow for tests.
+///
+/// Subscribes to gift-wraps addressed to its own keys, detects
+/// `Action::AdminTakeDispute`, and replies with a canned
+/// `AdminTookDispute` that carries a `SolverDisputeInfo` naming the
+/// configured buyer / seller trade pubkeys. The `dispute_id`
+/// echoed back is taken verbatim from the request's `kind.id`, so
+/// callers can correlate request ↔ reply without coordinating UUIDs
+/// out of band.
+pub struct MostroChatSim {
+    keys: Keys,
+    // The relay-pool client has its own lifecycle; we keep the
+    // handle alive so the notification task below stays connected.
+    _client: Client,
+    _task: JoinHandle<()>,
+}
+
+impl MostroChatSim {
+    pub async fn start(
+        relay_url: &str,
+        buyer_trade_pk: PublicKey,
+        seller_trade_pk: PublicKey,
+    ) -> Self {
+        let keys = Keys::generate();
+        let client = Client::new(keys.clone());
+        client.add_relay(relay_url).await.unwrap();
+        client.connect().await;
+        // Wait for the MockRelay handshake before subscribing, so
+        // our REQ is guaranteed to be registered before Serbero
+        // publishes its AdminTakeDispute DM.
+        client.wait_for_connection(Duration::from_secs(5)).await;
+
+        // Subscribe to gift-wraps addressed to us. The `since`
+        // window must be wide enough to cover NIP-59's random
+        // timestamp tweak (up to 2 days in the past); otherwise
+        // the relay drops incoming events at the REQ filter.
+        let seven_days_ago =
+            Timestamp::from_secs(Timestamp::now().as_secs().saturating_sub(7 * 24 * 60 * 60));
+        let filter = Filter::new()
+            .kind(Kind::GiftWrap)
+            .custom_tag(
+                SingleLetterTag::lowercase(Alphabet::P),
+                keys.public_key().to_hex(),
+            )
+            .since(seven_days_ago);
+        client.subscribe(filter, None).await.unwrap();
+
+        let client_loop = client.clone();
+        let client_for_inner = client.clone();
+        let task = tokio::spawn(async move {
+            let _ = client_loop
+                .handle_notifications(move |notif| {
+                    let client = client_for_inner.clone();
+                    let buyer = buyer_trade_pk;
+                    let seller = seller_trade_pk;
+                    async move {
+                        let RelayPoolNotification::Event { event, .. } = notif else {
+                            return Ok(false);
+                        };
+                        if event.kind != Kind::GiftWrap {
+                            return Ok(false);
+                        }
+                        let Ok(unwrapped) = client.unwrap_gift_wrap(&event).await else {
+                            return Ok(false);
+                        };
+                        let Ok(msg) = Message::from_json(&unwrapped.rumor.content) else {
+                            return Ok(false);
+                        };
+                        let kind = msg.get_inner_message_kind();
+                        if kind.action != Action::AdminTakeDispute {
+                            return Ok(false);
+                        }
+                        let Some(dispute_id) = kind.id else {
+                            return Ok(false);
+                        };
+                        let info = SolverDisputeInfo {
+                            id: dispute_id,
+                            kind: "buy".into(),
+                            status: "in-progress".into(),
+                            hash: None,
+                            preimage: None,
+                            order_previous_status: "active".into(),
+                            initiator_pubkey: buyer.to_hex(),
+                            buyer_pubkey: Some(buyer.to_hex()),
+                            seller_pubkey: Some(seller.to_hex()),
+                            initiator_full_privacy: false,
+                            counterpart_full_privacy: false,
+                            initiator_info: None,
+                            counterpart_info: None,
+                            premium: 0,
+                            payment_method: "".into(),
+                            amount: 0,
+                            fiat_amount: 0,
+                            fee: 0,
+                            routing_fee: 0,
+                            buyer_invoice: None,
+                            invoice_held_at: 0,
+                            taken_at: 0,
+                            created_at: 0,
+                        };
+                        let reply = Message::new_dispute(
+                            Some(dispute_id),
+                            None,
+                            None,
+                            Action::AdminTookDispute,
+                            Some(Payload::Dispute(dispute_id, Some(info))),
+                        );
+                        let json = reply.as_json().unwrap();
+                        let _ = client.send_private_msg(unwrapped.sender, json, []).await;
+                        Ok(false)
+                    }
+                })
+                .await;
+        });
+
+        Self {
+            keys,
+            _client: client,
+            _task: task,
+        }
+    }
+
+    pub fn pubkey(&self) -> PublicKey {
+        self.keys.public_key()
+    }
+}
+
+/// Scripted reasoning provider used by US1 happy-path tests.
+///
+/// `classify` always returns `CoordinationFailureResolvable` with
+/// confidence `0.9` and `SuggestedAction::AskClarification(clarification)`.
+/// `summarize` returns `ReasoningError::Unreachable` (US3 scope).
+/// `health_check` always succeeds.
+pub struct MockReasoningProvider {
+    pub clarification: String,
+}
+
+#[async_trait]
+impl ReasoningProvider for MockReasoningProvider {
+    async fn classify(
+        &self,
+        _request: ClassificationRequest,
+    ) -> std::result::Result<ClassificationResponse, ReasoningError> {
+        Ok(ClassificationResponse {
+            classification: ClassificationLabel::CoordinationFailureResolvable,
+            confidence: 0.9,
+            suggested_action: SuggestedAction::AskClarification(self.clarification.clone()),
+            rationale: RationaleText("both parties seem cooperative".into()),
+            flags: Vec::new(),
+        })
+    }
+
+    async fn summarize(
+        &self,
+        _request: SummaryRequest,
+    ) -> std::result::Result<SummaryResponse, ReasoningError> {
+        Err(ReasoningError::Unreachable(
+            "summary not expected in US1 test".into(),
+        ))
+    }
+
+    async fn health_check(&self) -> std::result::Result<(), ReasoningError> {
+        Ok(())
+    }
+}
+
+/// Reasoning provider whose `health_check` always returns
+/// `Unreachable`. `classify` and `summarize` panic if ever
+/// reached — any call on those paths is a regression of the T044
+/// reasoning-health gate.
+pub struct UnhealthyReasoningProvider;
+
+#[async_trait]
+impl ReasoningProvider for UnhealthyReasoningProvider {
+    async fn classify(
+        &self,
+        _request: ClassificationRequest,
+    ) -> std::result::Result<ClassificationResponse, ReasoningError> {
+        panic!("classify must not be reached when the reasoning-health gate refuses")
+    }
+
+    async fn summarize(
+        &self,
+        _request: SummaryRequest,
+    ) -> std::result::Result<SummaryResponse, ReasoningError> {
+        panic!("summarize must not be reached when the reasoning-health gate refuses")
+    }
+
+    async fn health_check(&self) -> std::result::Result<(), ReasoningError> {
+        Err(ReasoningError::Unreachable(
+            "provider scripted as unhealthy for the US1 gating test".into(),
+        ))
     }
 }

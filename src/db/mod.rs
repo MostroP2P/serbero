@@ -1,7 +1,9 @@
 pub mod disputes;
 pub mod mediation;
+pub mod mediation_events;
 pub mod migrations;
 pub mod notifications;
+pub mod rationales;
 pub mod state_transitions;
 
 use std::path::Path;
