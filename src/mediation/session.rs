@@ -240,6 +240,16 @@ pub async fn open_session(params: OpenSessionParams<'_>) -> Result<OpenOutcome> 
             let escalation_now = current_ts_secs()?;
             {
                 let guard = params.conn.lock().await;
+                // TODO(US4): if this UPDATE fails the session row is
+                // left at `awaiting_response` with no compensating
+                // write. The `list_eligible_disputes` query excludes
+                // awaiting_response sessions so the dispute is not
+                // re-picked by the next engine tick, but the audit
+                // log is silent about why. US4's escalation path
+                // (`escalation::recommend`) should own the retry /
+                // reconciliation of this transition alongside the
+                // `escalation_recommended` + `handoff_prepared`
+                // audit rows.
                 guard.execute(
                     "UPDATE mediation_sessions
                      SET state = 'escalation_recommended',
