@@ -98,6 +98,90 @@ where
         );
     }
 
+    // ---- Phase 3 bring-up (gated, non-fatal on failure) ------------
+    //
+    // Phase 3 is additive: Phase 1/2 MUST remain fully operational if
+    // any Phase 3 bring-up step fails. The engine task (US1+) is NOT
+    // spawned here yet — only the prompt bundle is loaded (to confirm
+    // the files exist and the hash is stable) and the reasoning
+    // provider is built + health-checked. Real mediation wiring is
+    // deferred to US1 per the Option A scope for this phase.
+    //
+    // `phase3_ready` is the durable state the future engine spawn
+    // site will consume. It is `true` iff all three bring-up steps
+    // succeeded (bundle loaded AND provider built AND health check
+    // passed). Inferring readiness from log lines later would be
+    // brittle; this flag is the single source of truth.
+    let mut phase3_ready = false;
+    if config.mediation.enabled {
+        let bundle_ok = match crate::prompts::load_bundle(&config.prompts) {
+            Ok(bundle) => {
+                info!(
+                    prompt_bundle_id = %bundle.id,
+                    policy_hash = %bundle.policy_hash,
+                    "Phase 3 prompt bundle loaded"
+                );
+                true
+            }
+            Err(e) => {
+                warn!(
+                    error = %e,
+                    "Phase 3 prompt bundle failed to load; mediation will stay disabled this run"
+                );
+                false
+            }
+        };
+
+        let provider_ok = match crate::reasoning::build_provider(&config.reasoning) {
+            Ok(provider) => {
+                match crate::reasoning::health::run_startup_health_check(&*provider).await {
+                    Ok(()) => true,
+                    Err(e) => {
+                        warn!(
+                            provider = %config.reasoning.provider,
+                            model = %config.reasoning.model,
+                            api_base = %config.reasoning.api_base,
+                            error = %e,
+                            "Phase 3 reasoning provider health check failed; \
+                             mediation will stay disabled this run"
+                        );
+                        false
+                    }
+                }
+            }
+            Err(e) => {
+                warn!(
+                    provider = %config.reasoning.provider,
+                    error = %e,
+                    "Phase 3 reasoning provider could not be built; \
+                     mediation will stay disabled this run"
+                );
+                false
+            }
+        };
+
+        phase3_ready = bundle_ok && provider_ok;
+        if phase3_ready {
+            info!(
+                "Phase 3 mediation is fully configured but the engine task is NOT yet spawned \
+                 — US1+ pending. See src/chat/ and src/mediation/ module headers for the \
+                 verification points still open."
+            );
+        } else {
+            info!(
+                bundle_ok,
+                provider_ok,
+                "Phase 3 is only partially configured; mediation will stay disabled this run"
+            );
+        }
+    } else {
+        debug!("Phase 3 mediation disabled by configuration");
+    }
+    // The engine spawn site will read `phase3_ready` when US1 lands.
+    // Silence the unused warning until then.
+    let _ = phase3_ready;
+    // ----------------------------------------------------------------
+
     let client = build_client(&config).await?;
 
     let filter = dispute_filter(&mostro_pubkey, since);

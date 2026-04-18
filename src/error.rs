@@ -29,6 +29,28 @@ pub enum Error {
     #[error("invalid state transition: {from} -> {to}")]
     InvalidStateTransition { from: String, to: String },
 
+    // --- Phase 3 additions ---
+    #[error("Phase 3 mediation is disabled by configuration")]
+    MediationDisabled,
+
+    #[error("reasoning provider unavailable: {0}")]
+    ReasoningUnavailable(String),
+
+    #[error("failed to load Phase 3 prompt bundle: {0}")]
+    PromptBundleLoad(String),
+
+    #[error("Serbero's solver pubkey is not registered in the target Mostro instance")]
+    AuthNotRegistered,
+
+    #[error("solver-auth revalidation loop reached its terminal cap without success")]
+    AuthTerminated,
+
+    #[error("Mostro chat transport error: {0}")]
+    ChatTransport(String),
+
+    #[error("reasoning provider '{0}' is declared but not yet implemented in Phase 3")]
+    ProviderNotYetImplemented(String),
+    // --- end Phase 3 additions ---
     #[error(transparent)]
     Other(#[from] anyhow::Error),
 }

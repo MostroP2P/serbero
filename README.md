@@ -80,17 +80,42 @@ Mostro operates normally with or without Serbero. If Serbero is offline, operato
 
 ## Implementation Status
 
-Serbero evolves in five phases. The current codebase implements **Phases 1 and 2**:
+Serbero evolves in five phases. `main` currently implements
+**Phases 1 and 2**. Phase 3 is in progress on the
+`003-guided-mediation` branch — **Setup and Foundational only**; the
+mediation engine itself is not yet wired (see caveat below).
 
-| Phase | Scope                                                        | Status         |
-|-------|--------------------------------------------------------------|----------------|
-| 1     | Always-on dispute listener and solver notification           | **Implemented** |
-| 2     | Intake tracking, assignment visibility, re-notification      | **Implemented** |
-| 3     | Guided mediation for low-risk disputes                       | Planned        |
-| 4     | Escalation support for write-permission operators            | Planned        |
-| 5     | Optional reasoning backend (direct API / OpenClaw)           | Planned        |
+| Phase | Scope                                                        | Status on `main`     | Status on `003-guided-mediation`                                  |
+|-------|--------------------------------------------------------------|----------------------|-------------------------------------------------------------------|
+| 1     | Always-on dispute listener and solver notification           | **Implemented**      | Unchanged                                                         |
+| 2     | Intake tracking, assignment visibility, re-notification      | **Implemented**      | Unchanged                                                         |
+| 3     | Guided mediation for low-risk disputes                       | Not present          | **Foundational only** (23 / 88 tasks); engine task not yet spawned |
+| 4     | Escalation support for write-permission operators            | Planned              | Planned                                                           |
+| 5     | Optional reasoning backend (OpenAI-compatible / OpenClaw)    | Planned              | Boundary shipped; additional adapters future work                 |
 
-The full specification lives in [`specs/002-phased-dispute-coordination/`](specs/002-phased-dispute-coordination/):
+### Phase 3 caveat — what "enabled" actually means today
+
+On `003-guided-mediation`, setting `[mediation].enabled = true` does
+**NOT** start live mediation. The daemon runs the Phase 3 *bring-up*
+steps (loads the prompt bundle, builds the reasoning adapter, runs a
+health check) and then logs that the engine task is deliberately not
+spawned:
+
+```text
+Phase 3 mediation is fully configured but the engine task is NOT yet
+spawned — US1+ pending. See src/chat/ and src/mediation/ module
+headers for the verification points still open.
+```
+
+Phase 1/2 behavior is completely unaffected, whether the Phase 3
+bring-up succeeds or fails. If you need live Phase 3 mediation,
+don't deploy this branch — the Mostro dispute-chat interaction flow
+is still pending verification against current Mostro client
+behavior (see `specs/003-guided-mediation/research.md` §R-101).
+
+### Specifications
+
+The Phase 1/2 specification lives in [`specs/002-phased-dispute-coordination/`](specs/002-phased-dispute-coordination/):
 
 - [`spec.md`](specs/002-phased-dispute-coordination/spec.md) — user stories, requirements, acceptance criteria
 - [`plan.md`](specs/002-phased-dispute-coordination/plan.md) — implementation plan, flow diagrams, degraded-mode table
@@ -98,6 +123,12 @@ The full specification lives in [`specs/002-phased-dispute-coordination/`](specs
 - [`data-model.md`](specs/002-phased-dispute-coordination/data-model.md) — SQLite schema, state machine, Phase 3+ forward-looking sketches
 - [`quickstart.md`](specs/002-phased-dispute-coordination/quickstart.md) — verification steps for Phases 1 and 2
 - [`tasks.md`](specs/002-phased-dispute-coordination/tasks.md) — the 50-task implementation breakdown
+
+Phase 3 specification on the `003-guided-mediation` branch:
+
+- [`spec.md`](specs/003-guided-mediation/spec.md) — mediation user stories, requirements, acceptance criteria, and the normative sections on transport, reasoning, prompts, and memory
+- [`plan.md`](specs/003-guided-mediation/plan.md), [`research.md`](specs/003-guided-mediation/research.md), [`data-model.md`](specs/003-guided-mediation/data-model.md), [`contracts/`](specs/003-guided-mediation/contracts/) — design artifacts
+- [`tasks.md`](specs/003-guided-mediation/tasks.md) — 88-task breakdown; 23 foundational tasks are marked complete on this branch
 
 ---
 
@@ -220,6 +251,83 @@ Empty or whitespace-only env values are **ignored** — an accidentally-unset sh
 ### No CLI flag surface
 
 Phases 1 and 2 intentionally do not commit to a CLI flag surface. The entire configuration lives in `config.toml` plus the environment variables above. If you need to point at a different config file, use `SERBERO_CONFIG`, not a flag.
+
+### Phase 3 configuration surface (preview — `003-guided-mediation` branch only)
+
+Phase 3 adds four new functional sections. They are all `#[serde(default)]` — if you omit them, the daemon behaves as a Phase 1/2 daemon. On `main`, these sections are ignored entirely.
+
+```toml
+[mediation]
+enabled = true                   # Phase 3 mediation feature flag (see caveat above)
+max_rounds = 2
+party_response_timeout_seconds = 1800
+
+# Solver-auth bounded revalidation loop (scope-controlled)
+solver_auth_retry_initial_seconds      = 60
+solver_auth_retry_max_interval_seconds = 3600
+solver_auth_retry_max_total_seconds    = 86400
+solver_auth_retry_max_attempts         = 24
+
+[reasoning]
+enabled                 = true
+provider                = "openai"                    # only shipped adapter
+model                   = "gpt-5"                     # anything the endpoint supports
+api_base                = "https://api.openai.com/v1" # swap for any OpenAI-compatible endpoint
+api_key_env             = "SERBERO_REASONING_API_KEY" # vendor-neutral on purpose
+request_timeout_seconds = 30
+followup_retry_count    = 1                           # adapter owns the HTTP retry budget
+
+[prompts]
+system_instructions_path   = "./prompts/phase3-system.md"
+classification_policy_path = "./prompts/phase3-classification.md"
+escalation_policy_path     = "./prompts/phase3-escalation-policy.md"
+mediation_style_path       = "./prompts/phase3-mediation-style.md"
+message_templates_path     = "./prompts/phase3-message-templates.md"
+
+[chat]
+inbound_fetch_interval_seconds = 10
+```
+
+Per-field notes:
+
+| Section        | Key                                       | Notes                                                                                                    |
+|----------------|-------------------------------------------|----------------------------------------------------------------------------------------------------------|
+| `[mediation]`  | `enabled`                                 | Today: triggers the Phase 3 *bring-up* only. Does NOT start live mediation — see the caveat above.       |
+| `[mediation]`  | `max_rounds`                              | Number of outbound+inbound pairs per session before escalation. Defaults to `2`.                         |
+| `[mediation]`  | `party_response_timeout_seconds`          | Escalation trigger for unresponsive parties. Defaults to `1800` (30 min).                                |
+| `[mediation]`  | `solver_auth_retry_*`                     | Bounded revalidation loop for Serbero's solver registration in Mostro. Defaults: 60s→3600s, 24h/24 caps. |
+| `[reasoning]`  | `enabled`                                 | Must be `true` for Phase 3 bring-up to run the health check.                                             |
+| `[reasoning]`  | `provider`                                | `openai` (also covers OpenAI-compatible endpoints). `anthropic` / `ppqai` / `openclaw` fail loudly at startup today. |
+| `[reasoning]`  | `api_base`                                | Where the HTTP client points. Change this to swap to any OpenAI-compatible endpoint without a rebuild.   |
+| `[reasoning]`  | `api_key_env`                             | **Environment variable name** whose value holds the credential. Defaults to `SERBERO_REASONING_API_KEY`. |
+| `[reasoning]`  | `request_timeout_seconds`                 | Per-HTTP-call timeout.                                                                                   |
+| `[reasoning]`  | `followup_retry_count`                    | Additional attempts after the initial request on retryable errors (408, 429, 5xx). `0` = no retry.       |
+| `[prompts]`    | `*_path`                                  | Paths to the versioned prompt bundle files. The default paths match the `prompts/` tree in this repo.    |
+| `[chat]`       | `inbound_fetch_interval_seconds`          | Mostro-chat inbound polling cadence (used by the future US2 ingest loop).                                |
+
+### Secrets and environment variable resolution
+
+- `config.toml` **never** carries secrets. The `[reasoning].api_key` field is `skip_deserializing`; TOML cannot set it.
+- At startup the daemon reads the env variable named by `[reasoning].api_key_env` (default: `SERBERO_REASONING_API_KEY`) and stores the trimmed value. Surrounding whitespace or trailing newlines are stripped so nothing breaks bearer-token auth.
+- If `[reasoning].enabled = true` and the named variable is unset or empty, the daemon returns a loud `Error::Config` and Phase 3 stays off. Phase 1/2 behavior is unaffected.
+- Choose a variable name that fits your secrets pipeline. The default is vendor-neutral so a freshly-cloned daemon does not imply "OpenAI-only"; point it at whatever variable your deployment environment is already exporting.
+
+### Prompt bundle
+
+The default layout — matched by `[prompts].*` defaults — is:
+
+```text
+prompts/
+├── phase3-system.md
+├── phase3-classification.md
+├── phase3-escalation-policy.md
+├── phase3-mediation-style.md
+└── phase3-message-templates.md
+```
+
+The files shipped in this branch are **structural stubs** (they exist so the `policy_hash` pipeline has deterministic bytes to hash). They are clearly marked as not-live content and MUST be filled in before running Phase 3 against real disputes. The bundle is hashed deterministically at startup; every mediation session pins the exact bundle hash and id, so behavior is reproducible from git history.
+
+Missing files → `Error::PromptBundleLoad`; Phase 3 stays off, Phase 1/2 keeps running.
 
 ---
 

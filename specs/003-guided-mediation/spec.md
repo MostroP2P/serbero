@@ -337,8 +337,9 @@ provider.
 
 **Acceptance Scenarios**:
 
-1. **Given** Serbero is running with `provider = "openai"` and an
-   `OPENAI_API_KEY`,
+1. **Given** Serbero is running with `provider = "openai"` and a
+   credential exported via the configured `api_key_env` (e.g.
+   `SERBERO_REASONING_API_KEY`),
    **When** the operator keeps `provider = "openai"` but points
    `api_base` at an OpenAI-compatible endpoint and rotates the
    credential via `api_key_env`, then restarts Serbero,
@@ -349,8 +350,9 @@ provider.
    **When** Serbero's reasoning call fails,
    **Then** Serbero MUST record the failure, MUST NOT fabricate a
    classification or summary, and MUST either retry (bounded by
-   `followup_retry_count` and overall mediation timeout) or transition
-   the session to `escalation_recommended` with trigger
+   `[reasoning].followup_retry_count` — the adapter owns the retry
+   budget — and by the overall mediation timeout) or transition the
+   session to `escalation_recommended` with trigger
    `reasoning_unavailable`.
 
 3. **Given** the operator sets `provider = "anthropic"` (or any
@@ -857,15 +859,18 @@ A representative example:
 enabled = true
 max_rounds = 2
 party_response_timeout_seconds = 1800
-followup_retry_count = 1
 
 [reasoning]
 enabled = true
 provider = "openai"
 model = "gpt-5"
 api_base = "https://api.openai.com/v1"
-api_key_env = "OPENAI_API_KEY"
+api_key_env = "SERBERO_REASONING_API_KEY"
 request_timeout_seconds = 30
+# Bounded HTTP-level retry budget for the reasoning adapter. Lives
+# here — not under [mediation] — because the adapter is what performs
+# these retries (FR-104, plan degraded-mode table).
+followup_retry_count = 1
 
 [prompts]
 system_instructions_path      = "./prompts/phase3-system.md"
