@@ -160,6 +160,21 @@ async fn refuses_session_open_when_reasoning_health_fails_and_phase12_still_noti
         "no mediation_messages row may be written when the gate refuses"
     );
 
+    // The audit log must be empty too — the health gate short-
+    // circuits before `record_session_opened` runs, so a non-zero
+    // `mediation_events` count would mean the gate let a
+    // session-open path through and wrote a `session_opened`
+    // row (T033 wiring).
+    let mediation_event_count: i64 = {
+        let c = mediation_conn.lock().await;
+        c.query_row("SELECT COUNT(*) FROM mediation_events", [], |r| r.get(0))
+            .unwrap()
+    };
+    assert_eq!(
+        mediation_event_count, 0,
+        "no mediation_events row may be written when the gate refuses"
+    );
+
     // Directly count every Kind::GiftWrap (1059) the relay has
     // seen during this test. Phase 1/2 solver notification and
     // hypothetical mediation chat events both use Kind 1059, so

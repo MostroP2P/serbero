@@ -180,9 +180,26 @@ async fn opens_session_and_dispatches_first_clarifying_message_to_both_parties()
         "session row's seller_shared_pubkey must equal the ECDH-derived seller shared pubkey"
     );
 
-    // (a.1) The session_opened audit event landed in the same
-    //       transaction as the session row, carrying the pinned
-    //       bundle provenance (T033 wiring of T037).
+    // (a.1) Exactly one session_opened audit event landed in the
+    //       same transaction as the session row, carrying the
+    //       pinned bundle provenance (T033 wiring of T037). The
+    //       count assertion guards against a regression where the
+    //       transaction retries or a later slice adds a second
+    //       writer.
+    let session_opened_count: i64 = {
+        let c = conn.lock().await;
+        c.query_row(
+            "SELECT COUNT(*) FROM mediation_events
+             WHERE session_id = ?1 AND kind = 'session_opened'",
+            rusqlite::params![session_id],
+            |r| r.get(0),
+        )
+        .unwrap()
+    };
+    assert_eq!(
+        session_opened_count, 1,
+        "exactly one session_opened row expected per session open"
+    );
     let (evt_kind, evt_bundle, evt_hash): (String, String, String) = {
         let c = conn.lock().await;
         c.query_row(

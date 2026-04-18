@@ -134,11 +134,22 @@ pub fn record_session_opened(
 /// `inner_event_id` together identify the addressed party + the
 /// authoritative inner-event id used as the dedup key in
 /// `mediation_messages`.
+///
+/// `prompt_bundle_id` / `policy_hash` pin the bundle that produced
+/// the outbound draft. They are `Option` so daemon-level reconciliation
+/// paths (e.g. restart-resume re-publishing a pre-existing outbound
+/// row whose bundle may no longer be loaded) can pass `None`, but
+/// fresh session-open / draft paths should always supply them — the
+/// SC-103 invariant carries into the audit log, not just into the
+/// `mediation_messages` row.
+#[allow(clippy::too_many_arguments)]
 pub fn record_outbound_sent(
     conn: &Connection,
     session_id: &str,
     shared_pubkey: &str,
     inner_event_id: &str,
+    prompt_bundle_id: Option<&str>,
+    policy_hash: Option<&str>,
     occurred_at: i64,
 ) -> Result<i64> {
     let payload = json!({
@@ -152,8 +163,8 @@ pub fn record_outbound_sent(
         Some(session_id),
         &payload,
         None,
-        None,
-        None,
+        prompt_bundle_id,
+        policy_hash,
         occurred_at,
     )
 }
@@ -161,12 +172,19 @@ pub fn record_outbound_sent(
 /// Record a `classification_produced` event. `rationale_id`
 /// references [`crate::db::rationales`]; the raw rationale text is
 /// NEVER inlined into the payload, per FR-120.
+///
+/// `prompt_bundle_id` / `policy_hash` pin the bundle active at
+/// classification time — load-bearing for SC-103 audit, matching
+/// `record_session_opened`.
+#[allow(clippy::too_many_arguments)]
 pub fn record_classification_produced(
     conn: &Connection,
     session_id: &str,
     rationale_id: &str,
     classification: &str,
     confidence: f64,
+    prompt_bundle_id: Option<&str>,
+    policy_hash: Option<&str>,
     occurred_at: i64,
 ) -> Result<i64> {
     let payload = json!({
@@ -181,8 +199,8 @@ pub fn record_classification_produced(
         Some(session_id),
         &payload,
         Some(rationale_id),
-        None,
-        None,
+        prompt_bundle_id,
+        policy_hash,
         occurred_at,
     )
 }
@@ -280,21 +298,32 @@ mod tests {
     }
 
     #[test]
-    fn outbound_sent_constructor_encodes_payload() {
+    fn outbound_sent_constructor_encodes_payload_and_pin() {
         let conn = fresh_with_session();
-        let id =
-            record_outbound_sent(&conn, "sess-1", "shared-pk-hex", "inner-event-id", 600).unwrap();
-        let (kind, payload): (String, String) = conn
+        let id = record_outbound_sent(
+            &conn,
+            "sess-1",
+            "shared-pk-hex",
+            "inner-event-id",
+            Some("phase3-default"),
+            Some("pol-hash"),
+            600,
+        )
+        .unwrap();
+        let (kind, payload, bundle, hash): (String, String, Option<String>, Option<String>) = conn
             .query_row(
-                "SELECT kind, payload_json FROM mediation_events WHERE id = ?1",
+                "SELECT kind, payload_json, prompt_bundle_id, policy_hash
+                 FROM mediation_events WHERE id = ?1",
                 params![id],
-                |r| Ok((r.get(0)?, r.get(1)?)),
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
             )
             .unwrap();
         assert_eq!(kind, "outbound_sent");
         let parsed: serde_json::Value = serde_json::from_str(&payload).unwrap();
         assert_eq!(parsed["shared_pubkey"], "shared-pk-hex");
         assert_eq!(parsed["inner_event_id"], "inner-event-id");
+        assert_eq!(bundle.as_deref(), Some("phase3-default"));
+        assert_eq!(hash.as_deref(), Some("pol-hash"));
     }
 
     #[test]
@@ -319,19 +348,29 @@ mod tests {
             &rationale_id_var,
             "coordination_failure_resolvable",
             0.9,
+            Some("phase3-default"),
+            Some("pol-hash"),
             700,
         )
         .unwrap();
-        let (kind, payload, rationale_id): (String, String, Option<String>) = conn
+        let (kind, payload, rationale_id, bundle, hash): (
+            String,
+            String,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        ) = conn
             .query_row(
-                "SELECT kind, payload_json, rationale_id
+                "SELECT kind, payload_json, rationale_id, prompt_bundle_id, policy_hash
                  FROM mediation_events WHERE id = ?1",
                 params![id],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
             )
             .unwrap();
         assert_eq!(kind, "classification_produced");
         assert_eq!(rationale_id.as_deref(), Some(rationale_id_var.as_str()));
+        assert_eq!(bundle.as_deref(), Some("phase3-default"));
+        assert_eq!(hash.as_deref(), Some("pol-hash"));
         let parsed: serde_json::Value = serde_json::from_str(&payload).unwrap();
         assert_eq!(parsed["classification"], "coordination_failure_resolvable");
         assert!((parsed["confidence"].as_f64().unwrap() - 0.9).abs() < 1e-9);

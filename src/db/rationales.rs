@@ -20,7 +20,7 @@
 use rusqlite::{params, Connection};
 use sha2::{Digest, Sha256};
 
-use crate::error::Result;
+use crate::error::{Error, Result};
 
 /// Row view on `reasoning_rationales`.
 ///
@@ -56,6 +56,18 @@ pub fn rationale_id_for(text: &str) -> String {
 /// - The `session_id` is optional: daemon-scoped rationales (e.g.
 ///   a classification during handoff prep) may not be tied to a
 ///   single session yet.
+///
+/// Provenance-drift guard: because the primary key is only the
+/// content hash, two legitimately-different reasoning calls could
+/// produce the same rationale text under different
+/// provider / model / bundle / policy-hash / session-id values.
+/// Silently aliasing them would lose per-occurrence audit metadata.
+/// On a hash collision we therefore re-read the persisted row and
+/// compare all five fields; if any differ, return
+/// [`Error::RationaleProvenanceConflict`] rather than returning the
+/// id as if nothing happened. A future slice may move per-occurrence
+/// metadata into a dedicated `rationale_occurrences` table; until
+/// then this loud error keeps the audit store honest.
 #[allow(clippy::too_many_arguments)]
 pub fn insert_rationale(
     conn: &Connection,
@@ -68,7 +80,7 @@ pub fn insert_rationale(
     generated_at: i64,
 ) -> Result<String> {
     let rationale_id = rationale_id_for(rationale_text);
-    conn.execute(
+    let inserted = conn.execute(
         "INSERT OR IGNORE INTO reasoning_rationales (
             rationale_id, session_id, provider, model,
             prompt_bundle_id, policy_hash, rationale_text, generated_at
@@ -84,6 +96,48 @@ pub fn insert_rationale(
             generated_at,
         ],
     )?;
+
+    if inserted == 0 {
+        // The id already existed. Validate that the persisted
+        // provenance matches what this caller asserted; otherwise
+        // the audit store would silently shadow divergent calls.
+        let (
+            existing_session_id,
+            existing_provider,
+            existing_model,
+            existing_bundle,
+            existing_hash,
+        ): (Option<String>, String, String, String, String) = conn.query_row(
+            "SELECT session_id, provider, model, prompt_bundle_id, policy_hash
+             FROM reasoning_rationales WHERE rationale_id = ?1",
+            params![rationale_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+        )?;
+
+        let mut mismatches: Vec<&'static str> = Vec::new();
+        if existing_session_id.as_deref() != session_id {
+            mismatches.push("session_id");
+        }
+        if existing_provider != provider {
+            mismatches.push("provider");
+        }
+        if existing_model != model {
+            mismatches.push("model");
+        }
+        if existing_bundle != prompt_bundle_id {
+            mismatches.push("prompt_bundle_id");
+        }
+        if existing_hash != policy_hash {
+            mismatches.push("policy_hash");
+        }
+        if !mismatches.is_empty() {
+            return Err(Error::RationaleProvenanceConflict(format!(
+                "rationale {rationale_id} already persisted with different {fields}",
+                fields = mismatches.join(", ")
+            )));
+        }
+    }
+
     Ok(rationale_id)
 }
 
@@ -208,5 +262,52 @@ mod tests {
     fn get_rationale_returns_none_for_unknown_id() {
         let conn = fresh();
         assert!(get_rationale(&conn, "deadbeef").unwrap().is_none());
+    }
+
+    #[test]
+    fn same_text_with_divergent_provenance_is_rejected() {
+        let conn = fresh();
+        insert_rationale(
+            &conn,
+            None,
+            "openai",
+            "gpt-5",
+            "phase3-default",
+            "pol-hash-1",
+            "the exact same rationale text",
+            100,
+        )
+        .unwrap();
+        // Second call: same text (same content hash), but a
+        // different `policy_hash`. This would previously be
+        // silently aliased to the first row. Now it MUST error.
+        let err = insert_rationale(
+            &conn,
+            None,
+            "openai",
+            "gpt-5",
+            "phase3-default",
+            "pol-hash-2-different",
+            "the exact same rationale text",
+            200,
+        )
+        .expect_err("divergent provenance on an existing content-hash must error");
+        match err {
+            crate::error::Error::RationaleProvenanceConflict(msg) => {
+                assert!(
+                    msg.contains("policy_hash"),
+                    "error should list the conflicting fields: {msg}"
+                );
+            }
+            other => panic!("expected RationaleProvenanceConflict, got {other}"),
+        }
+
+        // Sanity: still only one row in the table.
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM reasoning_rationales", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(count, 1);
     }
 }

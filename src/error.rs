@@ -50,6 +50,14 @@ pub enum Error {
 
     #[error("reasoning provider '{0}' is declared but not yet implemented in Phase 3")]
     ProviderNotYetImplemented(String),
+
+    /// Two writes to `reasoning_rationales` produced the same
+    /// content-addressed `rationale_id` but carried different
+    /// provenance (provider, model, bundle pin, policy hash, or
+    /// session id). The first writer wins the row; flagging the
+    /// second prevents silent drift in the audit store.
+    #[error("rationale provenance conflict: {0}")]
+    RationaleProvenanceConflict(String),
     // --- end Phase 3 additions ---
     #[error(transparent)]
     Other(#[from] anyhow::Error),
