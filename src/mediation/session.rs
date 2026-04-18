@@ -386,8 +386,15 @@ pub async fn ingest_inbound(
         TranscriptParty::Seller => seller_last,
         TranscriptParty::Serbero => unreachable!("guarded above"),
     };
+    // Strict less-than. Equal-timestamp messages are NOT stale:
+    // the party may legitimately send two distinct messages in the
+    // same second, and each carries its own inner_event_id. True
+    // replays (identical inner_event_id) are caught downstream by
+    // `INSERT OR IGNORE`, which returns `Duplicate`; using `<=`
+    // here would instead mark the second same-second message as
+    // stale and silently drop it from the round counter.
     let is_stale = last_seen_for_party
-        .map(|prev| envelope.inner_created_at <= prev)
+        .map(|prev| envelope.inner_created_at < prev)
         .unwrap_or(false);
 
     let tx = conn.transaction()?;

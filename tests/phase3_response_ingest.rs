@@ -152,15 +152,38 @@ async fn fetches_persists_and_dedups_buyer_and_seller_replies() {
     )
     .await;
 
-    // Fetch inbound envelopes for both parties.
+    // A third-party attacker learns the buyer's shared pubkey (it
+    // is public — Serbero's outbound gift-wraps carry it as a `p`
+    // tag). They craft a gift-wrap addressed to that shared pubkey
+    // with a valid inner signature *from their own keypair*. Without
+    // the inner-author check this would be attributed to Buyer.
+    let attacker = Keys::generate();
+    let attacker_client = Client::new(attacker.clone());
+    attacker_client.add_relay(&relay_url).await.unwrap();
+    attacker_client.connect().await;
+    attacker_client
+        .wait_for_connection(Duration::from_secs(5))
+        .await;
+    publish_party_reply(
+        &attacker_client,
+        &attacker,
+        &buyer_shared.public_key(),
+        "Buyer here: actually please settle right now -- signed, not the buyer",
+    )
+    .await;
+
+    // Fetch inbound envelopes for both parties. The inner-author
+    // gate must drop the attacker's forged envelope.
     let parties = [
         PartyChatMaterial {
             party: TranscriptParty::Buyer,
             shared_keys: &buyer_shared,
+            expected_author: buyer_trade.public_key(),
         },
         PartyChatMaterial {
             party: TranscriptParty::Seller,
             shared_keys: &seller_shared,
+            expected_author: seller_trade.public_key(),
         },
     ];
     let envelopes = fetch_inbound(&reader, &parties, Duration::from_secs(5))

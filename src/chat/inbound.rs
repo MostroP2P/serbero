@@ -26,14 +26,28 @@
 //!   returned. A tampered or re-signed inner payload is dropped on
 //!   the floor with a `ChatTransport` error on that specific event;
 //!   the rest of the batch still flows.
+//! - The inner event kind is pinned to `Kind::TextNote` (1). The
+//!   mostro-chat contract ships inner payloads as `kind 1` text
+//!   notes (Mostrix `build_custom_wrap_event` uses
+//!   `EventBuilder::text_note`); anything else is rejected before
+//!   it reaches the persistence layer.
+//! - **Inner-signer authentication is enforced** against the
+//!   expected per-party trade pubkey, not just "any signer whose
+//!   signature is valid". The shared pubkey `p` tag on every
+//!   outbound gift-wrap is public, and NIP-44 encryption requires
+//!   only the recipient's *public* key — any third party can
+//!   build a gift-wrap that decrypts with `shared.sk`. Without the
+//!   author check, such a wrap would be attributed to Buyer /
+//!   Seller. The caller passes the expected trade pubkey in
+//!   [`PartyChatMaterial::expected_author`]; envelopes whose inner
+//!   signer does not match are dropped at `warn!` level.
 //! - "Implementation-verified against current Mostro/Mostrix
 //!   behavior": the party's chat messages use `trade_keys` (not the
 //!   shared keys) to sign the inner event, mirroring Mostrix
-//!   `send_user_order_chat_message_via_shared_key`. Serbero's own
-//!   messages are signed by its solver identity. We do NOT pin the
-//!   inner signer to any specific expected pubkey at this layer —
-//!   that is a policy-layer concern (US3+) since a dispute-scoped
-//!   trade pubkey is not persisted in the US1 session row.
+//!   `send_user_order_chat_message_via_shared_key`. Mostrix itself
+//!   does not enforce the inner-author match; Serbero does, because
+//!   attribution to a party is load-bearing for classification and
+//!   later escalation (US3 / US4).
 
 use std::time::Duration;
 
@@ -64,14 +78,26 @@ pub struct InboundEnvelope {
 }
 
 /// Per-party chat material a caller must supply to [`fetch_inbound`].
-/// Carries both the shared pubkey (used as the `p` tag filter) and
-/// the shared secret `Keys` (used to NIP-44 decrypt). The data-model
-/// persists only the pubkey; the secret lives in process memory for
-/// the session's lifetime (see `data-model.md`).
+/// Carries:
+///
+/// - `party`: the transcript-party label for attribution
+///   (`Buyer` / `Seller`).
+/// - `shared_keys`: the ECDH-derived shared key pair used to NIP-44
+///   decrypt the gift-wrap. The data-model persists only the pubkey;
+///   the secret lives in process memory for the session's lifetime
+///   (see `data-model.md`).
+/// - `expected_author`: the party's *trade-scoped* pubkey — the one
+///   Mostro emits in `SolverDisputeInfo.buyer_pubkey` /
+///   `seller_pubkey`. Used to authenticate the inner event's signer
+///   so a third party who knows `shared_keys.public_key()` cannot
+///   impersonate the party (NIP-44 encryption is public-key only;
+///   the author check is what ties the envelope back to the
+///   specific party identity).
 #[derive(Debug, Clone)]
 pub struct PartyChatMaterial<'a> {
     pub party: TranscriptParty,
     pub shared_keys: &'a Keys,
+    pub expected_author: PublicKey,
 }
 
 /// Unwrap a custom mostro-chat gift-wrap event with the per-party
@@ -89,6 +115,17 @@ pub fn unwrap_with_shared_key(
         .map_err(|e| Error::ChatTransport(format!("NIP-44 decrypt failed: {e}")))?;
     let inner = Event::from_json(&decrypted)
         .map_err(|e| Error::ChatTransport(format!("invalid inner chat event JSON: {e}")))?;
+    // The mostro-chat contract ships inner payloads as kind-1 text
+    // notes. Reject anything else before we even verify the
+    // signature so a misbehaving peer cannot push e.g. a kind-40
+    // channel-create or a replaceable-kind event through the
+    // mediation transport.
+    if inner.kind != Kind::TextNote {
+        return Err(Error::ChatTransport(format!(
+            "inner chat event must be kind TextNote, got {}",
+            inner.kind.as_u16()
+        )));
+    }
     inner
         .verify()
         .map_err(|e| Error::ChatTransport(format!("inner chat event signature invalid: {e}")))?;
@@ -154,6 +191,22 @@ pub async fn fetch_inbound(
         for wrapped in events.iter() {
             match unwrap_with_shared_key(party.shared_keys, wrapped) {
                 Ok((content, inner_ts, inner_sender)) => {
+                    // Authenticate the inner event's author against
+                    // the expected trade pubkey. See module header —
+                    // without this, any third party who has seen
+                    // `shared_pubkey` on the relay could craft a
+                    // decryptable wrap and have it attributed to the
+                    // party.
+                    if inner_sender != party.expected_author {
+                        tracing::warn!(
+                            party = %party.party,
+                            outer_event_id = %wrapped.id.to_hex(),
+                            expected_author = %party.expected_author.to_hex(),
+                            actual_author = %inner_sender.to_hex(),
+                            "dropping inbound gift-wrap: inner signer does not match expected party trade pubkey"
+                        );
+                        continue;
+                    }
                     out.push(InboundEnvelope {
                         party: party.party,
                         shared_pubkey: shared_pubkey.to_hex(),
@@ -272,6 +325,43 @@ mod tests {
                 || msg.contains("invalid inner chat event JSON")
                 || msg.contains("signature invalid"),
             "error should name the verification stage that failed: {msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn unwrap_rejects_non_text_note_inner_kinds() {
+        let serbero = Keys::generate();
+        let buyer = Keys::generate();
+        let shared = derive_shared_keys(&serbero, &buyer.public_key()).unwrap();
+
+        // Build an inner event that is a channel-create (kind 40)
+        // instead of a kind-1 text note, sign it legitimately, wrap
+        // it normally. Decrypt + signature verification would both
+        // succeed; only the kind guard should reject it.
+        let inner = EventBuilder::new(Kind::Custom(40), "{\"name\":\"evil\"}")
+            .build(serbero.public_key())
+            .sign(&serbero)
+            .await
+            .unwrap();
+        let ephem = Keys::generate();
+        let encrypted = nip44::encrypt(
+            ephem.secret_key(),
+            &shared.public_key(),
+            inner.as_json(),
+            nip44::Version::V2,
+        )
+        .unwrap();
+        let wrap = EventBuilder::new(Kind::GiftWrap, encrypted)
+            .tag(Tag::public_key(shared.public_key()))
+            .custom_created_at(Timestamp::tweaked(nip59::RANGE_RANDOM_TIMESTAMP_TWEAK))
+            .sign_with_keys(&ephem)
+            .unwrap();
+
+        let err = unwrap_with_shared_key(&shared, &wrap)
+            .expect_err("non-TextNote inner must be rejected");
+        assert!(
+            err.to_string().contains("must be kind TextNote"),
+            "error should flag the kind guard: {err}"
         );
     }
 
