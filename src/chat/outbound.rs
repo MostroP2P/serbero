@@ -27,6 +27,7 @@ use crate::error::{Error, Result};
 /// `inner_event_id` and `inner_created_at` to persist the outbound
 /// row in `mediation_messages` (the unique index on
 /// `(session_id, inner_event_id)` is the dedup primary key).
+#[derive(Debug)]
 pub struct BuiltWrap {
     pub outer: Event,
     pub inner_event_id: EventId,
@@ -42,12 +43,6 @@ pub async fn send_chat_message(
     shared_keys: &Keys,
     content: &str,
 ) -> Result<EventId> {
-    let content = content.trim();
-    if content.is_empty() {
-        return Err(Error::ChatTransport(
-            "refusing to send empty mediation chat message".into(),
-        ));
-    }
     let built = build_wrap(sender_keys, &shared_keys.public_key(), content).await?;
     let outer_id = built.outer.id;
     client
@@ -67,6 +62,17 @@ pub async fn build_wrap(
     shared_pubkey: &PublicKey,
     message: &str,
 ) -> Result<BuiltWrap> {
+    // Guard empty / whitespace-only content here (not just in
+    // `send_chat_message`) so direct callers like
+    // `mediation::session::open_session` cannot persist a
+    // mediation_messages row for a message that will never be a
+    // meaningful clarification.
+    if message.trim().is_empty() {
+        return Err(Error::ChatTransport(
+            "refusing to build mediation chat wrap with empty content".into(),
+        ));
+    }
+
     // Inner event: a plain kind-1 text note, signed by the sender's
     // keys (Mostrix comment: "Message is just sent inside rumor as
     // per https://mostro.network/protocol/chat.html please check
@@ -157,20 +163,23 @@ mod tests {
         // canonical serialization.)
     }
 
-    /// Empty content is refused — prevents blank outbound messages
-    /// from ever being wrapped or persisted.
+    /// Empty / whitespace-only content is refused by `build_wrap`
+    /// itself — both the top-level send entry and the direct-build
+    /// call sites in `mediation::session::open_session` are covered
+    /// without needing a live relay.
     #[tokio::test]
-    async fn empty_content_is_rejected() {
+    async fn empty_content_is_rejected_by_build_wrap() {
         let sender = Keys::generate();
         let shared = Keys::generate();
-        // send_chat_message is the public surface; exercise it with
-        // a fake client would require network — so we test the same
-        // invariant via build_wrap_event-equivalent pre-check by
-        // calling send_chat_message on a fresh client and expecting
-        // the error BEFORE any network call. Skipped here because
-        // a real Client requires relays; the trim-and-reject is
-        // covered in send_chat_message's first lines and mirrored by
-        // the builder's assumption (non-empty content).
-        let _ = (sender, shared);
+        for bad in ["", "   ", "\n\t"] {
+            let err = build_wrap(&sender, &shared.public_key(), bad)
+                .await
+                .expect_err("build_wrap must refuse empty / whitespace-only content");
+            let msg = err.to_string();
+            assert!(
+                msg.contains("empty content"),
+                "unexpected error for {bad:?}: {msg}"
+            );
+        }
     }
 }

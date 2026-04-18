@@ -109,6 +109,11 @@ impl MostroChatSim {
         let client = Client::new(keys.clone());
         client.add_relay(relay_url).await.unwrap();
         client.connect().await;
+        // Wait for the MockRelay handshake before subscribing, so
+        // our REQ is guaranteed to be registered before Serbero
+        // publishes the AdminTakeDispute DM. Replaces the earlier
+        // fixed `sleep(200ms)` in the test body, which was racy.
+        client.wait_for_connection(Duration::from_secs(5)).await;
 
         // Subscribe to gift-wraps addressed to us. The `since`
         // window must be wide enough to cover NIP-59's random
@@ -279,9 +284,13 @@ async fn opens_session_and_dispatches_first_clarifying_message_to_both_parties()
     .unwrap();
     let conn = Arc::new(AsyncMutex::new(raw));
 
-    // Give the sim a moment to complete its subscribe before we
-    // publish the AdminTakeDispute DM.
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    // Also gate Serbero's own client on relay readiness so the REQ
+    // for the AdminTookDispute response lands before the sim could
+    // otherwise reply. `MostroChatSim::start` already awaited its
+    // own `wait_for_connection`.
+    serbero_client
+        .wait_for_connection(Duration::from_secs(5))
+        .await;
 
     // Call the session-open entry point.
     let outcome = mediation::open_dispute_session(
@@ -392,23 +401,36 @@ async fn opens_session_and_dispatches_first_clarifying_message_to_both_parties()
             shared.public_key().to_hex()
         );
         let mut any_decrypted = false;
+        let mut first_err: Option<String> = None;
         for ev in events.iter() {
-            if let Ok((content, _ts, inner_sender)) = unwrap_with_shared_key(shared, ev) {
-                if content.contains(base) {
-                    assert_eq!(
-                        inner_sender,
-                        serbero_keys.public_key(),
-                        "inner event must be signed by Serbero's keys"
-                    );
-                    any_decrypted = true;
-                    break;
+            match unwrap_with_shared_key(shared, ev) {
+                Ok((content, _ts, inner_sender)) => {
+                    if content.contains(base) {
+                        assert_eq!(
+                            inner_sender,
+                            serbero_keys.public_key(),
+                            "inner event must be signed by Serbero's keys"
+                        );
+                        any_decrypted = true;
+                        break;
+                    }
+                }
+                Err(e) => {
+                    if first_err.is_none() {
+                        first_err = Some(e.to_string());
+                    }
                 }
             }
         }
         assert!(
             any_decrypted,
-            "shared-key {} could not decrypt an event containing the clarifying text",
-            shared.public_key().to_hex()
+            "shared-key {} could not decrypt an event containing the clarifying text \
+             (events tried: {}; first unwrap error: {})",
+            shared.public_key().to_hex(),
+            events.len(),
+            first_err
+                .as_deref()
+                .unwrap_or("<no decrypt errors recorded>")
         );
     }
 }

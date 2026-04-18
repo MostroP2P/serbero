@@ -105,82 +105,99 @@ pub async fn run_take_flow(p: TakeFlowParams<'_>) -> Result<DisputeChatMaterial>
             admin_pubkey.to_hex(),
         )
         .since(since_window);
-    let _sub = p
+    let sub = p
         .client
         .subscribe(filter.clone(), None)
         .await
         .map_err(|e| Error::ChatTransport(format!("failed to subscribe for take-flow: {e}")))?;
 
-    // (2) Build and send the AdminTakeDispute mostro-core message.
-    //     Mirrors Mostrix execute_take_dispute.rs lines 63-85.
-    let take_msg = Message::new_dispute(
-        Some(p.dispute_id),
-        None,
-        None,
-        Action::AdminTakeDispute,
-        None,
-    );
-    let json = take_msg
-        .as_json()
-        .map_err(|_| Error::ChatTransport("failed to serialize AdminTakeDispute".into()))?;
-    let send_out = p
-        .client
-        .send_private_msg(*p.mostro_pubkey, json, [])
-        .await
-        .map_err(|e| Error::ChatTransport(format!("failed to send AdminTakeDispute DM: {e}")))?;
-    tracing::info!(
-        mostro = %p.mostro_pubkey.to_hex(),
-        outer_event_id = %send_out.val,
-        "sent AdminTakeDispute to Mostro"
-    );
-
-    // (3) Poll for the AdminTookDispute response. We use
-    //     client.fetch_events (blocking with a short timeout) rather
-    //     than handle_notifications so this function remains a
-    //     self-contained one-shot.
-    let deadline = tokio::time::Instant::now() + p.timeout;
-    loop {
-        if tokio::time::Instant::now() >= deadline {
-            return Err(Error::ChatTransport(
-                "timed out waiting for AdminTookDispute response from Mostro".into(),
-            ));
-        }
-        let events = p
+    // Everything that can return early lives in this inner block so
+    // the caller can always call `unsubscribe` on the way out (happy
+    // path, timeout, send / fetch errors). The earlier implementation
+    // held the subscription for the life of the client, leaking one
+    // REQ per session-open attempt.
+    let result: Result<DisputeChatMaterial> = async {
+        // (2) Build and send the AdminTakeDispute mostro-core message.
+        //     Mirrors Mostrix execute_take_dispute.rs lines 63-85.
+        let take_msg = Message::new_dispute(
+            Some(p.dispute_id),
+            None,
+            None,
+            Action::AdminTakeDispute,
+            None,
+        );
+        let json = take_msg
+            .as_json()
+            .map_err(|_| Error::ChatTransport("failed to serialize AdminTakeDispute".into()))?;
+        let send_out = p
             .client
-            .fetch_events(filter.clone(), p.poll_interval)
+            .send_private_msg(*p.mostro_pubkey, json, [])
             .await
             .map_err(|e| {
-                Error::ChatTransport(format!("fetch_events failed during take-flow: {e}"))
+                Error::ChatTransport(format!("failed to send AdminTakeDispute DM: {e}"))
             })?;
-        tracing::trace!(count = events.len(), "take-flow: fetched candidate events");
+        tracing::info!(
+            mostro = %p.mostro_pubkey.to_hex(),
+            outer_event_id = %send_out.val,
+            "sent AdminTakeDispute to Mostro"
+        );
 
-        for wrapped in events.iter() {
-            let Ok(unwrapped) = p.client.unwrap_gift_wrap(wrapped).await else {
-                continue;
-            };
-            if unwrapped.sender != *p.mostro_pubkey {
-                continue;
+        // (3) Poll for the AdminTookDispute response. We use
+        //     client.fetch_events (blocking with a short timeout) rather
+        //     than handle_notifications so this function remains a
+        //     self-contained one-shot.
+        let deadline = tokio::time::Instant::now() + p.timeout;
+        loop {
+            if tokio::time::Instant::now() >= deadline {
+                return Err(Error::ChatTransport(
+                    "timed out waiting for AdminTookDispute response from Mostro".into(),
+                ));
             }
-            // The rumor content is the JSON-encoded mostro-core
-            // Message. Mirrors Mostrix parse_dm_events.
-            let Ok(response) = Message::from_json(&unwrapped.rumor.content) else {
-                continue;
-            };
-            let kind = response.get_inner_message_kind();
-            if kind.action != Action::AdminTookDispute {
-                continue;
+            let events = p
+                .client
+                .fetch_events(filter.clone(), p.poll_interval)
+                .await
+                .map_err(|e| {
+                    Error::ChatTransport(format!("fetch_events failed during take-flow: {e}"))
+                })?;
+            tracing::trace!(count = events.len(), "take-flow: fetched candidate events");
+
+            for wrapped in events.iter() {
+                let Ok(unwrapped) = p.client.unwrap_gift_wrap(wrapped).await else {
+                    continue;
+                };
+                if unwrapped.sender != *p.mostro_pubkey {
+                    continue;
+                }
+                // The rumor content is the JSON-encoded mostro-core
+                // Message. Mirrors Mostrix parse_dm_events.
+                let Ok(response) = Message::from_json(&unwrapped.rumor.content) else {
+                    continue;
+                };
+                let kind = response.get_inner_message_kind();
+                if kind.action != Action::AdminTookDispute {
+                    continue;
+                }
+                let Some(Payload::Dispute(id, Some(info))) = &kind.payload else {
+                    continue;
+                };
+                if *id != p.dispute_id {
+                    continue;
+                }
+                return material_from_solver_info(p.serbero_keys, info);
             }
-            let Some(Payload::Dispute(id, Some(info))) = &kind.payload else {
-                continue;
-            };
-            if *id != p.dispute_id {
-                continue;
-            }
-            return material_from_solver_info(p.serbero_keys, info);
+            // Short cooperative yield before the next poll round.
+            tokio::time::sleep(p.poll_interval).await;
         }
-        // Short cooperative yield before the next poll round.
-        tokio::time::sleep(p.poll_interval).await;
     }
+    .await;
+
+    // Drop the subscription regardless of outcome. `unsubscribe` is
+    // infallible by signature (no Result), so there is no error to
+    // propagate; any failure to reach the relay still leaves the
+    // client-side subscription map cleaned up.
+    p.client.unsubscribe(&sub.val).await;
+    result
 }
 
 fn material_from_solver_info(
@@ -297,6 +314,9 @@ mod tests {
         let buyer = Keys::generate();
         let bad = info(&buyer.public_key().to_hex(), "not-a-pubkey");
         let err = material_from_solver_info(&serbero, &bad).unwrap_err();
-        matches!(err, Error::ChatTransport(_));
+        assert!(
+            matches!(err, Error::ChatTransport(_)),
+            "expected ChatTransport, got {err}"
+        );
     }
 }

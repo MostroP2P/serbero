@@ -81,9 +81,15 @@ pub fn insert_outbound_message(conn: &Connection, m: &NewOutboundMessage<'_>) ->
     Ok(())
 }
 
-/// Lookup the most recently opened mediation_sessions row for a
-/// given dispute_id, if any. Used by the engine to gate session
-/// opens (don't open a new session if one is already live).
+/// Lookup the most recently opened *live* mediation_sessions row for
+/// a given dispute_id, if any. Rows in terminal / handed-off states
+/// (`closed`, `summary_delivered`, `escalation_recommended`,
+/// `superseded_by_human`) are excluded — a dispute that was closed
+/// or escalated earlier must not block a later session open.
+///
+/// Used by the engine to gate session opens and, crucially, re-checked
+/// inside the final open-session DB transaction to close the
+/// check-then-act race.
 pub fn latest_open_session_for(
     conn: &Connection,
     dispute_id: &str,
@@ -93,6 +99,12 @@ pub fn latest_open_session_for(
     match conn.query_row(
         "SELECT session_id, state FROM mediation_sessions
          WHERE dispute_id = ?1
+           AND state NOT IN (
+               'closed',
+               'summary_delivered',
+               'escalation_recommended',
+               'superseded_by_human'
+           )
          ORDER BY started_at DESC
          LIMIT 1",
         params![dispute_id],
@@ -207,5 +219,30 @@ mod tests {
         let (sid, state) = found.unwrap();
         assert_eq!(sid, "sess-1");
         assert_eq!(state, MediationSessionState::AwaitingResponse);
+    }
+
+    #[test]
+    fn latest_open_session_skips_terminal_states() {
+        let conn = fresh();
+        insert_session(&conn, &new_session("pol-hash-4")).unwrap();
+        // Flip the session to a terminal / handed-off state; a
+        // subsequent open attempt must NOT be blocked by it.
+        for terminal in [
+            "closed",
+            "summary_delivered",
+            "escalation_recommended",
+            "superseded_by_human",
+        ] {
+            conn.execute(
+                "UPDATE mediation_sessions SET state = ?1 WHERE session_id = 'sess-1'",
+                params![terminal],
+            )
+            .unwrap();
+            let found = latest_open_session_for(&conn, "dispute-xyz").unwrap();
+            assert!(
+                found.is_none(),
+                "latest_open_session_for must skip state '{terminal}', got {found:?}"
+            );
+        }
     }
 }

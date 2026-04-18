@@ -139,7 +139,7 @@ pub async fn open_session(params: OpenSessionParams<'_>) -> Result<OpenOutcome> 
         }
     };
 
-    // (5) Send outbound chat events, one per party.
+    // (5) Build outbound chat wraps (but do NOT publish yet).
     //
     // The inner event id is a content-hash: same content + same
     // signer + same second would collide. We address that by
@@ -149,6 +149,12 @@ pub async fn open_session(params: OpenSessionParams<'_>) -> Result<OpenOutcome> 
     // clarification drafts land in the same second. Full per-party
     // model drafting (distinct questions per party) is US3+
     // territory — this is the minimal US1-safe shape.
+    //
+    // Construction order matters: we persist the session +
+    // outbound rows FIRST, then publish the wraps. That is the
+    // transactional-outbox shape: on commit failure nothing is on
+    // the relay, on publish failure the unique index on
+    // `(session_id, inner_event_id)` makes a later retry idempotent.
     let buyer_shared = &material.buyer_shared_keys;
     let seller_shared = &material.seller_shared_keys;
     let buyer_content = format!("Buyer: {}", ask_text);
@@ -176,20 +182,21 @@ pub async fn open_session(params: OpenSessionParams<'_>) -> Result<OpenOutcome> 
                 .into(),
         ));
     }
-    params
-        .client
-        .send_event(&buyer_wrap.outer)
-        .await
-        .map_err(|e| Error::ChatTransport(format!("publish buyer gift-wrap failed: {e}")))?;
-    params
-        .client
-        .send_event(&seller_wrap.outer)
-        .await
-        .map_err(|e| Error::ChatTransport(format!("publish seller gift-wrap failed: {e}")))?;
 
-    // (6) Persist everything in one DB-lock scope.
-    let now = current_ts_secs();
+    // (6) Persist first. The gate from step (1) is re-checked under
+    //     the same connection so that a concurrent open on the same
+    //     dispute_id cannot slip through between step (1) and here.
+    //     SQLite serialises on the single `AsyncMutex<Connection>`,
+    //     so this re-check is atomic with the inserts that follow.
+    let now = current_ts_secs()?;
     let mut conn = params.conn.lock().await;
+    if let Some((sid, _state)) = db::mediation::latest_open_session_for(&conn, params.dispute_id)? {
+        info!(
+            session_id = %sid,
+            "mediation session opened concurrently; aborting this attempt without publishing"
+        );
+        return Ok(OpenOutcome::AlreadyOpen { session_id: sid });
+    }
     let tx = conn.transaction()?;
     db::mediation::insert_session(
         &tx,
@@ -234,6 +241,26 @@ pub async fn open_session(params: OpenSessionParams<'_>) -> Result<OpenOutcome> 
         },
     )?;
     tx.commit()?;
+    // Release the DB lock before doing network I/O.
+    drop(conn);
+
+    // (7) Publish the wraps. On failure the DB rows already exist;
+    //     a later reconciliation pass (deferred to US2) can re-send
+    //     them because the outer events are deterministic from the
+    //     stored inner_event_id / outer_event_id. For this US1
+    //     slice we surface a ChatTransport error and let the caller
+    //     decide; the unique index on `(session_id, inner_event_id)`
+    //     keeps retries from creating duplicate rows.
+    params
+        .client
+        .send_event(&buyer_wrap.outer)
+        .await
+        .map_err(|e| Error::ChatTransport(format!("publish buyer gift-wrap failed: {e}")))?;
+    params
+        .client
+        .send_event(&seller_wrap.outer)
+        .await
+        .map_err(|e| Error::ChatTransport(format!("publish seller gift-wrap failed: {e}")))?;
 
     info!(
         session_id = %session_id,
@@ -244,10 +271,14 @@ pub async fn open_session(params: OpenSessionParams<'_>) -> Result<OpenOutcome> 
     Ok(OpenOutcome::Opened { session_id })
 }
 
-fn current_ts_secs() -> i64 {
+/// Surface clock-before-UNIX-EPOCH as a loud error rather than a
+/// silent `0` timestamp. A zero would corrupt `started_at` /
+/// `persisted_at` ordering across `mediation_sessions` and
+/// `mediation_messages` rows without leaving any trace.
+fn current_ts_secs() -> Result<i64> {
     use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
+        .map_err(|e| Error::ChatTransport(format!("system clock is before UNIX_EPOCH: {e}")))
 }
