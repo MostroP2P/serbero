@@ -422,10 +422,10 @@ async fn opens_session_and_dispatches_first_clarifying_message_to_both_parties()
         let mut first_err: Option<String> = None;
         for ev in events.iter() {
             match unwrap_with_shared_key(shared, ev) {
-                Ok((content, _ts, inner_sender)) => {
-                    if content.contains(base) {
+                Ok(inner) => {
+                    if inner.content.contains(base) {
                         assert_eq!(
-                            inner_sender,
+                            inner.sender,
                             serbero_keys.public_key(),
                             "inner event must be signed by Serbero's keys"
                         );

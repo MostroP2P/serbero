@@ -1,9 +1,13 @@
 //! SQLite helpers for Phase 3 mediation_sessions and
 //! mediation_messages rows.
 //!
-//! Scope for this slice (US1): insert a session at `awaiting_response`
-//! with the pinned bundle, and append outbound messages. Lifecycle
-//! transitions and inbound ingest helpers (US2) are deferred.
+//! Scope today (US1 + narrow US2 slice): insert a session at
+//! `awaiting_response` with the pinned bundle, append outbound
+//! messages, idempotently persist inbound messages, advance the
+//! per-party last-seen marker, and recompute `round_count` from the
+//! persisted transcript. Lifecycle transitions beyond that (US3,
+//! US4) and the engine-driven ingest tick (T040 / T051) remain
+//! deferred.
 
 use rusqlite::{params, Connection};
 
@@ -79,6 +83,131 @@ pub fn insert_outbound_message(conn: &Connection, m: &NewOutboundMessage<'_>) ->
         ],
     )?;
     Ok(())
+}
+
+/// Inbound mediation message payload. Separate struct from
+/// [`NewOutboundMessage`] because the two carry different columns —
+/// outbound rows carry `prompt_bundle_id` + `policy_hash` (provenance
+/// of the bundle that produced the draft); inbound rows do not,
+/// because parties did not author against a bundle.
+pub struct NewInboundMessage<'a> {
+    pub session_id: &'a str,
+    pub party: TranscriptParty,
+    pub shared_pubkey: &'a str,
+    pub inner_event_id: &'a str,
+    pub inner_event_created_at: i64,
+    pub outer_event_id: Option<&'a str>,
+    pub content: &'a str,
+    pub persisted_at: i64,
+    /// `1` iff this inbound's inner `created_at` predated the
+    /// session's last-seen marker for its party at ingest time.
+    pub stale: bool,
+}
+
+/// Idempotent inbound insert. Returns `true` when a row actually
+/// landed and `false` when the unique index on
+/// `(session_id, inner_event_id)` rejected the insert because the
+/// same inbound event had already been persisted. The callsite uses
+/// this to distinguish fresh ingest (advance last-seen / round
+/// count) from replay (no session-state change).
+pub fn insert_inbound_message(conn: &Connection, m: &NewInboundMessage<'_>) -> Result<bool> {
+    let rows = conn.execute(
+        "INSERT OR IGNORE INTO mediation_messages (
+            session_id, direction, party,
+            shared_pubkey, inner_event_id, inner_event_created_at,
+            outer_event_id, content, prompt_bundle_id, policy_hash,
+            persisted_at, stale
+         ) VALUES (?1, 'inbound', ?2, ?3, ?4, ?5, ?6, ?7, NULL, NULL, ?8, ?9)",
+        params![
+            m.session_id,
+            m.party.to_string(),
+            m.shared_pubkey,
+            m.inner_event_id,
+            m.inner_event_created_at,
+            m.outer_event_id,
+            m.content,
+            m.persisted_at,
+            if m.stale { 1 } else { 0 },
+        ],
+    )?;
+    Ok(rows > 0)
+}
+
+/// Read the per-party last-seen inner timestamps for a session.
+/// Returns `(buyer_last_seen, seller_last_seen)` in seconds; either
+/// side may be `None` if that party has never replied.
+pub fn get_last_seen(conn: &Connection, session_id: &str) -> Result<(Option<i64>, Option<i64>)> {
+    match conn.query_row(
+        "SELECT buyer_last_seen_inner_ts, seller_last_seen_inner_ts
+         FROM mediation_sessions WHERE session_id = ?1",
+        params![session_id],
+        |r| Ok((r.get::<_, Option<i64>>(0)?, r.get::<_, Option<i64>>(1)?)),
+    ) {
+        Ok(pair) => Ok(pair),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok((None, None)),
+        Err(e) => Err(e.into()),
+    }
+}
+
+/// Update the last-seen inner-event timestamp for one party on a
+/// session. Only the column matching `party` is written.
+pub fn update_last_seen_inner_ts(
+    conn: &Connection,
+    session_id: &str,
+    party: TranscriptParty,
+    ts: i64,
+) -> Result<()> {
+    let column = match party {
+        TranscriptParty::Buyer => "buyer_last_seen_inner_ts",
+        TranscriptParty::Seller => "seller_last_seen_inner_ts",
+        TranscriptParty::Serbero => {
+            // Serbero never authors inbound rows, so this branch is
+            // unreachable in the ingest path. Guard defensively —
+            // this is the kind of enum-widening mistake that is
+            // cheap to catch at the DB boundary.
+            return Err(crate::error::Error::InvalidEvent(
+                "serbero is not a valid last-seen party".into(),
+            ));
+        }
+    };
+    let sql = format!(
+        "UPDATE mediation_sessions SET {column} = ?1 WHERE session_id = ?2",
+        column = column
+    );
+    conn.execute(&sql, params![ts, session_id])?;
+    Ok(())
+}
+
+/// Recompute `round_count` from the persisted inbound transcript.
+///
+/// Rule (from `data-model.md` §mediation_sessions + T050): one
+/// completed round = one buyer reply + one seller reply. The count
+/// is therefore `min(fresh_buyer_inbound_count, fresh_seller_inbound_count)`,
+/// where "fresh" excludes rows marked `stale = 1`. Recomputing from
+/// the transcript each time keeps the counter deterministic under
+/// replay and idempotent under duplicate ingest.
+///
+/// Returns the new round count. Does NOT transition session state —
+/// state transitions belong to the policy layer (US3/US4).
+pub fn recompute_round_count(conn: &Connection, session_id: &str) -> Result<i64> {
+    let buyer_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM mediation_messages
+         WHERE session_id = ?1 AND direction = 'inbound' AND party = 'buyer' AND stale = 0",
+        params![session_id],
+        |r| r.get(0),
+    )?;
+    let seller_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM mediation_messages
+         WHERE session_id = ?1 AND direction = 'inbound' AND party = 'seller' AND stale = 0",
+        params![session_id],
+        |r| r.get(0),
+    )?;
+    let new_rounds = buyer_count.min(seller_count);
+    conn.execute(
+        "UPDATE mediation_sessions SET round_count = ?1 WHERE session_id = ?2",
+        params![new_rounds, session_id],
+    )?;
+    Ok(new_rounds)
 }
 
 /// Lookup the most recently opened *live* mediation_sessions row for
@@ -219,6 +348,102 @@ mod tests {
         let (sid, state) = found.unwrap();
         assert_eq!(sid, "sess-1");
         assert_eq!(state, MediationSessionState::AwaitingResponse);
+    }
+
+    fn new_inbound(party: TranscriptParty, inner_id: &str, ts: i64) -> NewInboundMessage<'_> {
+        let shared_pubkey = match party {
+            TranscriptParty::Buyer => "buyer-shared-pk",
+            TranscriptParty::Seller => "seller-shared-pk",
+            TranscriptParty::Serbero => unreachable!(),
+        };
+        NewInboundMessage {
+            session_id: "sess-1",
+            party,
+            shared_pubkey,
+            inner_event_id: inner_id,
+            inner_event_created_at: ts,
+            outer_event_id: None,
+            content: "party reply text",
+            persisted_at: ts + 1,
+            stale: false,
+        }
+    }
+
+    #[test]
+    fn insert_inbound_message_is_idempotent_on_inner_event_id() {
+        let conn = fresh();
+        insert_session(&conn, &new_session("pol-hash-inb")).unwrap();
+
+        let msg = new_inbound(TranscriptParty::Buyer, "inner-a", 300);
+        assert!(insert_inbound_message(&conn, &msg).unwrap(), "first insert");
+        assert!(
+            !insert_inbound_message(&conn, &msg).unwrap(),
+            "replay must be a no-op"
+        );
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM mediation_messages WHERE session_id='sess-1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1, "no duplicate row on replay");
+    }
+
+    #[test]
+    fn update_last_seen_writes_only_the_matching_party_column() {
+        let conn = fresh();
+        insert_session(&conn, &new_session("pol-hash-ls")).unwrap();
+        update_last_seen_inner_ts(&conn, "sess-1", TranscriptParty::Buyer, 500).unwrap();
+        let (bls, sls) = get_last_seen(&conn, "sess-1").unwrap();
+        assert_eq!(bls, Some(500));
+        assert_eq!(sls, None, "seller column must stay untouched");
+
+        update_last_seen_inner_ts(&conn, "sess-1", TranscriptParty::Seller, 700).unwrap();
+        let (bls, sls) = get_last_seen(&conn, "sess-1").unwrap();
+        assert_eq!(bls, Some(500));
+        assert_eq!(sls, Some(700));
+    }
+
+    #[test]
+    fn recompute_round_count_counts_min_of_fresh_per_party_replies() {
+        let conn = fresh();
+        insert_session(&conn, &new_session("pol-hash-rc")).unwrap();
+
+        // Zero replies → zero rounds.
+        assert_eq!(recompute_round_count(&conn, "sess-1").unwrap(), 0);
+
+        // One buyer, zero seller → still zero rounds.
+        insert_inbound_message(&conn, &new_inbound(TranscriptParty::Buyer, "b1", 100)).unwrap();
+        assert_eq!(recompute_round_count(&conn, "sess-1").unwrap(), 0);
+
+        // One buyer + one seller → one completed round.
+        insert_inbound_message(&conn, &new_inbound(TranscriptParty::Seller, "s1", 110)).unwrap();
+        assert_eq!(recompute_round_count(&conn, "sess-1").unwrap(), 1);
+
+        // Extra buyer reply without matching seller → still one.
+        insert_inbound_message(&conn, &new_inbound(TranscriptParty::Buyer, "b2", 120)).unwrap();
+        assert_eq!(recompute_round_count(&conn, "sess-1").unwrap(), 1);
+
+        // Matching seller → round 2.
+        insert_inbound_message(&conn, &new_inbound(TranscriptParty::Seller, "s2", 130)).unwrap();
+        assert_eq!(recompute_round_count(&conn, "sess-1").unwrap(), 2);
+    }
+
+    #[test]
+    fn recompute_round_count_ignores_stale_rows() {
+        let conn = fresh();
+        insert_session(&conn, &new_session("pol-hash-stale")).unwrap();
+
+        let mut b = new_inbound(TranscriptParty::Buyer, "b1", 100);
+        b.stale = true;
+        insert_inbound_message(&conn, &b).unwrap();
+        let mut s = new_inbound(TranscriptParty::Seller, "s1", 110);
+        s.stale = false;
+        insert_inbound_message(&conn, &s).unwrap();
+
+        // Buyer's only reply is stale → no completed round.
+        assert_eq!(recompute_round_count(&conn, "sess-1").unwrap(), 0);
     }
 
     #[test]

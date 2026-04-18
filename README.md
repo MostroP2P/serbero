@@ -81,37 +81,63 @@ Mostro operates normally with or without Serbero. If Serbero is offline, operato
 ## Implementation Status
 
 Serbero evolves in five phases. `main` currently implements
-**Phases 1 and 2**. Phase 3 is in progress on the
-`003-guided-mediation` branch — **Setup and Foundational only**; the
-mediation engine itself is not yet wired (see caveat below).
+**Phases 1 and 2** plus the Phase 3 setup, foundational, and the
+first US1 + US2 slices — the session-open path, its reasoning-
+reachability gate, and inbound-ingest helpers. The mediation engine
+loop itself is still not wired (see caveat below).
 
-| Phase | Scope                                                        | Status on `main`     | Status on `003-guided-mediation`                                  |
-|-------|--------------------------------------------------------------|----------------------|-------------------------------------------------------------------|
-| 1     | Always-on dispute listener and solver notification           | **Implemented**      | Unchanged                                                         |
-| 2     | Intake tracking, assignment visibility, re-notification      | **Implemented**      | Unchanged                                                         |
-| 3     | Guided mediation for low-risk disputes                       | Not present          | **Foundational only** (23 / 88 tasks); engine task not yet spawned |
-| 4     | Escalation support for write-permission operators            | Planned              | Planned                                                           |
-| 5     | Optional reasoning backend (OpenAI-compatible / OpenClaw)    | Planned              | Boundary shipped; additional adapters future work                 |
+| Phase | Scope                                                        | Status on `main`                                                                                  |
+|-------|--------------------------------------------------------------|---------------------------------------------------------------------------------------------------|
+| 1     | Always-on dispute listener and solver notification           | **Implemented**                                                                                   |
+| 2     | Intake tracking, assignment visibility, re-notification      | **Implemented**                                                                                   |
+| 3     | Guided mediation for low-risk disputes                       | **Partial** (~38 / 88 tasks): setup, foundational, US1 session-open + gating, US2 ingest helpers  |
+| 4     | Escalation support for write-permission operators            | Planned                                                                                           |
+| 5     | Optional reasoning backend (OpenAI-compatible / OpenClaw)    | Boundary shipped; additional adapters future work                                                 |
 
 ### Phase 3 caveat — what "enabled" actually means today
 
-On `003-guided-mediation`, setting `[mediation].enabled = true` does
-**NOT** start live mediation. The daemon runs the Phase 3 *bring-up*
-steps (loads the prompt bundle, builds the reasoning adapter, runs a
-health check) and then logs that the engine task is deliberately not
-spawned:
+Setting `[mediation].enabled = true` does **NOT** yet start live
+mediation. The daemon runs the Phase 3 *bring-up* steps (loads the
+prompt bundle, builds the reasoning adapter, runs a health check)
+and then logs that the engine task is deliberately not spawned:
 
 ```text
 Phase 3 mediation is fully configured but the engine task is NOT yet
-spawned — US1+ pending. See src/chat/ and src/mediation/ module
-headers for the verification points still open.
+spawned — engine loop (T019 / T040 / T051) pending. See
+src/mediation/ module headers for the remaining scope.
 ```
 
-Phase 1/2 behavior is completely unaffected, whether the Phase 3
-bring-up succeeds or fails. If you need live Phase 3 mediation,
-don't deploy this branch — the Mostro dispute-chat interaction flow
-is still pending verification against current Mostro client
-behavior (see `specs/003-guided-mediation/research.md` §R-101).
+What ships today on `main`:
+
+- **US1 session-open** (`mediation::open_dispute_session`): the
+  dispute-chat take-flow + first clarifying message + transactional
+  persistence, with the prompt bundle pinned per session. Ported
+  against the Mostrix reference (`chat_utils.rs`,
+  `execute_take_dispute.rs`); the `R-101` verification is closed.
+- **US1 reasoning-reachability gate** (T044): session opens refuse
+  deterministically when `ReasoningProvider::health_check` fails,
+  without touching the relay or the `mediation_*` tables.
+- **US2 inbound ingest helpers** (T045 / T048 / T049 / T050):
+  `fetch_inbound` + `ingest_inbound` authenticate the inner event's
+  author against the expected trade pubkey, pin the inner kind to
+  `TextNote`, dedup by `(session_id, inner_event_id)`, recompute
+  `round_count` from the transcript, and update per-party last-seen
+  markers.
+
+What is **not** yet on `main`:
+
+- The periodic engine loop that drives `open_dispute_session` /
+  `ingest_inbound` per tick (T019 / T040 / T051).
+- Restart-resume for open sessions (T052 / T053).
+- The auth-retry loop and its gate (T042 / T043).
+- Rationale + `mediation_events` audit persistence (T032 / T033).
+- Policy-layer classification / drafting extraction (T038 / T039).
+- US3 (summary), US4 (escalation), US5 (additional provider adapters).
+
+Phase 1/2 behavior is completely unaffected whether the Phase 3
+bring-up succeeds or fails. The helpers above are callable from
+tests today but are **not** invoked from any running daemon task,
+so deploying `main` will not produce live mediation traffic.
 
 ### Specifications
 
@@ -124,11 +150,11 @@ The Phase 1/2 specification lives in [`specs/002-phased-dispute-coordination/`](
 - [`quickstart.md`](specs/002-phased-dispute-coordination/quickstart.md) — verification steps for Phases 1 and 2
 - [`tasks.md`](specs/002-phased-dispute-coordination/tasks.md) — the 50-task implementation breakdown
 
-Phase 3 specification on the `003-guided-mediation` branch:
+Phase 3 specification:
 
 - [`spec.md`](specs/003-guided-mediation/spec.md) — mediation user stories, requirements, acceptance criteria, and the normative sections on transport, reasoning, prompts, and memory
 - [`plan.md`](specs/003-guided-mediation/plan.md), [`research.md`](specs/003-guided-mediation/research.md), [`data-model.md`](specs/003-guided-mediation/data-model.md), [`contracts/`](specs/003-guided-mediation/contracts/) — design artifacts
-- [`tasks.md`](specs/003-guided-mediation/tasks.md) — 88-task breakdown; 23 foundational tasks are marked complete on this branch
+- [`tasks.md`](specs/003-guided-mediation/tasks.md) — 88-task breakdown; see the per-task `[X]` markers for what has actually shipped on `main` today
 
 ---
 
@@ -252,9 +278,9 @@ Empty or whitespace-only env values are **ignored** — an accidentally-unset sh
 
 Phases 1 and 2 intentionally do not commit to a CLI flag surface. The entire configuration lives in `config.toml` plus the environment variables above. If you need to point at a different config file, use `SERBERO_CONFIG`, not a flag.
 
-### Phase 3 configuration surface (preview — `003-guided-mediation` branch only)
+### Phase 3 configuration surface
 
-Phase 3 adds four new functional sections. They are all `#[serde(default)]` — if you omit them, the daemon behaves as a Phase 1/2 daemon. On `main`, these sections are ignored entirely.
+Phase 3 adds four new functional sections. They are all `#[serde(default)]` — if you omit them, the daemon behaves as a Phase 1/2 daemon. With them set, the daemon runs the Phase 3 bring-up (prompt-bundle load, reasoning health check) but does **not** yet spawn the engine loop — see the Phase 3 caveat above.
 
 ```toml
 [mediation]
