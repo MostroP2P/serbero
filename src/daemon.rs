@@ -98,6 +98,57 @@ where
         );
     }
 
+    // ---- Phase 3 bring-up (gated, non-fatal on failure) ------------
+    //
+    // Phase 3 is additive: Phase 1/2 MUST remain fully operational if
+    // any Phase 3 bring-up step fails. The engine task (US1+) is NOT
+    // spawned here yet — only the prompt bundle is loaded (to confirm
+    // the files exist and the hash is stable) and the reasoning
+    // provider is built + health-checked. Real mediation wiring is
+    // deferred to US1 per the Option A scope for this phase.
+    if config.mediation.enabled {
+        match crate::prompts::load_bundle(&config.prompts) {
+            Ok(bundle) => info!(
+                prompt_bundle_id = %bundle.id,
+                policy_hash = %bundle.policy_hash,
+                "Phase 3 prompt bundle loaded"
+            ),
+            Err(e) => warn!(
+                error = %e,
+                "Phase 3 prompt bundle failed to load; mediation will stay disabled this run"
+            ),
+        }
+        match crate::reasoning::build_provider(&config.reasoning) {
+            Ok(provider) => {
+                if let Err(e) = crate::reasoning::health::run_startup_health_check(&*provider).await
+                {
+                    warn!(
+                        provider = %config.reasoning.provider,
+                        model = %config.reasoning.model,
+                        api_base = %config.reasoning.api_base,
+                        error = %e,
+                        "Phase 3 reasoning provider health check failed; \
+                         mediation will stay disabled this run"
+                    );
+                }
+            }
+            Err(e) => warn!(
+                provider = %config.reasoning.provider,
+                error = %e,
+                "Phase 3 reasoning provider could not be built; \
+                 mediation will stay disabled this run"
+            ),
+        }
+        info!(
+            "Phase 3 mediation engine is configured but NOT yet spawned — US1+ \
+             pending. See src/chat/ and src/mediation/ module headers for the \
+             verification points still open."
+        );
+    } else {
+        debug!("Phase 3 mediation disabled by configuration");
+    }
+    // ----------------------------------------------------------------
+
     let client = build_client(&config).await?;
 
     let filter = dispute_filter(&mostro_pubkey, since);

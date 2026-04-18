@@ -12,7 +12,38 @@ pub fn load_config(path: &Path) -> Result<Config> {
     })?;
     let mut config: Config = toml::from_str(&contents)?;
     apply_env_overrides(&mut config);
+    resolve_reasoning_api_key(&mut config)?;
     Ok(config)
+}
+
+/// Populate `config.reasoning.api_key` from the environment variable
+/// named by `config.reasoning.api_key_env`. This is the single place
+/// secrets enter the `Config` struct — they never come from TOML
+/// directly (spec FR-104 / plan Configuration Surface).
+///
+/// - If `reasoning.enabled == false`, absence is fine.
+/// - If `reasoning.enabled == true`, the named env var MUST be set
+///   and non-empty; otherwise we return a loud `Error::Config`.
+fn resolve_reasoning_api_key(config: &mut Config) -> Result<()> {
+    let var = config.reasoning.api_key_env.trim().to_string();
+    if var.is_empty() {
+        if config.reasoning.enabled {
+            return Err(Error::Config(
+                "[reasoning].api_key_env is empty but [reasoning].enabled = true".into(),
+            ));
+        }
+        return Ok(());
+    }
+    match std::env::var(&var) {
+        Ok(v) if !v.trim().is_empty() => {
+            config.reasoning.api_key = v;
+            Ok(())
+        }
+        _ if config.reasoning.enabled => Err(Error::Config(format!(
+            "reasoning provider enabled but credential env var `{var}` is unset or empty"
+        ))),
+        _ => Ok(()),
+    }
 }
 
 fn apply_env_overrides(config: &mut Config) {

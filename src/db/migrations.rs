@@ -3,7 +3,7 @@ use rusqlite::{params, Connection, Transaction};
 use crate::error::Result;
 
 #[cfg(test)]
-const CURRENT_SCHEMA_VERSION: i64 = 2;
+const CURRENT_SCHEMA_VERSION: i64 = 3;
 
 pub fn run_migrations(conn: &mut Connection) -> Result<()> {
     conn.execute_batch(
@@ -25,6 +25,9 @@ pub fn run_migrations(conn: &mut Connection) -> Result<()> {
     }
     if applied < 2 {
         run_versioned(conn, 2, apply_v2)?;
+    }
+    if applied < 3 {
+        run_versioned(conn, 3, apply_v3)?;
     }
 
     Ok(())
@@ -123,6 +126,111 @@ fn add_column_if_missing(
     Ok(())
 }
 
+fn apply_v3(tx: &Transaction<'_>) -> Result<()> {
+    // Phase 3 mediation schema. Mirrors
+    // `specs/003-guided-mediation/data-model.md`. All tables are new;
+    // no Phase 1/2 rows are backfilled.
+    tx.execute_batch(
+        "CREATE TABLE IF NOT EXISTS mediation_sessions (
+             session_id                 TEXT PRIMARY KEY,
+             dispute_id                 TEXT NOT NULL,
+             state                      TEXT NOT NULL,
+             round_count                INTEGER NOT NULL DEFAULT 0,
+             prompt_bundle_id           TEXT NOT NULL,
+             policy_hash                TEXT NOT NULL,
+             instructions_version       TEXT,
+             assigned_solver            TEXT,
+             current_classification     TEXT,
+             current_confidence         REAL,
+             buyer_shared_pubkey        TEXT,
+             seller_shared_pubkey       TEXT,
+             buyer_last_seen_inner_ts   INTEGER,
+             seller_last_seen_inner_ts  INTEGER,
+             started_at                 INTEGER NOT NULL,
+             last_transition_at         INTEGER NOT NULL,
+             FOREIGN KEY (dispute_id) REFERENCES disputes(dispute_id)
+         );
+
+         CREATE INDEX IF NOT EXISTS idx_mediation_sessions_dispute_id
+             ON mediation_sessions(dispute_id);
+         CREATE INDEX IF NOT EXISTS idx_mediation_sessions_state
+             ON mediation_sessions(state);
+
+         CREATE TABLE IF NOT EXISTS mediation_messages (
+             id                       INTEGER PRIMARY KEY AUTOINCREMENT,
+             session_id               TEXT NOT NULL,
+             direction                TEXT NOT NULL,
+             party                    TEXT NOT NULL,
+             shared_pubkey            TEXT NOT NULL,
+             inner_event_id           TEXT NOT NULL,
+             inner_event_created_at   INTEGER NOT NULL,
+             outer_event_id           TEXT,
+             content                  TEXT NOT NULL,
+             prompt_bundle_id         TEXT,
+             policy_hash              TEXT,
+             persisted_at             INTEGER NOT NULL,
+             stale                    INTEGER NOT NULL DEFAULT 0,
+             FOREIGN KEY (session_id) REFERENCES mediation_sessions(session_id)
+         );
+
+         CREATE UNIQUE INDEX IF NOT EXISTS uq_mediation_messages_inner_event
+             ON mediation_messages(session_id, inner_event_id);
+         CREATE INDEX IF NOT EXISTS idx_mediation_messages_session
+             ON mediation_messages(session_id);
+         CREATE INDEX IF NOT EXISTS idx_mediation_messages_direction
+             ON mediation_messages(direction);
+
+         CREATE TABLE IF NOT EXISTS reasoning_rationales (
+             rationale_id         TEXT PRIMARY KEY,
+             session_id           TEXT,
+             provider             TEXT NOT NULL,
+             model                TEXT NOT NULL,
+             prompt_bundle_id     TEXT NOT NULL,
+             policy_hash          TEXT NOT NULL,
+             rationale_text       TEXT NOT NULL,
+             generated_at         INTEGER NOT NULL,
+             FOREIGN KEY (session_id) REFERENCES mediation_sessions(session_id)
+         );
+
+         CREATE TABLE IF NOT EXISTS mediation_summaries (
+             id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+             session_id           TEXT NOT NULL,
+             dispute_id           TEXT NOT NULL,
+             classification       TEXT NOT NULL,
+             confidence           REAL NOT NULL,
+             suggested_next_step  TEXT NOT NULL,
+             summary_text         TEXT NOT NULL,
+             prompt_bundle_id     TEXT NOT NULL,
+             policy_hash          TEXT NOT NULL,
+             rationale_id         TEXT,
+             generated_at         INTEGER NOT NULL,
+             FOREIGN KEY (session_id) REFERENCES mediation_sessions(session_id),
+             FOREIGN KEY (dispute_id) REFERENCES disputes(dispute_id),
+             FOREIGN KEY (rationale_id) REFERENCES reasoning_rationales(rationale_id)
+         );
+
+         CREATE INDEX IF NOT EXISTS idx_mediation_summaries_session
+             ON mediation_summaries(session_id);
+
+         CREATE TABLE IF NOT EXISTS mediation_events (
+             id                INTEGER PRIMARY KEY AUTOINCREMENT,
+             session_id        TEXT,
+             kind              TEXT NOT NULL,
+             payload_json      TEXT NOT NULL DEFAULT '{}',
+             rationale_id      TEXT,
+             prompt_bundle_id  TEXT,
+             policy_hash       TEXT,
+             occurred_at       INTEGER NOT NULL,
+             FOREIGN KEY (session_id) REFERENCES mediation_sessions(session_id),
+             FOREIGN KEY (rationale_id) REFERENCES reasoning_rationales(rationale_id)
+         );
+
+         CREATE INDEX IF NOT EXISTS idx_mediation_events_session_kind
+             ON mediation_events(session_id, kind);",
+    )?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -200,8 +308,59 @@ mod tests {
                 .unwrap();
             tx.commit().unwrap();
         }
-        // First pass applies v2; second pass should be a no-op.
+        // First pass applies v2 and v3; second pass should be a no-op.
         run_migrations(&mut conn).unwrap();
         run_migrations(&mut conn).unwrap();
+    }
+
+    #[test]
+    fn phase3_tables_exist_after_migration() {
+        let mut conn = open_in_memory().unwrap();
+        run_migrations(&mut conn).unwrap();
+        for table in [
+            "mediation_sessions",
+            "mediation_messages",
+            "mediation_summaries",
+            "mediation_events",
+            "reasoning_rationales",
+        ] {
+            let count: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1",
+                    params![table],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(count, 1, "table {table} should exist after v3");
+        }
+    }
+
+    #[test]
+    fn applying_phase3_over_existing_phase2_schema_is_idempotent() {
+        // Simulate upgrading a pre-existing Phase 2 DB (v2 already
+        // applied) to v3. Running twice should not produce errors.
+        let mut conn = open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE schema_version (version INTEGER PRIMARY KEY);")
+            .unwrap();
+        {
+            let tx = conn.transaction().unwrap();
+            apply_v1(&tx).unwrap();
+            tx.execute("INSERT INTO schema_version (version) VALUES (1)", [])
+                .unwrap();
+            tx.commit().unwrap();
+        }
+        {
+            let tx = conn.transaction().unwrap();
+            apply_v2(&tx).unwrap();
+            tx.execute("INSERT INTO schema_version (version) VALUES (2)", [])
+                .unwrap();
+            tx.commit().unwrap();
+        }
+        run_migrations(&mut conn).unwrap();
+        run_migrations(&mut conn).unwrap();
+        let version: i64 = conn
+            .query_row("SELECT MAX(version) FROM schema_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, 3);
     }
 }

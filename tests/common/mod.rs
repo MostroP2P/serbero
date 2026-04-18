@@ -65,6 +65,11 @@ impl TestHarness {
             }],
             solvers,
             timeouts,
+            // Phase 3 disabled by default for Phase 1/2 tests.
+            mediation: Default::default(),
+            reasoning: Default::default(),
+            prompts: Default::default(),
+            chat: Default::default(),
         }
     }
 }
