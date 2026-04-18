@@ -71,10 +71,26 @@ pub struct InboundEnvelope {
     pub inner_created_at: i64,
     pub outer_event_id: String,
     pub content: String,
-    /// The inner event's signer pubkey. Not used for gating in US2
-    /// (we don't have a persisted trade-pubkey to compare against),
-    /// but captured for future policy checks + forensic logging.
+    /// The inner event's signer pubkey, already authenticated by
+    /// `fetch_inbound` against `PartyChatMaterial.expected_author`
+    /// (see module header). Retained on the envelope for forensic
+    /// logging and for US3+ policy checks that want to correlate
+    /// against the dispute-scoped trade pubkey.
     pub inner_sender: String,
+}
+
+/// Output of a successful gift-wrap unwrap: the full set of inner-
+/// event facts every caller cares about. Keeping these together
+/// means callers never re-decrypt the same wrap to extract an extra
+/// field — and means the `event_id` that downstream dedup relies on
+/// is always the one produced by the same verify pass that checked
+/// the signature and the kind.
+#[derive(Debug, Clone)]
+pub struct UnwrappedInner {
+    pub event_id: EventId,
+    pub content: String,
+    pub created_at: i64,
+    pub sender: PublicKey,
 }
 
 /// Per-party chat material a caller must supply to [`fetch_inbound`].
@@ -101,25 +117,32 @@ pub struct PartyChatMaterial<'a> {
 }
 
 /// Unwrap a custom mostro-chat gift-wrap event with the per-party
-/// shared keys. Returns `(inner_content, inner_created_at_secs,
-/// inner_sender_pubkey)`. The inner event's signature is verified;
-/// the outer gift-wrap's timestamp is ignored for session-fact
+/// shared keys. Returns a fully-verified [`UnwrappedInner`] — the
+/// caller never needs to re-decrypt or re-verify to extract an
+/// additional field, which keeps the inbound event id that the DB
+/// dedup relies on in lock-step with the signature + kind checks
+/// that accepted the wrap in the first place.
+///
+/// Verification performed, in order:
+///
+/// 1. NIP-44 decrypt against `shared.sk`. The reader pairs its
+///    shared secret with the outer event's signer (the ephemeral
+///    pubkey) to recover the inner event JSON.
+/// 2. Inner event parse.
+/// 3. Inner event kind = [`Kind::TextNote`]. Mostro-chat ships only
+///    kind-1 text notes; anything else is dropped before we run
+///    signature verification, so a misbehaving peer cannot push
+///    e.g. a channel-create or a replaceable-kind event through
+///    the mediation transport.
+/// 4. Inner event signature verify.
+///
+/// The outer gift-wrap's timestamp is ignored for session-fact
 /// ordering, per `contracts/mostro-chat.md`.
-pub fn unwrap_with_shared_key(
-    shared_keys: &Keys,
-    event: &Event,
-) -> Result<(String, i64, PublicKey)> {
-    // Decrypt: the reader holds `shared.sk` and pairs it with the
-    // outer event's signer (the sender's ephemeral pubkey).
+pub fn unwrap_with_shared_key(shared_keys: &Keys, event: &Event) -> Result<UnwrappedInner> {
     let decrypted = nip44::decrypt(shared_keys.secret_key(), &event.pubkey, &event.content)
         .map_err(|e| Error::ChatTransport(format!("NIP-44 decrypt failed: {e}")))?;
     let inner = Event::from_json(&decrypted)
         .map_err(|e| Error::ChatTransport(format!("invalid inner chat event JSON: {e}")))?;
-    // The mostro-chat contract ships inner payloads as kind-1 text
-    // notes. Reject anything else before we even verify the
-    // signature so a misbehaving peer cannot push e.g. a kind-40
-    // channel-create or a replaceable-kind event through the
-    // mediation transport.
     if inner.kind != Kind::TextNote {
         return Err(Error::ChatTransport(format!(
             "inner chat event must be kind TextNote, got {}",
@@ -129,11 +152,12 @@ pub fn unwrap_with_shared_key(
     inner
         .verify()
         .map_err(|e| Error::ChatTransport(format!("inner chat event signature invalid: {e}")))?;
-    Ok((
-        inner.content,
-        inner.created_at.as_secs() as i64,
-        inner.pubkey,
-    ))
+    Ok(UnwrappedInner {
+        event_id: inner.id,
+        created_at: inner.created_at.as_secs() as i64,
+        sender: inner.pubkey,
+        content: inner.content,
+    })
 }
 
 /// Fetch inbound mediation chat envelopes addressed to either party's
@@ -188,21 +212,32 @@ pub async fn fetch_inbound(
             count = events.len(),
             "inbound fetch: candidates for shared pubkey"
         );
+        // We cannot pre-filter at the relay by the expected inner
+        // author: the outer gift-wrap is signed by a fresh
+        // ephemeral key per wrap, so `authors()` on the outer
+        // filter only selects ephemeral identities — which are
+        // unpredictable by design. We therefore pay decrypt +
+        // verify cost for every `p`-tag-matching candidate, then
+        // drop wraps whose authenticated inner author does not
+        // match. On a spammy relay this is a CPU hit; a smarter
+        // relay-side filter would require changing the wire format
+        // (e.g. a tag that commits to the inner author), which is
+        // out of scope here.
         for wrapped in events.iter() {
             match unwrap_with_shared_key(party.shared_keys, wrapped) {
-                Ok((content, inner_ts, inner_sender)) => {
+                Ok(inner) => {
                     // Authenticate the inner event's author against
                     // the expected trade pubkey. See module header —
                     // without this, any third party who has seen
                     // `shared_pubkey` on the relay could craft a
                     // decryptable wrap and have it attributed to the
                     // party.
-                    if inner_sender != party.expected_author {
+                    if inner.sender != party.expected_author {
                         tracing::warn!(
                             party = %party.party,
                             outer_event_id = %wrapped.id.to_hex(),
                             expected_author = %party.expected_author.to_hex(),
-                            actual_author = %inner_sender.to_hex(),
+                            actual_author = %inner.sender.to_hex(),
                             "dropping inbound gift-wrap: inner signer does not match expected party trade pubkey"
                         );
                         continue;
@@ -210,11 +245,11 @@ pub async fn fetch_inbound(
                     out.push(InboundEnvelope {
                         party: party.party,
                         shared_pubkey: shared_pubkey.to_hex(),
-                        inner_event_id: extract_inner_event_id(wrapped, party.shared_keys)?,
-                        inner_created_at: inner_ts,
+                        inner_event_id: inner.event_id.to_hex(),
+                        inner_created_at: inner.created_at,
                         outer_event_id: wrapped.id.to_hex(),
-                        content,
-                        inner_sender: inner_sender.to_hex(),
+                        content: inner.content,
+                        inner_sender: inner.sender.to_hex(),
                     });
                 }
                 Err(e) => {
@@ -234,22 +269,6 @@ pub async fn fetch_inbound(
     // on the rare same-second boundary.
     out.sort_by_key(|e| e.inner_created_at);
     Ok(out)
-}
-
-/// Re-derive the inner event's id. We need the stable inner id (not
-/// the outer gift-wrap id) because the unique DB index is on
-/// `(session_id, inner_event_id)`. `unwrap_with_shared_key` already
-/// computes the inner event internally; exposing the id would add a
-/// public API surface. For simplicity we re-decrypt here; the cost
-/// is one extra NIP-44 call per candidate, which is negligible
-/// relative to the network I/O of `fetch_events`. If this becomes
-/// hot, merging the two decrypt paths is a mechanical follow-up.
-fn extract_inner_event_id(wrapped: &Event, shared_keys: &Keys) -> Result<String> {
-    let decrypted = nip44::decrypt(shared_keys.secret_key(), &wrapped.pubkey, &wrapped.content)
-        .map_err(|e| Error::ChatTransport(format!("NIP-44 decrypt (for id) failed: {e}")))?;
-    let inner = Event::from_json(&decrypted)
-        .map_err(|e| Error::ChatTransport(format!("invalid inner chat event JSON: {e}")))?;
-    Ok(inner.id.to_hex())
 }
 
 #[cfg(test)]
@@ -275,16 +294,17 @@ mod tests {
             .await
             .unwrap();
 
-        let (content, ts, signer) = unwrap_with_shared_key(&shared, &built.outer).unwrap();
-        assert_eq!(content, "buyer, please confirm");
-        assert_eq!(ts, built.inner_created_at);
+        let inner = unwrap_with_shared_key(&shared, &built.outer).unwrap();
+        assert_eq!(inner.content, "buyer, please confirm");
+        assert_eq!(inner.created_at, built.inner_created_at);
+        assert_eq!(inner.event_id, built.inner_event_id);
         assert_eq!(
-            signer,
+            inner.sender,
             serbero.public_key(),
             "inner signer must be the sender's keys, not the ephemeral outer signer"
         );
         assert_ne!(
-            signer, built.outer.pubkey,
+            inner.sender, built.outer.pubkey,
             "the outer signer is the NIP-59 ephemeral key and must not be reported as the inner sender"
         );
     }
@@ -301,15 +321,21 @@ mod tests {
 
         // Corrupt the outer `content` (the NIP-44 ciphertext). The
         // simplest way to get a deterministic-but-invalid ciphertext
-        // is to flip a byte in the middle. Build the corrupted event
-        // by re-signing with a fresh ephemeral key so the outer
-        // signature itself is still valid — we want decrypt or inner
-        // verify to fail, not outer signature verification.
-        let mut corrupted_content = built.outer.content.clone();
-        let mid = corrupted_content.len() / 2;
-        let bytes = unsafe { corrupted_content.as_bytes_mut() };
+        // is to flip a byte in the middle. We go through a Vec<u8>
+        // so we never mutate the String's bytes under `unsafe`, and
+        // then re-validate as UTF-8 on the way back. NIP-44 v2
+        // ciphertext is base64 — still UTF-8 after a single-bit
+        // flip in base64's ASCII range — but we surface any
+        // pathological case loudly rather than relying on that.
+        let mut bytes = built.outer.content.as_bytes().to_vec();
+        let mid = bytes.len() / 2;
         bytes[mid] ^= 0x01;
+        let corrupted_content =
+            String::from_utf8(bytes).expect("bit flip in base64 must stay valid UTF-8");
 
+        // Re-sign with a fresh ephemeral key so the outer signature
+        // is still valid — we want decrypt or inner verify to fail,
+        // not outer signature verification.
         let ephem = Keys::generate();
         let tampered = EventBuilder::new(Kind::GiftWrap, corrupted_content)
             .tag(Tag::public_key(shared.public_key()))

@@ -153,14 +153,14 @@ mod tests {
 
         // The returned inner metadata matches what the reader will
         // compute after decrypt — no re-derivation needed elsewhere.
-        let (content, inner_ts, inner_sender) = unwrap_with_shared_key(&shared, event).unwrap();
-        assert_eq!(content, "first clarifying question");
-        assert_eq!(inner_ts, built.inner_created_at);
-        assert_eq!(inner_sender, serbero.public_key());
-        // And the reported inner_event_id corresponds to that decrypted event.
-        // (Checked indirectly: the decrypt succeeds because the inner
-        // was signed by serbero's keys; the id is a hash of that same
-        // canonical serialization.)
+        let inner = unwrap_with_shared_key(&shared, event).unwrap();
+        assert_eq!(inner.content, "first clarifying question");
+        assert_eq!(inner.created_at, built.inner_created_at);
+        assert_eq!(inner.sender, serbero.public_key());
+        assert_eq!(
+            inner.event_id, built.inner_event_id,
+            "reader-computed inner event id must match the builder's report"
+        );
     }
 
     /// Empty / whitespace-only content is refused by `build_wrap`
