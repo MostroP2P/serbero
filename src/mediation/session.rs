@@ -4,7 +4,10 @@
 //! round-counter advance, timeout handling, and US4 escalation
 //! triggers are deferred.
 //!
-//! The session-open flow is:
+//! The session-open flow follows a transactional-outbox shape —
+//! persistence happens before the outbound publish, so a crash
+//! between commit and publish leaves a resumable state rather than
+//! relay events with no DB trace:
 //!
 //! 1. Gate: is another session already open for this dispute?
 //! 2. Take-dispute exchange via `chat::dispute_chat_flow::run_take_flow`.
@@ -15,11 +18,16 @@
 //!    reasoning provider's `SuggestedAction::AskClarification` text
 //!    (fallback: refuse to open the session if the adapter returns
 //!    a non-clarification action; those paths belong to US3/US4).
-//! 5. Send the outbound chat events (one per party) via
-//!    `chat::outbound::send_chat_message`.
-//! 6. Persist: `mediation_sessions` row at `awaiting_response` with
-//!    the pinned bundle, plus two `mediation_messages` rows
-//!    (direction `outbound`).
+//! 5. Build the per-party gift-wraps with `chat::outbound::build_wrap`
+//!    and persist everything in a single DB transaction: a
+//!    `mediation_sessions` row at `awaiting_response` with the pinned
+//!    bundle, plus two `mediation_messages` rows (direction
+//!    `outbound`) keyed by the real inner-event ids. The step-1 gate
+//!    is re-checked inside this lock scope to close the check-then-
+//!    act race.
+//! 6. Publish the two already-built gift-wraps to the relay. The
+//!    unique `(session_id, inner_event_id)` index makes a later
+//!    retry idempotent on partial-publish failure.
 
 use std::sync::Arc;
 use std::time::Duration;

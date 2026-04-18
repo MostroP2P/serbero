@@ -382,6 +382,10 @@ async fn opens_session_and_dispatches_first_clarifying_message_to_both_parties()
     let reader = Client::new(Keys::generate());
     reader.add_relay(&relay_url).await.unwrap();
     reader.connect().await;
+    // Same readiness gate as MostroChatSim + the Serbero client,
+    // so `fetch_events` below isn't racing the relay handshake on
+    // slow CI.
+    reader.wait_for_connection(Duration::from_secs(5)).await;
 
     for shared in [&buyer_shared, &seller_shared] {
         let filter = Filter::new()

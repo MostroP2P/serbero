@@ -145,17 +145,28 @@ pub async fn run_take_flow(p: TakeFlowParams<'_>) -> Result<DisputeChatMaterial>
         // (3) Poll for the AdminTookDispute response. We use
         //     client.fetch_events (blocking with a short timeout) rather
         //     than handle_notifications so this function remains a
-        //     self-contained one-shot.
+        //     self-contained one-shot. Both the fetch and the
+        //     between-rounds sleep are clamped to the remaining budget
+        //     so the overall wall-clock never exceeds `p.timeout` by
+        //     more than a scheduler tick.
         let deadline = tokio::time::Instant::now() + p.timeout;
+        let timed_out = || {
+            Error::ChatTransport(
+                "timed out waiting for AdminTookDispute response from Mostro".into(),
+            )
+        };
         loop {
-            if tokio::time::Instant::now() >= deadline {
-                return Err(Error::ChatTransport(
-                    "timed out waiting for AdminTookDispute response from Mostro".into(),
-                ));
+            let Some(remaining) = deadline.checked_duration_since(tokio::time::Instant::now())
+            else {
+                return Err(timed_out());
+            };
+            if remaining.is_zero() {
+                return Err(timed_out());
             }
+            let fetch_budget = remaining.min(p.poll_interval);
             let events = p
                 .client
-                .fetch_events(filter.clone(), p.poll_interval)
+                .fetch_events(filter.clone(), fetch_budget)
                 .await
                 .map_err(|e| {
                     Error::ChatTransport(format!("fetch_events failed during take-flow: {e}"))
@@ -186,8 +197,16 @@ pub async fn run_take_flow(p: TakeFlowParams<'_>) -> Result<DisputeChatMaterial>
                 }
                 return material_from_solver_info(p.serbero_keys, info);
             }
-            // Short cooperative yield before the next poll round.
-            tokio::time::sleep(p.poll_interval).await;
+            // Cooperative yield before the next poll round, clamped
+            // to whatever budget is left.
+            let sleep_budget = deadline
+                .checked_duration_since(tokio::time::Instant::now())
+                .unwrap_or(Duration::ZERO)
+                .min(p.poll_interval);
+            if sleep_budget.is_zero() {
+                return Err(timed_out());
+            }
+            tokio::time::sleep(sleep_budget).await;
         }
     }
     .await;
@@ -219,14 +238,25 @@ fn material_from_solver_info(
     let seller_pk = PublicKey::parse(seller_hex)
         .map_err(|e| Error::ChatTransport(format!("invalid seller_pubkey: {e}")))?;
 
+    // A dispute whose buyer and seller trade pubkeys are identical
+    // is malformed — Mostro cannot match a trade against itself, and
+    // mediating would produce two `mediation_messages` rows against
+    // the same `shared_pubkey`, collapsing the per-party routing.
+    // Reject it before deriving any keys.
+    if buyer_pk == seller_pk {
+        return Err(Error::ChatTransport(format!(
+            "SolverDisputeInfo has identical buyer and seller trade pubkey ({buyer_hex}); \
+             refusing to start mediation on a malformed dispute"
+        )));
+    }
+
     let buyer_shared_keys = shared_key::derive_shared_keys(serbero_keys, &buyer_pk)?;
     let seller_shared_keys = shared_key::derive_shared_keys(serbero_keys, &seller_pk)?;
 
-    // Sanity check from Mostrix: different trade-pubkeys MUST yield
-    // different shared secrets.
-    if buyer_hex != seller_hex
-        && buyer_shared_keys.secret_key().to_secret_hex()
-            == seller_shared_keys.secret_key().to_secret_hex()
+    // Belt-and-braces: even with distinct trade pubkeys, ECDH must
+    // produce distinct shared secrets. Ported from Mostrix.
+    if buyer_shared_keys.secret_key().to_secret_hex()
+        == seller_shared_keys.secret_key().to_secret_hex()
     {
         return Err(Error::ChatTransport(
             "buyer and seller shared secrets are identical for different trade pubkeys; \
@@ -305,6 +335,23 @@ mod tests {
         match err {
             Error::ChatTransport(m) => assert!(m.contains("buyer_pubkey")),
             other => panic!("expected ChatTransport error, got {other}"),
+        }
+    }
+
+    #[test]
+    fn errors_when_buyer_and_seller_trade_pubkeys_are_identical() {
+        let serbero = Keys::generate();
+        let shared = Keys::generate();
+        let hex = shared.public_key().to_hex();
+        let err = material_from_solver_info(&serbero, &info(&hex, &hex)).unwrap_err();
+        match err {
+            Error::ChatTransport(m) => {
+                assert!(
+                    m.contains("identical buyer and seller"),
+                    "unexpected error text: {m}"
+                );
+            }
+            other => panic!("expected ChatTransport, got {other}"),
         }
     }
 
