@@ -136,6 +136,8 @@ async fn opens_session_and_dispatches_first_clarifying_message_to_both_parties()
         &dispute_id,
         InitiatorRole::Buyer,
         dispute_uuid,
+        "mock-provider",
+        "mock-model",
     )
     .await
     .expect("open_session must succeed in the happy-path fixture");
