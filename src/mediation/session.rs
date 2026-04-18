@@ -9,6 +9,11 @@
 //! between commit and publish leaves a resumable state rather than
 //! relay events with no DB trace:
 //!
+//! 0. Gate: is the reasoning provider reachable? (`health_check`)
+//!    If not, refuse deterministically — no relay I/O, no DB row
+//!    (FR-102 / SC-105). This is a fast-path check so the US1
+//!    gating test can pin the behavior regardless of whether the
+//!    take-flow would succeed.
 //! 1. Gate: is another session already open for this dispute?
 //! 2. Take-dispute exchange via `chat::dispute_chat_flow::run_take_flow`.
 //! 3. Initial classification via the configured `ReasoningProvider`,
@@ -58,6 +63,12 @@ pub enum OpenOutcome {
     /// handle these; for now the session is not opened and the
     /// caller is told to skip.
     DeferredToLaterPhase,
+    /// The reasoning provider's `health_check` failed; we refuse
+    /// to open a session and leave Phase 1/2 behavior untouched
+    /// (SC-105). The `reason` is the provider-reported error text
+    /// for operator-facing logs; no rows are written to the
+    /// mediation tables and no chat events are emitted.
+    RefusedReasoningUnavailable { reason: String },
 }
 
 /// Parameters for [`open_session`]. Grouped to keep the signature
@@ -84,6 +95,30 @@ pub struct OpenSessionParams<'a> {
 
 #[instrument(skip_all, fields(dispute_id = %params.dispute_id))]
 pub async fn open_session(params: OpenSessionParams<'_>) -> Result<OpenOutcome> {
+    // (0) Fast-path reasoning-provider reachability gate (T044 /
+    //     FR-102 / SC-105). A cheap `health_check` call runs *before*
+    //     any relay I/O or DB work so an unreachable provider never
+    //     causes the mediation path to publish chat events or write
+    //     `mediation_sessions` rows. Phase 1/2 detection and solver
+    //     notification continue regardless — `open_session` simply
+    //     returns without side effects.
+    //
+    //     We do NOT cache the last health result here: US1 does not
+    //     ship a running engine loop, and caching across calls would
+    //     require background orchestration that belongs to T042 /
+    //     T019. A per-call `health_check` matches the contract's
+    //     "cheap" shape (small-tokens / models-list call for the real
+    //     adapter, in-process for tests).
+    if let Err(e) = params.reasoning.health_check().await {
+        warn!(
+            error = %e,
+            "refusing to open mediation session: reasoning provider health check failed"
+        );
+        return Ok(OpenOutcome::RefusedReasoningUnavailable {
+            reason: e.to_string(),
+        });
+    }
+
     // (1) Gate: existing session?
     {
         let conn = params.conn.lock().await;
