@@ -1,4 +1,5 @@
 pub mod disputes;
+pub mod mediation;
 pub mod migrations;
 pub mod notifications;
 pub mod state_transitions;
