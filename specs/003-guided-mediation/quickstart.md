@@ -37,7 +37,7 @@ enabled                 = true
 provider                = "openai"              # Phase 3 ships this one
 model                   = "gpt-5"
 api_base                = "https://api.openai.com/v1"
-api_key_env             = "OPENAI_API_KEY"
+api_key_env             = "SERBERO_REASONING_API_KEY"
 # The reasoning adapter owns its own bounded HTTP retry budget
 # (FR-104). Lives here, not under [mediation].
 followup_retry_count    = 1
@@ -55,11 +55,17 @@ inbound_fetch_interval_seconds = 10
 ```
 
 Credentials are supplied via the environment, not via the config
-file. Example:
+file. Whatever variable name you set under `[reasoning].api_key_env`
+is the one the daemon reads at startup — the default is
+`SERBERO_REASONING_API_KEY` (vendor-neutral on purpose):
 
 ```bash
-export OPENAI_API_KEY="<your key>"
+export SERBERO_REASONING_API_KEY="<your key>"
 ```
+
+If you point `api_key_env` at a vendor-specific variable name you
+already use (for example `OPENAI_API_KEY` from another tool), that
+works too — the variable name is just configuration.
 
 ### Running with Phase 3 disabled
 
@@ -81,7 +87,7 @@ Rebuild and run as in Phase 1/2:
 
 ```bash
 cargo build --release
-OPENAI_API_KEY="<key>" ./target/release/serbero
+SERBERO_REASONING_API_KEY="<key>" ./target/release/serbero
 ```
 
 At startup you will see (among the Phase 1/2 log lines):

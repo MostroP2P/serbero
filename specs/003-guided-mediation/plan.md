@@ -353,7 +353,7 @@ enabled                  = true
 provider                 = "openai"
 model                    = "gpt-5"
 api_base                 = "https://api.openai.com/v1"
-api_key_env              = "OPENAI_API_KEY"
+api_key_env              = "SERBERO_REASONING_API_KEY"
 request_timeout_seconds  = 30
 followup_retry_count     = 1   # adapter-owned retry budget (FR-104)
 

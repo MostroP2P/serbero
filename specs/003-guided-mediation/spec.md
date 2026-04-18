@@ -337,8 +337,9 @@ provider.
 
 **Acceptance Scenarios**:
 
-1. **Given** Serbero is running with `provider = "openai"` and an
-   `OPENAI_API_KEY`,
+1. **Given** Serbero is running with `provider = "openai"` and a
+   credential exported via the configured `api_key_env` (e.g.
+   `SERBERO_REASONING_API_KEY`),
    **When** the operator keeps `provider = "openai"` but points
    `api_base` at an OpenAI-compatible endpoint and rotates the
    credential via `api_key_env`, then restarts Serbero,
@@ -864,7 +865,7 @@ enabled = true
 provider = "openai"
 model = "gpt-5"
 api_base = "https://api.openai.com/v1"
-api_key_env = "OPENAI_API_KEY"
+api_key_env = "SERBERO_REASONING_API_KEY"
 request_timeout_seconds = 30
 # Bounded HTTP-level retry budget for the reasoning adapter. Lives
 # here — not under [mediation] — because the adapter is what performs

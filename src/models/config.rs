@@ -214,7 +214,12 @@ fn default_api_base() -> String {
     "https://api.openai.com/v1".to_string()
 }
 fn default_api_key_env() -> String {
-    "OPENAI_API_KEY".to_string()
+    // Vendor-neutral. The shipped adapter is OpenAI-compatible; the
+    // same variable name is what operators use to supply credentials
+    // to any future adapter as well. Keep this free of vendor names
+    // so new operators do not assume Serbero only works against
+    // hosted OpenAI.
+    "SERBERO_REASONING_API_KEY".to_string()
 }
 fn default_request_timeout_seconds() -> u64 {
     30
