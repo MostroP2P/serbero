@@ -190,14 +190,35 @@ async fn refuses_session_open_when_reasoning_health_fails_and_phase12_still_noti
         "no mediation_messages row may be written when the gate refuses"
     );
 
-    // The daemon sent exactly one notification (to `solver`), and
-    // the gate produced no mediation chat events. Anything
-    // addressed to any party's derived shared pubkey would require
-    // the take-flow to have run, which the gate prevents. The
-    // assertion on `mediation_message_count == 0` is the primary
-    // "no mediation chat event was emitted" guarantee — Serbero
-    // never publishes a gift-wrap without persisting the outbound
-    // row first (see `mediation::session::open_session` §5-6).
+    // Directly count every Kind::GiftWrap (1059) the relay has
+    // seen during this test. Phase 1/2 solver notification and
+    // hypothetical mediation chat events both use Kind 1059, so
+    // the total count of gift-wraps on the relay pins the "no
+    // mediation chat event was emitted" invariant without relying
+    // on the outbox-ordering inference from DB row counts.
+    //
+    // Expected: exactly 1 gift-wrap — the Phase 1/2 solver
+    // notification delivered above. Any additional gift-wrap would
+    // be a regression of the T044 gate.
+    let observer = Client::new(Keys::generate());
+    observer.add_relay(&harness.relay_url).await.unwrap();
+    observer.connect().await;
+    observer.wait_for_connection(Duration::from_secs(5)).await;
+    let wide_since =
+        Timestamp::from_secs(Timestamp::now().as_secs().saturating_sub(7 * 24 * 60 * 60));
+    let all_gift_wraps = observer
+        .fetch_events(
+            Filter::new().kind(Kind::GiftWrap).since(wide_since),
+            Duration::from_secs(3),
+        )
+        .await
+        .expect("fetch gift-wraps from relay");
+    assert_eq!(
+        all_gift_wraps.len(),
+        1,
+        "expected exactly one gift-wrap (the Phase 1/2 solver notification); \
+         any extra gift-wrap would mean the T044 gate leaked"
+    );
 
     // ---- Clean shutdown ------------------------------------------------
 
