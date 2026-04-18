@@ -43,9 +43,11 @@ fn feed(hasher: &mut Sha256, label: &[u8], bytes: &[u8]) {
 }
 
 fn hex_lower(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
     let mut s = String::with_capacity(bytes.len() * 2);
     for b in bytes {
-        s.push_str(&format!("{:02x}", b));
+        // write!-into-String is infallible; unwrap is idiomatic here.
+        let _ = write!(&mut s, "{:02x}", b);
     }
     s
 }

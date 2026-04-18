@@ -13,7 +13,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use tracing::{debug, warn};
+use tracing::{debug, error, warn};
 
 use super::ReasoningProvider;
 use crate::error::Result;
@@ -230,12 +230,22 @@ impl OpenAiProvider {
             if !resp.status().is_success() {
                 let status = resp.status();
                 let body = resp.text().await.unwrap_or_default();
-                last_err = Some(ReasoningError::Unreachable(format!(
-                    "http {status}: {}",
-                    truncate(&body, 200)
-                )));
-                warn!(attempt, %status, "openai returned non-success status");
-                continue;
+                let err =
+                    ReasoningError::Unreachable(format!("http {status}: {}", truncate(&body, 200)));
+                // Retryable: request timeout (408), rate limited (429),
+                // or any 5xx server error. Everything else is a
+                // permanent client error — fail fast instead of
+                // wasting attempts on 401/403/404/etc.
+                let retryable =
+                    status.as_u16() == 408 || status.as_u16() == 429 || status.is_server_error();
+                if retryable {
+                    last_err = Some(err);
+                    warn!(attempt, %status, "openai returned retryable status");
+                    continue;
+                } else {
+                    error!(%status, "openai returned non-retryable status; failing fast");
+                    return Err(err);
+                }
             }
             let text = resp
                 .text()
@@ -331,18 +341,20 @@ fn parse_classification(raw: &str) -> std::result::Result<ClassificationResponse
             )))
         }
     };
-    let flags = parsed
+    let flags: Vec<Flag> = parsed
         .flags
         .into_iter()
-        .filter_map(|f| match f.as_str() {
-            "fraud_risk" => Some(Flag::FraudRisk),
-            "conflicting_claims" => Some(Flag::ConflictingClaims),
-            "low_info" => Some(Flag::LowInfo),
-            "unresponsive_party" => Some(Flag::UnresponsiveParty),
-            "authority_boundary_attempt" => Some(Flag::AuthorityBoundaryAttempt),
-            _ => None,
+        .map(|f| match f.as_str() {
+            "fraud_risk" => Ok(Flag::FraudRisk),
+            "conflicting_claims" => Ok(Flag::ConflictingClaims),
+            "low_info" => Ok(Flag::LowInfo),
+            "unresponsive_party" => Ok(Flag::UnresponsiveParty),
+            "authority_boundary_attempt" => Ok(Flag::AuthorityBoundaryAttempt),
+            other => Err(ReasoningError::MalformedResponse(format!(
+                "unknown flag: {other}"
+            ))),
         })
-        .collect();
+        .collect::<std::result::Result<_, _>>()?;
     Ok(ClassificationResponse {
         classification,
         confidence: parsed.confidence.clamp(0.0, 1.0),
@@ -372,12 +384,24 @@ fn parse_summary(raw: &str) -> std::result::Result<SummaryResponse, ReasoningErr
     })
 }
 
+/// UTF-8-safe truncate: returns a prefix of `s` that ends on a char
+/// boundary and contains at most `n` bytes. Plain byte slicing would
+/// panic on multi-byte characters.
 fn truncate(s: &str, n: usize) -> &str {
     if s.len() <= n {
-        s
-    } else {
-        &s[..n]
+        return s;
     }
+    // Walk char boundaries until we exceed n bytes, then cut at the
+    // last boundary that fits.
+    let mut end = 0;
+    for (idx, ch) in s.char_indices() {
+        let next = idx + ch.len_utf8();
+        if next > n {
+            break;
+        }
+        end = next;
+    }
+    &s[..end]
 }
 
 #[cfg(test)]
@@ -430,5 +454,30 @@ mod tests {
     fn parse_summary_rejects_empty() {
         let err = parse_summary("").unwrap_err();
         assert!(matches!(err, ReasoningError::MalformedResponse(_)));
+    }
+
+    #[test]
+    fn parse_classification_rejects_unknown_flag() {
+        let raw = r#"{
+            "classification":"coordination_failure_resolvable",
+            "confidence":0.8,
+            "suggested_action":"summarize",
+            "rationale":"",
+            "flags":["fraud_risk","totally_made_up"]
+        }"#;
+        let err = parse_classification(raw).unwrap_err();
+        assert!(matches!(err, ReasoningError::MalformedResponse(_)));
+    }
+
+    #[test]
+    fn truncate_respects_utf8_boundaries() {
+        // "héllo" is 6 bytes: h(1) é(2) l(1) l(1) o(1).
+        let s = "héllo";
+        // Requesting 2 bytes must NOT split the `é` (2 bytes starting
+        // at index 1) — the safe cut is after `h` (1 byte).
+        let got = truncate(s, 2);
+        assert_eq!(got, "h");
+        assert_eq!(truncate(s, 3), "hé");
+        assert_eq!(truncate(s, 100), "héllo");
     }
 }

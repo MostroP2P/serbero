@@ -59,3 +59,62 @@ pub fn build_provider(config: &ReasoningConfig) -> Result<Arc<dyn ReasoningProvi
         ))),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::ReasoningConfig;
+
+    fn anthropic_cfg() -> ReasoningConfig {
+        ReasoningConfig {
+            provider: "anthropic".into(),
+            ..ReasoningConfig::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn build_provider_returns_nyi_for_anthropic() {
+        let provider = build_provider(&anthropic_cfg()).expect("builds");
+        let err = provider.health_check().await.unwrap_err();
+        match err {
+            ReasoningError::Unreachable(msg) => {
+                assert!(
+                    msg.contains("anthropic"),
+                    "error should name the provider: {msg}"
+                );
+                assert!(
+                    msg.contains("not yet implemented"),
+                    "error should flag NYI status: {msg}"
+                );
+            }
+            other => panic!("expected Unreachable, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn build_provider_does_not_coerce_nyi_to_openai() {
+        // Even if the adapter for anthropic were mistakenly wired to
+        // OpenAI, the NYI stub would fail on the very first call —
+        // this test guards the regression.
+        let provider = build_provider(&anthropic_cfg()).expect("builds");
+        assert!(provider.health_check().await.is_err());
+    }
+
+    #[test]
+    fn build_provider_rejects_unknown_provider_name() {
+        let cfg = ReasoningConfig {
+            provider: "totally_made_up".into(),
+            ..ReasoningConfig::default()
+        };
+        match build_provider(&cfg) {
+            Err(Error::Config(msg)) => {
+                assert!(
+                    msg.contains("totally_made_up"),
+                    "error should name the provider: {msg}"
+                );
+            }
+            Err(other) => panic!("expected Error::Config, got {other}"),
+            Ok(_) => panic!("unknown providers must not build"),
+        }
+    }
+}

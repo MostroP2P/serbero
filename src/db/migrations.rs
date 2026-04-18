@@ -192,6 +192,9 @@ fn apply_v3(tx: &Transaction<'_>) -> Result<()> {
              FOREIGN KEY (session_id) REFERENCES mediation_sessions(session_id)
          );
 
+         CREATE INDEX IF NOT EXISTS idx_reasoning_rationales_session
+             ON reasoning_rationales(session_id);
+
          CREATE TABLE IF NOT EXISTS mediation_summaries (
              id                   INTEGER PRIMARY KEY AUTOINCREMENT,
              session_id           TEXT NOT NULL,

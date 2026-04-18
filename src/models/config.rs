@@ -176,9 +176,11 @@ pub struct ReasoningConfig {
     #[serde(default = "default_request_timeout_seconds")]
     pub request_timeout_seconds: u64,
     /// Populated by the loader from the env var named by
-    /// `api_key_env`. Default is empty; when enabled the loader MUST
-    /// return an error if the referenced env var is unset or empty.
-    #[serde(default)]
+    /// `api_key_env`. Skipped during deserialization so TOML cannot
+    /// set it directly — secrets enter the `Config` only via the
+    /// environment. When `enabled = true` the loader MUST return an
+    /// error if the referenced env var is unset or empty.
+    #[serde(skip_deserializing)]
     pub api_key: String,
 }
 
@@ -270,4 +272,97 @@ impl Default for ChatConfig {
 
 fn default_inbound_fetch_interval_seconds() -> u64 {
     10
+}
+
+#[cfg(test)]
+mod phase3_tests {
+    use super::*;
+
+    const PHASE3_ENABLED: &str = r#"
+[serbero]
+private_key = "aa11"
+
+[mostro]
+pubkey = "bb22"
+
+[mediation]
+enabled = true
+max_rounds = 3
+
+[reasoning]
+enabled = true
+provider = "openai"
+model = "gpt-5"
+api_base = "https://example.test/v1"
+api_key_env = "X_API_KEY"
+
+[prompts]
+system_instructions_path = "./prompts/phase3-system.md"
+classification_policy_path = "./prompts/phase3-classification.md"
+escalation_policy_path = "./prompts/phase3-escalation-policy.md"
+mediation_style_path = "./prompts/phase3-mediation-style.md"
+message_templates_path = "./prompts/phase3-message-templates.md"
+
+[chat]
+inbound_fetch_interval_seconds = 7
+"#;
+
+    const PHASE3_DISABLED: &str = r#"
+[serbero]
+private_key = "aa11"
+
+[mostro]
+pubkey = "bb22"
+"#;
+
+    #[test]
+    fn phase3_enabled_config_parses_all_sections() {
+        let cfg: Config = toml::from_str(PHASE3_ENABLED).expect("parse");
+        assert!(cfg.mediation.enabled);
+        assert_eq!(cfg.mediation.max_rounds, 3);
+        // Defaults still apply to unspecified fields.
+        assert_eq!(cfg.mediation.solver_auth_retry_max_attempts, 24);
+        assert!(cfg.reasoning.enabled);
+        assert_eq!(cfg.reasoning.provider, "openai");
+        assert_eq!(cfg.reasoning.model, "gpt-5");
+        assert_eq!(cfg.reasoning.api_base, "https://example.test/v1");
+        assert_eq!(cfg.reasoning.api_key_env, "X_API_KEY");
+        // api_key MUST NOT come from TOML — skip_deserializing.
+        assert_eq!(cfg.reasoning.api_key, "");
+        assert_eq!(
+            cfg.prompts.system_instructions_path,
+            "./prompts/phase3-system.md"
+        );
+        assert_eq!(cfg.chat.inbound_fetch_interval_seconds, 7);
+    }
+
+    #[test]
+    fn phase3_disabled_config_leaves_defaults() {
+        let cfg: Config = toml::from_str(PHASE3_DISABLED).expect("parse");
+        assert!(!cfg.mediation.enabled);
+        assert!(!cfg.reasoning.enabled);
+        // Defaults pre-populated so partial operators don't fail.
+        assert_eq!(cfg.reasoning.api_base, "https://api.openai.com/v1");
+        assert_eq!(cfg.chat.inbound_fetch_interval_seconds, 10);
+        assert_eq!(cfg.reasoning.api_key, "");
+    }
+
+    #[test]
+    fn api_key_cannot_be_set_from_toml() {
+        let malicious = r#"
+[serbero]
+private_key = "aa11"
+
+[mostro]
+pubkey = "bb22"
+
+[reasoning]
+enabled = false
+api_key = "SECRET_FROM_TOML"
+"#;
+        let cfg: Config = toml::from_str(malicious).expect("parse");
+        // Even when the TOML tries to inject it, skip_deserializing
+        // keeps the field empty — secrets come only from the env.
+        assert_eq!(cfg.reasoning.api_key, "");
+    }
 }

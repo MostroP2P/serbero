@@ -7,6 +7,7 @@
 
 use std::fmt;
 
+use crate::models::dispute::InitiatorRole;
 use crate::models::mediation::{ClassificationLabel, Flag, TranscriptParty};
 
 /// View over the loaded prompt bundle passed into reasoning calls.
@@ -39,24 +40,6 @@ pub struct ReasoningContext {
     pub last_confidence: Option<f64>,
 }
 
-/// Initiator role on a dispute — mirrors Phase 1/2's enum but kept
-/// local to the reasoning module to avoid a circular dependency
-/// between models and reasoning adapters.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum InitiatorRole {
-    Buyer,
-    Seller,
-}
-
-impl fmt::Display for InitiatorRole {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            InitiatorRole::Buyer => f.write_str("buyer"),
-            InitiatorRole::Seller => f.write_str("seller"),
-        }
-    }
-}
-
 /// Classification request.
 #[derive(Debug, Clone)]
 pub struct ClassificationRequest {
@@ -83,9 +66,18 @@ pub struct EscalationReason(pub String);
 
 /// Rationale text kept opaque so general logs never accidentally
 /// embed it. Full contents go to the controlled audit store only
-/// (FR-120).
-#[derive(Debug, Clone)]
+/// (FR-120). The `Debug` impl redacts the inner contents — use
+/// `.0` (or a dedicated audit-store API) to access the raw text,
+/// and even then only when writing to the audit store, not to
+/// general logs.
+#[derive(Clone)]
 pub struct RationaleText(pub String);
+
+impl fmt::Debug for RationaleText {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "RationaleText(<{} bytes redacted>)", self.0.len())
+    }
+}
 
 /// Classification response.
 #[derive(Debug, Clone)]

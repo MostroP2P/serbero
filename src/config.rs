@@ -36,7 +36,9 @@ fn resolve_reasoning_api_key(config: &mut Config) -> Result<()> {
     }
     match std::env::var(&var) {
         Ok(v) if !v.trim().is_empty() => {
-            config.reasoning.api_key = v;
+            // Store trimmed so accidental trailing newlines in shell
+            // exports don't cause bearer-token auth failures.
+            config.reasoning.api_key = v.trim().to_string();
             Ok(())
         }
         _ if config.reasoning.enabled => Err(Error::Config(format!(
