@@ -341,7 +341,6 @@ and keep the Phase 1/2 daemon behavior verbatim.
 enabled = true
 max_rounds = 2
 party_response_timeout_seconds = 1800
-followup_retry_count = 1
 
 # Solver authorization revalidation (scope-controlled; see plan notes)
 solver_auth_retry_initial_seconds    = 60
@@ -356,6 +355,7 @@ model                    = "gpt-5"
 api_base                 = "https://api.openai.com/v1"
 api_key_env              = "OPENAI_API_KEY"
 request_timeout_seconds  = 30
+followup_retry_count     = 1   # adapter-owned retry budget (FR-104)
 
 [prompts]
 system_instructions_path   = "./prompts/phase3-system.md"

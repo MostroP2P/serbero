@@ -25,7 +25,6 @@ example:
 enabled = true
 max_rounds = 2
 party_response_timeout_seconds = 1800
-followup_retry_count = 1
 
 # Scope-controlled solver-auth revalidation; defaults shown.
 solver_auth_retry_initial_seconds      = 60
@@ -39,6 +38,9 @@ provider                = "openai"              # Phase 3 ships this one
 model                   = "gpt-5"
 api_base                = "https://api.openai.com/v1"
 api_key_env             = "OPENAI_API_KEY"
+# The reasoning adapter owns its own bounded HTTP retry budget
+# (FR-104). Lives here, not under [mediation].
+followup_retry_count    = 1
 request_timeout_seconds = 30
 
 [prompts]

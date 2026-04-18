@@ -46,11 +46,13 @@ impl OpenAiProvider {
             api_key: config.api_key.clone(),
             model: config.model.clone(),
             timeout,
-            // Inherit the mediation-level followup retry count here so
-            // transient HTTP failures are bounded the same way the
-            // mediation engine bounds its own retries. This keeps the
-            // scope-control promise (no standalone retry framework).
-            retries: 1,
+            // Retry budget is owned by the reasoning adapter
+            // (FR-104 + plan degraded-mode table). Retries here are
+            // additional attempts AFTER the initial request, so the
+            // configured value maps 1:1: 0 = no retry, 1 = one retry
+            // (two total attempts), etc. No standalone retry
+            // framework; bounded by a plain for-loop in post_chat.
+            retries: config.followup_retry_count,
         })
     }
 
@@ -564,5 +566,26 @@ mod tests {
         assert_eq!(got, "h");
         assert_eq!(truncate(s, 3), "hé");
         assert_eq!(truncate(s, 100), "héllo");
+    }
+
+    #[test]
+    fn provider_honors_configured_retry_count() {
+        // The previous implementation hardcoded retries = 1 regardless
+        // of the configured value. This test pins the new ownership:
+        // the adapter's retry budget comes from
+        // [reasoning].followup_retry_count (FR-104 + plan degraded-
+        // mode table).
+        for configured in [0u32, 1, 3, 7] {
+            let cfg = ReasoningConfig {
+                provider: "openai".into(),
+                followup_retry_count: configured,
+                ..ReasoningConfig::default()
+            };
+            let provider = OpenAiProvider::new(&cfg).unwrap();
+            assert_eq!(
+                provider.retries, configured,
+                "adapter must reflect the configured followup_retry_count"
+            );
+        }
     }
 }

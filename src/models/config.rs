@@ -105,8 +105,6 @@ pub struct MediationConfig {
     pub max_rounds: u32,
     #[serde(default = "default_party_response_timeout_seconds")]
     pub party_response_timeout_seconds: u64,
-    #[serde(default = "default_followup_retry_count")]
-    pub followup_retry_count: u32,
 
     // Solver-auth bounded revalidation loop knobs. Defaults match
     // `specs/003-guided-mediation/spec.md`.
@@ -126,7 +124,6 @@ impl Default for MediationConfig {
             enabled: false,
             max_rounds: default_max_rounds(),
             party_response_timeout_seconds: default_party_response_timeout_seconds(),
-            followup_retry_count: default_followup_retry_count(),
             solver_auth_retry_initial_seconds: default_solver_auth_retry_initial_seconds(),
             solver_auth_retry_max_interval_seconds: default_solver_auth_retry_max_interval_seconds(
             ),
@@ -141,9 +138,6 @@ fn default_max_rounds() -> u32 {
 }
 fn default_party_response_timeout_seconds() -> u64 {
     1800
-}
-fn default_followup_retry_count() -> u32 {
-    1
 }
 fn default_solver_auth_retry_initial_seconds() -> u64 {
     60
@@ -175,6 +169,13 @@ pub struct ReasoningConfig {
     pub api_key_env: String,
     #[serde(default = "default_request_timeout_seconds")]
     pub request_timeout_seconds: u64,
+    /// Bounded retry count for the reasoning adapter's HTTP calls
+    /// (FR-104 + plan degraded-mode table). Lives here — alongside
+    /// `request_timeout_seconds` — because the adapter is the only
+    /// thing that actually performs these retries; the mediation
+    /// engine just sees the final `ReasoningError`. Default: 1.
+    #[serde(default = "default_followup_retry_count")]
+    pub followup_retry_count: u32,
     /// Populated by the loader from the env var named by
     /// `api_key_env`. Skipped during deserialization so TOML cannot
     /// set it directly — secrets enter the `Config` only via the
@@ -193,9 +194,14 @@ impl Default for ReasoningConfig {
             api_base: default_api_base(),
             api_key_env: default_api_key_env(),
             request_timeout_seconds: default_request_timeout_seconds(),
+            followup_retry_count: default_followup_retry_count(),
             api_key: String::new(),
         }
     }
+}
+
+fn default_followup_retry_count() -> u32 {
+    1
 }
 
 fn default_provider() -> String {

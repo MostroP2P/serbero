@@ -166,9 +166,12 @@ through the policy validator **before** any side effect:
 - Request shape: chat-completions style with JSON mode for
   classification; plain-text for summary with adapter-side parsing.
 - Timeout: `[reasoning].request_timeout_seconds`.
-- Retry: up to `[mediation].followup_retry_count` adapter-level
-  retries on transient errors before surfacing
-  `ReasoningError::Unreachable`.
+- Retry: up to `[reasoning].followup_retry_count` adapter-level
+  retries on transient errors (408, 429, 5xx) before surfacing
+  `ReasoningError::Unreachable`. Permanent client errors (401 / 403
+  / 404 / etc.) fail fast without consuming retries. The adapter is
+  the single owner of this retry budget — it is NOT split with the
+  mediation engine.
 
 ### OpenAI-compatible endpoints
 
