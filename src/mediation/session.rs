@@ -243,75 +243,85 @@ pub async fn open_session(params: OpenSessionParams<'_>) -> Result<OpenOutcome> 
     //     dispute_id cannot slip through between step (1) and here.
     //     SQLite serialises on the single `AsyncMutex<Connection>`,
     //     so this re-check is atomic with the inserts that follow.
+    //
+    //     The block scope is load-bearing: `rusqlite::Transaction`
+    //     is `!Send`, and the compiler keeps any value that *could*
+    //     be live across an `.await` in the generator state. Wrapping
+    //     the tx in an explicit block drops it (and the DB lock
+    //     guard) before the `publish_with_bounded_retry` awaits below,
+    //     which is what lets `open_session` run under `tokio::spawn`
+    //     inside the engine task.
     let now = current_ts_secs()?;
-    let mut conn = params.conn.lock().await;
-    if let Some((sid, _state)) = db::mediation::latest_open_session_for(&conn, params.dispute_id)? {
-        info!(
-            session_id = %sid,
-            "mediation session opened concurrently; aborting this attempt without publishing"
-        );
-        return Ok(OpenOutcome::AlreadyOpen { session_id: sid });
+    {
+        let mut conn = params.conn.lock().await;
+        if let Some((sid, _state)) =
+            db::mediation::latest_open_session_for(&conn, params.dispute_id)?
+        {
+            info!(
+                session_id = %sid,
+                "mediation session opened concurrently; aborting this attempt without publishing"
+            );
+            return Ok(OpenOutcome::AlreadyOpen { session_id: sid });
+        }
+        let tx = conn.transaction()?;
+        db::mediation::insert_session(
+            &tx,
+            &db::mediation::NewMediationSession {
+                session_id: &session_id,
+                dispute_id: params.dispute_id,
+                prompt_bundle_id: &params.prompt_bundle.id,
+                policy_hash: &params.prompt_bundle.policy_hash,
+                buyer_shared_pubkey: Some(&material.buyer_shared_pubkey()),
+                seller_shared_pubkey: Some(&material.seller_shared_pubkey()),
+                started_at: now,
+            },
+        )?;
+        db::mediation::insert_outbound_message(
+            &tx,
+            &db::mediation::NewOutboundMessage {
+                session_id: &session_id,
+                party: TranscriptParty::Buyer,
+                shared_pubkey: &material.buyer_shared_pubkey(),
+                inner_event_id: &buyer_wrap.inner_event_id.to_hex(),
+                inner_event_created_at: buyer_wrap.inner_created_at,
+                outer_event_id: Some(&buyer_wrap.outer.id.to_hex()),
+                content: &buyer_content,
+                prompt_bundle_id: &params.prompt_bundle.id,
+                policy_hash: &params.prompt_bundle.policy_hash,
+                persisted_at: now,
+            },
+        )?;
+        db::mediation::insert_outbound_message(
+            &tx,
+            &db::mediation::NewOutboundMessage {
+                session_id: &session_id,
+                party: TranscriptParty::Seller,
+                shared_pubkey: &material.seller_shared_pubkey(),
+                inner_event_id: &seller_wrap.inner_event_id.to_hex(),
+                inner_event_created_at: seller_wrap.inner_created_at,
+                outer_event_id: Some(&seller_wrap.outer.id.to_hex()),
+                content: &seller_content,
+                prompt_bundle_id: &params.prompt_bundle.id,
+                policy_hash: &params.prompt_bundle.policy_hash,
+                persisted_at: now,
+            },
+        )?;
+        // Audit: the `session_opened` event lands in the same
+        // transaction as the session + outbound rows. A crash between
+        // the commit and the relay publish therefore leaves a
+        // consistent DB view — the session row and its audit trace
+        // rise and fall together, and the reasoning-rationale /
+        // classification-produced events (T038 scope) can later chain
+        // off this `session_opened` row.
+        db::mediation_events::record_session_opened(
+            &tx,
+            &session_id,
+            &params.prompt_bundle.id,
+            &params.prompt_bundle.policy_hash,
+            now,
+        )?;
+        tx.commit()?;
     }
-    let tx = conn.transaction()?;
-    db::mediation::insert_session(
-        &tx,
-        &db::mediation::NewMediationSession {
-            session_id: &session_id,
-            dispute_id: params.dispute_id,
-            prompt_bundle_id: &params.prompt_bundle.id,
-            policy_hash: &params.prompt_bundle.policy_hash,
-            buyer_shared_pubkey: Some(&material.buyer_shared_pubkey()),
-            seller_shared_pubkey: Some(&material.seller_shared_pubkey()),
-            started_at: now,
-        },
-    )?;
-    db::mediation::insert_outbound_message(
-        &tx,
-        &db::mediation::NewOutboundMessage {
-            session_id: &session_id,
-            party: TranscriptParty::Buyer,
-            shared_pubkey: &material.buyer_shared_pubkey(),
-            inner_event_id: &buyer_wrap.inner_event_id.to_hex(),
-            inner_event_created_at: buyer_wrap.inner_created_at,
-            outer_event_id: Some(&buyer_wrap.outer.id.to_hex()),
-            content: &buyer_content,
-            prompt_bundle_id: &params.prompt_bundle.id,
-            policy_hash: &params.prompt_bundle.policy_hash,
-            persisted_at: now,
-        },
-    )?;
-    db::mediation::insert_outbound_message(
-        &tx,
-        &db::mediation::NewOutboundMessage {
-            session_id: &session_id,
-            party: TranscriptParty::Seller,
-            shared_pubkey: &material.seller_shared_pubkey(),
-            inner_event_id: &seller_wrap.inner_event_id.to_hex(),
-            inner_event_created_at: seller_wrap.inner_created_at,
-            outer_event_id: Some(&seller_wrap.outer.id.to_hex()),
-            content: &seller_content,
-            prompt_bundle_id: &params.prompt_bundle.id,
-            policy_hash: &params.prompt_bundle.policy_hash,
-            persisted_at: now,
-        },
-    )?;
-    // Audit: the `session_opened` event lands in the same
-    // transaction as the session + outbound rows. A crash between
-    // the commit and the relay publish therefore leaves a
-    // consistent DB view — the session row and its audit trace
-    // rise and fall together, and the reasoning-rationale /
-    // classification-produced events (T038 scope) can later chain
-    // off this `session_opened` row.
-    db::mediation_events::record_session_opened(
-        &tx,
-        &session_id,
-        &params.prompt_bundle.id,
-        &params.prompt_bundle.policy_hash,
-        now,
-    )?;
-    tx.commit()?;
-    // Release the DB lock before doing network I/O.
-    drop(conn);
 
     // (7) Publish the wraps.
     //
@@ -481,7 +491,11 @@ pub async fn ingest_inbound(
 /// Failure here with the DB rows already committed leaves a
 /// known-published-incomplete session; reconciliation on top of that
 /// is US2 scope (durable outbox or restart-replay of unwrapped wraps).
-async fn publish_with_bounded_retry(client: &Client, outer: &Event, label: &str) -> Result<()> {
+pub(crate) async fn publish_with_bounded_retry(
+    client: &Client,
+    outer: &Event,
+    label: &str,
+) -> Result<()> {
     const MAX_ATTEMPTS: u32 = 3;
     let mut last_err: Option<String> = None;
     for attempt in 1..=MAX_ATTEMPTS {
