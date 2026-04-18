@@ -88,12 +88,13 @@ the primary references for transport and mediation-session modeling
 in this phase and SHOULD be consulted during design and
 implementation:
 
-- `src/util/chat_utils.rs` — shared-key derivation, gift-wrap
-  construction, decrypt/verify pipeline.
+- `src/util/chat_utils.rs` — chat-addressing key reconstruction,
+  gift-wrap construction, and the decrypt / verify pipeline.
 - `src/models.rs` — session-state shapes, chat role handling.
-- `src/util/order_utils/execute_take_dispute.rs` — the solver-take flow
-  that precedes mediation, including the shared-key material used to
-  address chat events.
+- `src/util/order_utils/execute_take_dispute.rs` — the dispute-chat
+  interaction flow that precedes mediation, including how a solver
+  obtains or reconstructs the per-party chat-addressing key material
+  tied to the dispute.
 - `src/ui/key_handler/input_helpers.rs` — input-to-event construction
   patterns that inform how Serbero assembles its outgoing messages.
 
@@ -124,11 +125,13 @@ must land correctly before any other Phase 3 story is meaningful.
 
 **Independent Test**: Can be fully tested by publishing a dispute
 event that Phases 1 and 2 recognize, registering Serbero's pubkey as
-a solver on the target Mostro instance, simulating the solver-take
-flow that produces the shared chat keys, and then verifying that
-Serbero emits the first mediation message into the Mostro chat channel
-(not a direct DM), with content sourced from the configured prompt
-bundle and identifying itself as an assistance system.
+a solver on the target Mostro instance, simulating the dispute-chat
+interaction flow that current Mostro clients use (verified against
+the Mostrix reference implementation at test-fixture time), and then
+verifying that Serbero emits the first mediation message into the
+Mostro chat channel (not a direct DM), with content sourced from the
+configured prompt bundle and identifying itself as an assistance
+system.
 
 **Acceptance Scenarios**:
 
@@ -584,39 +587,45 @@ provider.
 
 This section is normative. It expands TC-101.
 
-The Mostro chat transport is defined by Mostro's own protocol and its
-solver-take flow. It is NOT a generic ECDH shortcut between Serbero's
-identity and a party's pubkey. Implementers MUST follow the
-protocol-defined flow and the Mostrix reference implementation; any
-apparent simplification that skips the take-dispute handshake is a
-protocol violation and MUST be rejected in review.
+Serbero MUST use the same dispute-chat key reconstruction and
+message addressing mechanism that is actually used by Mostro clients
+for solver-visible dispute chat. This contract does **not** assume
+that Mostro's public chat specification alone fully defines that
+mechanism; it MUST be verified against the real flow used by current
+Mostro clients and the Mostrix reference implementation. A generic
+ECDH shortcut between Serbero's long-term secret and a party's
+primary pubkey is explicitly forbidden unless that exact mechanism
+is verified in the implementation flow used by Mostro clients.
 
-- **Shared-key material is obtained through the Mostro-defined
-  solver-take flow**, not invented by Serbero. When Serbero, acting
-  with its registered solver identity, takes a dispute through
-  Mostro, the protocol establishes the shared-key context required to
-  address party chat messages for that dispute. The concrete flow —
-  including which key material is exchanged, how it is tied to the
-  dispute and the counterparties, and how both sides reconstruct a
-  chat-addressing key — is the one implemented in Mostrix's
-  `src/util/order_utils/execute_take_dispute.rs` and documented in
-  `https://mostro.network/protocol/chat.html`. Serbero MUST follow
-  that flow; it MUST NOT derive a chat-addressing key from a
-  standalone ECDH between its own secret key and a party pubkey as a
-  generic shortcut.
-- **Outbound messages are addressed to the shared pubkey produced by
-  the protocol**, not to a party's own pubkey. Serbero reconstructs
-  the protocol-provided shared-key material as Nostr `Keys` (matching
-  Mostrix's `chat_utils.rs`) and uses that keypair for addressing and
-  signing the inner event, per protocol/chat.html.
+- **Chat-addressing key material is obtained by following the
+  dispute-chat interaction flow used by current Mostro clients**,
+  not invented by Serbero. When Serbero, acting with its registered
+  solver identity, participates in that flow, the flow yields or
+  allows reconstruction of the per-party chat key material required
+  to address party messages. The concrete mechanism — which key
+  material is exchanged, how it is tied to the dispute and the
+  counterparties, how each side reconstructs a chat-addressing key —
+  is the one exercised in the Mostrix reference
+  (`src/util/order_utils/execute_take_dispute.rs` and
+  `src/util/chat_utils.rs`) and described at a higher level in
+  `https://mostro.network/protocol/chat.html`. Serbero MUST verify
+  that mechanism against current Mostro / Mostrix behavior and MUST
+  NOT substitute a standalone ECDH between its own secret key and a
+  party's primary pubkey as a generic shortcut.
+- **Outbound messages are addressed to the per-party chat pubkey
+  produced by that reconstruction**, not to a party's own primary
+  pubkey. Serbero reconstructs the chat-key material as Nostr `Keys`
+  (matching the Mostrix `chat_utils.rs` pattern, to be verified at
+  implementation time) and uses that keypair for addressing and
+  signing the inner event.
 - **Outbound mediation content MUST be wrapped as a NIP-44-encrypted
   inner event (`kind 1`) embedded in a NIP-59 gift-wrap
-  (`kind 1059`)** with a `p` tag pointing at the shared pubkey, as
-  modeled in Mostrix's `src/util/chat_utils.rs`.
+  (`kind 1059`)** with a `p` tag pointing at the per-party chat
+  pubkey, as modeled in Mostrix's `src/util/chat_utils.rs`.
 - **On the inbound path**, Serbero MUST: fetch gift-wraps addressed
-  to the shared pubkey, decrypt with the shared-key material
-  established by the take flow, parse and verify the inner event, and
-  treat the inner event's content and `created_at` as authoritative
+  to the per-party chat pubkey, decrypt with the reconstructed chat
+  key material, parse and verify the inner event, and treat the
+  inner event's content and `created_at` as authoritative
   mediation-session facts.
 - The outer gift-wrap's timestamp MUST NOT be used as a session-fact
   timestamp. All mediation ordering, round counting, and timeout
@@ -624,12 +633,13 @@ protocol violation and MUST be rejected in review.
 - Direct DMs to a party's primary pubkey MUST NOT be used for
   mediation content. Solver-facing DMs (Phase 1/2 notifications) are
   unrelated and continue to use the Phase 1/2 notifier unchanged.
-- If Serbero has not completed the Mostro-defined solver-take flow
-  for a dispute (e.g. another solver took it first, or the flow
-  failed), Serbero MUST NOT address mediation messages for that
-  dispute. In that case the dispute is handled by the human solver
-  via Mostro; Phase 3 transitions the session to `superseded_by_human`
-  or closes it without sending party messages.
+- If Serbero has not completed the dispute-chat interaction flow for
+  a dispute (e.g. another solver already took it, the flow failed,
+  or the flow returns material that does not match the verified
+  reconstruction mechanism), Serbero MUST NOT address mediation
+  messages for that dispute. In that case the dispute is handled by
+  the human solver via Mostro; Phase 3 transitions the session to
+  `superseded_by_human` or closes it without sending party messages.
 
 ## Reasoning Provider Configuration
 

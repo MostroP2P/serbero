@@ -6,11 +6,14 @@
 ## Summary
 
 Phase 3 extends the existing Serbero daemon with guided mediation for
-low-risk coordination disputes. Serbero participates in Mostro's
-solver-take flow with its registered solver identity, acquires the
-chat-addressing shared-key material defined by Mostro's chat
-protocol, and exchanges structured clarifying messages with dispute
-parties through that transport. A mandatory reasoning provider
+low-risk coordination disputes. Serbero follows the dispute-chat
+interaction flow used by current Mostro clients (verified against the
+Mostrix reference implementation) and reconstructs the per-party
+chat-addressing key material required by that flow. Using that key
+material, it exchanges structured clarifying messages with dispute
+parties through the Mostro chat transport — not via direct DMs to
+party primary pubkeys, and not via a generic secret-plus-pubkey ECDH
+shortcut. A mandatory reasoning provider
 classifies disputes, drafts next messages, and produces structured
 summaries; Serbero's policy layer validates every reasoning output
 against the authority and escalation rules and enforces a clean
@@ -40,7 +43,7 @@ reasoning rationales.
 | Principle | Status | Verification |
 |-----------|--------|--------------|
 | I. Fund Isolation First | PASS | Phase 3 adds mediation messaging and summarization only. `admin-settle` and `admin-cancel` remain forbidden (FR-115). Reasoning provider outputs are advisory and pass through Serbero's policy layer (FR-116) — any "suggested settlement" is suppressed and escalated. |
-| II. Protocol-Enforced Security | PASS | Transport is Mostro's own chat protocol and its solver-take flow (TC-101, Mediation Transport Requirements). Solver authorization is enforced by Mostro, not by Serbero (TC-104, Solver Identity and Authorization). Mediation does not depend on model behavior to enforce boundaries. |
+| II. Protocol-Enforced Security | PASS | Transport is the Mostro dispute-chat interaction flow used by current Mostro clients, verified against the Mostrix reference implementation (TC-101, Mediation Transport Requirements). Solver authorization is enforced by Mostro, not by Serbero (TC-104, Solver Identity and Authorization). Mediation does not depend on model behavior to enforce boundaries. |
 | III. Human Final Authority | PASS | Phase 3 explicitly escalates (not resolves) conflicting claims, fraud indicators, low confidence, party non-response, round-limit, and reasoning-unavailability (FR-111 / FR-112). Summary delivery routes to a human solver; the solver retains final authority. |
 | IV. Operator Notification | PASS | Phase 3 adds mediation-specific notifications on top of the Phase 1/2 notifier (FR-113), does not replace or silence it, and broadcasts / targets per the Solver-Facing Routing section. |
 | V. Assistance Without Authority | PASS | Serbero identifies itself as an assistance system in every party-facing message (FR-108) and MUST NOT present itself as the final authority. Disallowed outputs (autonomous closure, binding decisions, fund-related instructions) are enumerated in AI Agent Behavior Boundaries. |
@@ -100,8 +103,10 @@ src/
 │   └── notifier.rs                  # unchanged; reused by Phase 3 via Solver-Facing Routing
 ├── chat/                            # new: Mostro chat transport
 │   ├── mod.rs
-│   ├── take_flow.rs                 # Mostro solver-take participation (refs execute_take_dispute.rs)
-│   ├── shared_key.rs                # chat-addressing key material (refs chat_utils.rs)
+│   ├── dispute_chat_flow.rs         # follow the dispute-chat interaction flow used by current
+│   │                                # Mostro clients (verified vs. execute_take_dispute.rs)
+│   ├── shared_key.rs                # per-party chat-addressing key reconstruction
+│   │                                # (verified vs. chat_utils.rs)
 │   ├── outbound.rs                  # wrap kind-1 inner event → NIP-59 gift-wrap → p=shared_pubkey
 │   └── inbound.rs                   # fetch, unwrap, decrypt, verify, surface inner event + created_at
 ├── reasoning/                       # new: reasoning provider adapter boundary
@@ -164,13 +169,15 @@ Phase 2 Dispute (notified/taken)
 └───────────────┬────────────────┘
                 │
                 ▼
-┌────────────────────────────────┐     ┌──────────────────────┐
-│  chat/take_flow.rs            │────▶│  mostro solver-take  │  (protocol/chat.html)
-│  Serbero takes dispute via    │     │  produces shared-key │
-│  its registered solver        │     │  material per dispute│
-└───────────────┬────────────────┘     └──────────┬───────────┘
+┌────────────────────────────────┐     ┌──────────────────────────┐
+│  chat/dispute_chat_flow.rs    │────▶│  dispute-chat interaction│  (verified against
+│  follow the flow used by      │     │  flow used by current     │   current Mostro
+│  current Mostro clients       │     │  Mostro clients; yields or│   clients + Mostrix)
+│                               │     │  allows reconstruction of │
+│                               │     │  per-party chat-key material
+└───────────────┬────────────────┘     └──────────┬───────────────┘
                 │                                 │
-                │ shared_key material (per party) │
+                │ chat-key material (per party)   │
                 ▼                                 ▼
 ┌────────────────────────────────┐     ┌──────────────────────┐
 │  chat/shared_key.rs           │────▶│  addressing keypair  │
@@ -382,7 +389,7 @@ apply. Reasoning credentials are supplied via `[reasoning].api_key_env`
 
 ### Integration tests (`tests/phase3_*.rs`)
 
-- `phase3_session_open.rs` (US1): MockRelay + Mostro-chat simulator + MockReasoningProvider; verifies the first outbound chat event is addressed to the ECDH-derived shared pubkey produced by the simulated solver-take flow and contains content drawn from the configured prompt bundle.
+- `phase3_session_open.rs` (US1): MockRelay + Mostro-chat simulator + MockReasoningProvider; verifies the first outbound chat event is addressed to the per-party chat pubkey produced by the simulated dispute-chat interaction flow (modeled after the verified Mostro / Mostrix behavior) and contains content drawn from the configured prompt bundle.
 - `phase3_response_ingest.rs` (US2): inbound gift-wrap decrypt / verify, dedup on inner event id, round counter advance; restart-resume preserves round count and last-seen markers.
 - `phase3_cooperative_summary.rs` (US3): cooperative two-round flow drives a summary delivered through the Phase 1/2 notifier per the Solver-Facing Routing rule; `mediation_summaries` row present with the session's `policy_hash`.
 - `phase3_escalation_triggers.rs` (US4): one sub-test per enumerated trigger (conflicting, fraud, low_conf, party_unresponsive, round_limit, reasoning_unavailable, authorization_lost); each transitions the session to `escalation_recommended` and assembles the Phase 4 handoff package.
@@ -392,7 +399,7 @@ apply. Reasoning credentials are supplied via `[reasoning].api_key_env`
 
 ### Test infrastructure
 
-- `tests/common/mod.rs`: add `MockReasoningProvider` (in-process stub fronting an `httpmock` or hand-rolled HTTP server) and `MostroChatSim` that performs the solver-take handshake and replays gift-wrapped chat events — built on top of `nostr-relay-builder::MockRelay` reused from Phases 1/2.
+- `tests/common/mod.rs`: add `MockReasoningProvider` (in-process stub fronting an `httpmock` or hand-rolled HTTP server) and `MostroChatSim` that models the subset of the dispute-chat interaction flow Phase 3 exercises (verified against current Mostro / Mostrix behavior) and replays gift-wrapped chat events — built on top of `nostr-relay-builder::MockRelay` reused from Phases 1/2.
 - Prompt bundle fixtures under `tests/fixtures/prompts/phase3-*.md` so integration tests do not depend on the real `prompts/` directory at runtime.
 
 ## Phased Implementation Order (within Phase 3)
@@ -406,7 +413,7 @@ notes above.
 3. **Schema migration v3**: add `mediation_sessions`, `mediation_messages`, `mediation_summaries`, `mediation_events`, `reasoning_rationales` tables. Add any missing Phase 3-only columns on `disputes` if needed.
 4. **Prompt bundle loader + hasher**: load the configured paths at startup, compute the deterministic `policy_hash`, fail loudly on missing / unreadable files.
 5. **Reasoning provider adapter boundary + `openai` adapter**: the trait surface plus the one adapter. NYI stubs for other providers. Health check at startup + config reload.
-6. **Mostro chat transport**: `chat/take_flow.rs`, `chat/shared_key.rs`, `chat/outbound.rs`, `chat/inbound.rs`. Match Mostrix `execute_take_dispute.rs` + `chat_utils.rs` patterns.
+6. **Mostro chat transport**: `chat/dispute_chat_flow.rs`, `chat/shared_key.rs`, `chat/outbound.rs`, `chat/inbound.rs`. Verify against current Mostro / Mostrix behavior (`execute_take_dispute.rs` + `chat_utils.rs`) during implementation; do not freeze mechanisms that are ultimately determined by client behavior.
 7. **Mediation engine**: session lifecycle, policy validator, router (Solver-Facing Routing), summarizer, escalation / handoff package. This is the largest task block; split per story.
 8. **Auth revalidation loop**: the scope-controlled background task.
 9. **Integration tests**: one file per user story + the two cross-cutting failure tests listed above.

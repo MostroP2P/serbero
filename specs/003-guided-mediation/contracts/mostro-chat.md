@@ -9,39 +9,66 @@ Defines how Serbero participates in Mostro's chat protocol for party
 mediation, without inventing a parallel transport. This contract
 expands the `Mediation Transport Requirements` section of the spec.
 
-## Solver-Take Flow (shared-key acquisition)
+## Dispute Chat Key Reconstruction
 
-Serbero MUST acquire chat-addressing shared-key material by
-participating in Mostro's solver-take flow as a registered solver.
+Serbero MUST use the same dispute-chat key reconstruction and
+message addressing mechanism that is actually used by Mostro clients
+for solver-visible dispute chat.
 
-- Entry conditions (ALL of):
+This contract does **not** assume, as a protocol guarantee, that
+Mostro's public chat specification alone fully defines how a solver
+obtains all chat-addressing key material. The public protocol
+documentation describes the chat model at a level that is consistent
+with multiple implementation shapes; the specific mechanism Serbero
+must follow is the one actually exercised by current Mostro clients
+and reflected in the Mostrix reference implementation. Phase 3
+implementation MUST therefore be verified against the real
+dispute-chat flow used by current Mostro clients and Mostrix, not
+reduced to whatever the public specification alone might permit.
+
+Serbero MUST NOT invent a generic shortcut such as deriving a chat
+key directly from its own long-term secret key and a party's primary
+pubkey unless that exact mechanism is verified in the dispute-chat
+flow used by Mostro clients.
+
+- **Entry conditions** (ALL of):
   - `[mediation].enabled = true`.
   - Configured reasoning provider is healthy
     (`ReasoningProvider::health_check` Ok).
   - Serbero's registered solver pubkey is authorized in the target
     Mostro instance at `read` permission or higher.
   - The target dispute is in a mediation-eligible Phase 2 state.
-- Protocol steps (reference-level, not a reimplementation of
-  Mostrix):
+- **Implementation flow** (to be verified in-tree against current
+  Mostro clients and the Mostrix reference — not a verbatim protocol
+  quote):
   1. Serbero observes a Phase-2-eligible dispute and decides to
      mediate (mediation engine gate).
-  2. Serbero initiates the take-dispute exchange with Mostro using
-     its registered solver identity (see Mostrix
-     `src/util/order_utils/execute_take_dispute.rs`).
-  3. Mostro's response yields the material needed to reconstruct the
-     per-party chat-addressing shared key on Serbero's side (see
-     Mostrix `src/util/chat_utils.rs`).
-  4. Serbero reconstructs the shared key as `nostr_sdk::Keys` and
-     stores only the derived `*_shared_pubkey` fields on
-     `mediation_sessions` (see data-model.md). The raw shared-key
-     secret is held in process memory for the session's lifetime; it
-     is not persisted.
-- Failure modes:
-  - Mostro refuses the take (another solver already took, protocol
-    error): mediation does not open a session; Phase 1/2 continues
-    unaffected.
-  - Mostro returns malformed material: log ERROR, refuse to mediate
-    this dispute, do not invent a fallback transport.
+  2. Serbero follows the dispute-chat interaction flow used by
+     current Mostro clients and validated against Mostrix reference
+     behavior. Relevant implementation references:
+     `src/util/order_utils/execute_take_dispute.rs` and
+     `src/util/chat_utils.rs`. These are implementation references,
+     not protocol-level definitions.
+  3. That implementation flow yields, or allows reconstruction of,
+     the per-party chat-addressing key material Serbero must use.
+     The exact mechanism by which each party's chat key is obtained
+     MUST be verified against current Mostro/Mostrix behavior during
+     implementation and re-verified whenever Mostro clients change
+     that mechanism.
+  4. Serbero reconstructs the per-party chat keypair as
+     `nostr_sdk::Keys` and stores only the derived
+     `*_shared_pubkey` fields on `mediation_sessions` (see
+     data-model.md). The raw chat-key secret is held in process
+     memory for the session's lifetime; it is not persisted.
+- **Failure modes**:
+  - The dispute-chat interaction cannot be completed (another
+    solver already took the dispute, a Mostro-side refusal, or an
+    unexpected response): mediation does not open a session; Phase
+    1/2 continues unaffected.
+  - Mostro returns material that does not match the verified
+    reconstruction mechanism: log ERROR, refuse to mediate this
+    dispute, and do NOT invent a fallback transport or a
+    secret-plus-primary-pubkey ECDH shortcut.
 
 ## Outbound Message Construction
 
@@ -107,16 +134,24 @@ This matches Mostrix's `chat_utils.rs` outbound path.
   `session_id`, `party`, `shared_pubkey`, `inner_event_id`); one per
   inbound ingest with the same fields.
 
-## Reference alignment
+## Implementation references
 
-| Behavior                          | Mostrix reference                                           |
-|-----------------------------------|-------------------------------------------------------------|
-| Take-flow participation           | `src/util/order_utils/execute_take_dispute.rs`              |
-| Shared-key reconstruction         | `src/util/chat_utils.rs`                                    |
-| Gift-wrap outbound construction   | `src/util/chat_utils.rs`                                    |
-| Inbound unwrap/verify pipeline    | `src/util/chat_utils.rs`                                    |
-| Session-state modeling            | `src/models.rs`                                             |
-| Input construction patterns       | `src/ui/key_handler/input_helpers.rs`                       |
+These are **implementation references** that the Phase 3 code must
+be verified against, not protocol-level definitions. Mostro's public
+specification is the authoritative protocol source; the files below
+describe how current Mostro clients (via Mostrix) actually exercise
+dispute chat today, which is what Serbero must interoperate with.
 
-These references guide implementation; the Rust implementation lives
-in-tree under `src/chat/` with `nostr-sdk 0.44.1`.
+| Behavior                                | Mostrix implementation reference                        |
+|-----------------------------------------|---------------------------------------------------------|
+| Dispute-chat interaction flow           | `src/util/order_utils/execute_take_dispute.rs`          |
+| Chat-addressing key reconstruction      | `src/util/chat_utils.rs`                                |
+| Gift-wrap outbound construction         | `src/util/chat_utils.rs`                                |
+| Inbound unwrap / verify pipeline        | `src/util/chat_utils.rs`                                |
+| Session-state modeling                  | `src/models.rs`                                         |
+| Input construction patterns             | `src/ui/key_handler/input_helpers.rs`                   |
+
+If Mostro clients later change any of these behaviors, Serbero's
+in-tree implementation under `src/chat/` (built on `nostr-sdk 0.44.1`)
+MUST be updated to track that change. This contract does not freeze
+the details that are left to the implementation reference.

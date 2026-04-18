@@ -104,7 +104,9 @@ background revalidation loop begins. Phase 1/2 continues unaffected.
 3. Phase 3 enters the mediation-eligibility evaluator. If the
    classification policy tags it as `coordination_failure_resolvable`,
    the mediation engine:
-   - performs the Mostro solver-take handshake,
+   - performs the dispute-chat interaction flow required by the
+     current Mostro / Mostrix implementation (verified at
+     implementation time, not assumed from the public spec alone),
    - opens a `mediation_sessions` row with state `awaiting_response`,
    - sends the first clarifying message addressed to the buyer's
      **shared pubkey** and the seller's **shared pubkey** (NOT their
