@@ -150,13 +150,24 @@ pub async fn open_session(params: OpenSessionParams<'_>) -> Result<OpenOutcome> 
     // (5) Build outbound chat wraps (but do NOT publish yet).
     //
     // The inner event id is a content-hash: same content + same
-    // signer + same second would collide. We address that by
-    // prefixing each party's message with its role label; this is
-    // also useful context for the party and keeps every
-    // `mediation_messages` row uniquely identifiable even when two
-    // clarification drafts land in the same second. Full per-party
-    // model drafting (distinct questions per party) is US3+
-    // territory — this is the minimal US1-safe shape.
+    // signer + same second would collide. Two approaches were
+    // considered:
+    //
+    // - Keep identical visible content and diverge the inner
+    //   `created_at` (either by a `custom_created_at` on the builder
+    //   or a >=1s sleep between wraps). Cleaner dedup but loses the
+    //   per-party context cue and either couples the messages to a
+    //   synthetic timestamp or adds latency on the happy path.
+    // - Prefix each party's message with its role label. The prefix
+    //   is legitimate context for the reader (the party sees who
+    //   Serbero is addressing, not just free-floating text) and
+    //   guarantees distinct inner event ids regardless of clock or
+    //   scheduler. Full per-party model drafting (distinct
+    //   questions per party) is US3+ territory — this is the
+    //   minimal US1-safe shape.
+    //
+    // We take the prefix approach; the explicit inner-id collision
+    // check below remains as a belt-and-braces guard.
     //
     // Construction order matters: we persist the session +
     // outbound rows FIRST, then publish the wraps. That is the
@@ -252,23 +263,26 @@ pub async fn open_session(params: OpenSessionParams<'_>) -> Result<OpenOutcome> 
     // Release the DB lock before doing network I/O.
     drop(conn);
 
-    // (7) Publish the wraps. On failure the DB rows already exist;
-    //     a later reconciliation pass (deferred to US2) can re-send
-    //     them because the outer events are deterministic from the
-    //     stored inner_event_id / outer_event_id. For this US1
-    //     slice we surface a ChatTransport error and let the caller
-    //     decide; the unique index on `(session_id, inner_event_id)`
-    //     keeps retries from creating duplicate rows.
-    params
-        .client
-        .send_event(&buyer_wrap.outer)
-        .await
-        .map_err(|e| Error::ChatTransport(format!("publish buyer gift-wrap failed: {e}")))?;
-    params
-        .client
-        .send_event(&seller_wrap.outer)
-        .await
-        .map_err(|e| Error::ChatTransport(format!("publish seller gift-wrap failed: {e}")))?;
+    // (7) Publish the wraps.
+    //
+    // The outer events are NOT deterministic: `outbound::build_wrap`
+    // generates a fresh ephemeral signing key per wrap, and we only
+    // persist the outer event ids in hex — not the serialized bytes.
+    // So if this process crashes between commit and a successful
+    // publish, the `mediation_messages` rows exist but the exact
+    // bytes needed to republish are lost. A durable outbox that
+    // stores the serialized outer event (or replays via a refresh
+    // of the wrap on restart) is US2 reconciliation territory.
+    //
+    // For this US1 slice we narrow the window with a small bounded
+    // retry per send — enough to absorb transient relay errors
+    // without a generic retry framework — and surface a ChatTransport
+    // error to the caller if retries are exhausted. The unique
+    // index on `(session_id, inner_event_id)` keeps the
+    // mediation_messages rows single-copy regardless of how many
+    // publish attempts the relay eventually saw.
+    publish_with_bounded_retry(params.client, &buyer_wrap.outer, "buyer").await?;
+    publish_with_bounded_retry(params.client, &seller_wrap.outer, "seller").await?;
 
     info!(
         session_id = %session_id,
@@ -277,6 +291,35 @@ pub async fn open_session(params: OpenSessionParams<'_>) -> Result<OpenOutcome> 
         "mediation session opened; first clarifying message dispatched to both parties"
     );
     Ok(OpenOutcome::Opened { session_id })
+}
+
+/// Publish one outer gift-wrap with a tiny bounded retry. No generic
+/// retry framework — three attempts, exponential-ish backoff capped
+/// at a few hundred milliseconds, aligned with the plan's "plain
+/// bounded loops" discipline.
+///
+/// Failure here with the DB rows already committed leaves a
+/// known-published-incomplete session; reconciliation on top of that
+/// is US2 scope (durable outbox or restart-replay of unwrapped wraps).
+async fn publish_with_bounded_retry(client: &Client, outer: &Event, label: &str) -> Result<()> {
+    const MAX_ATTEMPTS: u32 = 3;
+    let mut last_err: Option<String> = None;
+    for attempt in 1..=MAX_ATTEMPTS {
+        match client.send_event(outer).await {
+            Ok(_) => return Ok(()),
+            Err(e) => {
+                last_err = Some(e.to_string());
+                if attempt < MAX_ATTEMPTS {
+                    let backoff_ms = 100u64 * (1u64 << (attempt - 1));
+                    tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
+                }
+            }
+        }
+    }
+    Err(Error::ChatTransport(format!(
+        "publish {label} gift-wrap failed after {MAX_ATTEMPTS} attempts: {}",
+        last_err.unwrap_or_default()
+    )))
 }
 
 /// Surface clock-before-UNIX-EPOCH as a loud error rather than a

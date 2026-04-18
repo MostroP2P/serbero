@@ -314,8 +314,15 @@ async fn opens_session_and_dispatches_first_clarifying_message_to_both_parties()
 
     // ---- Assertions ---------------------------------------------------
 
+    // Independently re-derive the per-party shared keys up-front so
+    // every subsequent DB / relay assertion compares against them,
+    // not against a weaker "is set" check.
+    let buyer_shared = derive_shared_keys(&serbero_keys, &buyer_trade.public_key()).unwrap();
+    let seller_shared = derive_shared_keys(&serbero_keys, &seller_trade.public_key()).unwrap();
+
     // (a) The session row exists at awaiting_response with the
-    //     pinned bundle + both shared pubkeys set.
+    //     pinned bundle, and the persisted shared pubkeys match
+    //     the independently-computed ECDH outputs.
     let (state, ph, bid, bsp, ssp): (String, String, String, Option<String>, Option<String>) = {
         let c = conn.lock().await;
         c.query_row(
@@ -329,12 +336,19 @@ async fn opens_session_and_dispatches_first_clarifying_message_to_both_parties()
     assert_eq!(state, "awaiting_response");
     assert_eq!(ph, bundle.policy_hash);
     assert_eq!(bid, bundle.id);
-    assert!(bsp.is_some() && ssp.is_some());
+    assert_eq!(
+        bsp.as_deref(),
+        Some(buyer_shared.public_key().to_hex().as_str()),
+        "session row's buyer_shared_pubkey must equal the ECDH-derived buyer shared pubkey"
+    );
+    assert_eq!(
+        ssp.as_deref(),
+        Some(seller_shared.public_key().to_hex().as_str()),
+        "session row's seller_shared_pubkey must equal the ECDH-derived seller shared pubkey"
+    );
 
     // (b) Exactly two outbound mediation_messages rows, addressed
     //     to the computed per-party shared pubkeys.
-    let buyer_shared = derive_shared_keys(&serbero_keys, &buyer_trade.public_key()).unwrap();
-    let seller_shared = derive_shared_keys(&serbero_keys, &seller_trade.public_key()).unwrap();
     let rows: Vec<(String, String, String)> = {
         let c = conn.lock().await;
         let mut stmt = c
