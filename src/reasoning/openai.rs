@@ -251,8 +251,9 @@ impl OpenAiProvider {
                 .text()
                 .await
                 .map_err(|e| ReasoningError::MalformedResponse(e.to_string()))?;
-            let parsed: ChatResponse = serde_json::from_str(&text)
-                .map_err(|e| ReasoningError::MalformedResponse(format!("{e}: body={text}")))?;
+            let parsed: ChatResponse = serde_json::from_str(&text).map_err(|e| {
+                ReasoningError::MalformedResponse(format!("{e}: body={}", truncate(&text, 200)))
+            })?;
             let content = parsed
                 .choices
                 .into_iter()
@@ -313,8 +314,9 @@ fn build_summary_prompt(r: &SummaryRequest) -> String {
 }
 
 fn parse_classification(raw: &str) -> std::result::Result<ClassificationResponse, ReasoningError> {
-    let parsed: ClassificationJson = serde_json::from_str(raw)
-        .map_err(|e| ReasoningError::MalformedResponse(format!("{e}: body={raw}")))?;
+    let parsed: ClassificationJson = serde_json::from_str(raw).map_err(|e| {
+        ReasoningError::MalformedResponse(format!("{e}: body={}", truncate(raw, 200)))
+    })?;
     let classification = match parsed.classification.as_str() {
         "coordination_failure_resolvable" => ClassificationLabel::CoordinationFailureResolvable,
         "conflicting_claims" => ClassificationLabel::ConflictingClaims,
@@ -364,23 +366,68 @@ fn parse_classification(raw: &str) -> std::result::Result<ClassificationResponse
     })
 }
 
+/// Parse a plain-text summary response of the shape:
+///
+/// ```text
+/// <summary body>
+/// SUGGESTED_NEXT_STEP: <one line>
+/// RATIONALE: <free text>
+/// ```
+///
+/// The previous implementation chained `split_once` and could
+/// misattribute content if the markers arrived out of order (e.g.
+/// RATIONALE before SUGGESTED_NEXT_STEP), leaving the next-step
+/// embedded in the rationale string. This version locates both
+/// markers explicitly, rejects the inverted order, and slices by
+/// byte index so each section is derived from the canonical position
+/// of its marker.
 fn parse_summary(raw: &str) -> std::result::Result<SummaryResponse, ReasoningError> {
-    // Plain text: free-form summary, then SUGGESTED_NEXT_STEP:, then RATIONALE:.
-    let (body, rationale) = raw.split_once("RATIONALE:").unwrap_or((raw, ""));
-    let (summary, next_step) = body
-        .split_once("SUGGESTED_NEXT_STEP:")
-        .unwrap_or((body, ""));
-    let summary_text = summary.trim().to_string();
-    let suggested_next_step = next_step.trim().to_string();
+    const NEXT_MARKER: &str = "SUGGESTED_NEXT_STEP:";
+    const RATIONALE_MARKER: &str = "RATIONALE:";
+
+    let next_idx = raw.find(NEXT_MARKER);
+    let rationale_idx = raw.find(RATIONALE_MARKER);
+
+    if let (Some(n), Some(r)) = (next_idx, rationale_idx) {
+        if r < n {
+            return Err(ReasoningError::MalformedResponse(
+                "summary markers out of order: RATIONALE: appeared before \
+                 SUGGESTED_NEXT_STEP:"
+                    .into(),
+            ));
+        }
+    }
+
+    let (summary_text, suggested_next_step, rationale_text) = match (next_idx, rationale_idx) {
+        (Some(n), Some(r)) => {
+            let summary = raw[..n].trim().to_string();
+            let next = raw[n + NEXT_MARKER.len()..r].trim().to_string();
+            let rationale = raw[r + RATIONALE_MARKER.len()..].trim().to_string();
+            (summary, next, rationale)
+        }
+        (Some(n), None) => {
+            let summary = raw[..n].trim().to_string();
+            let next = raw[n + NEXT_MARKER.len()..].trim().to_string();
+            (summary, next, String::new())
+        }
+        (None, Some(r)) => {
+            let summary = raw[..r].trim().to_string();
+            let rationale = raw[r + RATIONALE_MARKER.len()..].trim().to_string();
+            (summary, String::new(), rationale)
+        }
+        (None, None) => (raw.trim().to_string(), String::new(), String::new()),
+    };
+
     if summary_text.is_empty() {
         return Err(ReasoningError::MalformedResponse(
             "empty summary body".into(),
         ));
     }
+
     Ok(SummaryResponse {
         summary_text,
         suggested_next_step,
-        rationale: RationaleText(rationale.trim().to_string()),
+        rationale: RationaleText(rationale_text),
     })
 }
 
@@ -454,6 +501,44 @@ mod tests {
     fn parse_summary_rejects_empty() {
         let err = parse_summary("").unwrap_err();
         assert!(matches!(err, ReasoningError::MalformedResponse(_)));
+    }
+
+    #[test]
+    fn parse_summary_rejects_inverted_markers() {
+        // RATIONALE before SUGGESTED_NEXT_STEP must be rejected — the
+        // old split_once-based parser would silently absorb the next
+        // step into the rationale text.
+        let raw = "the summary body.\n\
+                   RATIONALE: some rationale.\n\
+                   SUGGESTED_NEXT_STEP: too late.";
+        let err = parse_summary(raw).unwrap_err();
+        match err {
+            ReasoningError::MalformedResponse(msg) => {
+                assert!(
+                    msg.to_lowercase().contains("out of order"),
+                    "expected an out-of-order error: {msg}"
+                );
+            }
+            other => panic!("expected MalformedResponse, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_summary_handles_missing_rationale() {
+        let raw = "just a summary.\nSUGGESTED_NEXT_STEP: do the thing.";
+        let parsed = parse_summary(raw).unwrap();
+        assert_eq!(parsed.summary_text, "just a summary.");
+        assert_eq!(parsed.suggested_next_step, "do the thing.");
+        assert_eq!(parsed.rationale.0, "");
+    }
+
+    #[test]
+    fn parse_summary_handles_missing_next_step() {
+        let raw = "just a summary.\nRATIONALE: because reasons.";
+        let parsed = parse_summary(raw).unwrap();
+        assert_eq!(parsed.summary_text, "just a summary.");
+        assert_eq!(parsed.suggested_next_step, "");
+        assert_eq!(parsed.rationale.0, "because reasons.");
     }
 
     #[test]
