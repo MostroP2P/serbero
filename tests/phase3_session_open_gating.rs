@@ -22,7 +22,6 @@ mod common;
 use std::sync::Arc;
 use std::time::Duration;
 
-use async_trait::async_trait;
 use nostr_sdk::prelude::*;
 use tokio::sync::Mutex as AsyncMutex;
 use uuid::Uuid;
@@ -30,43 +29,14 @@ use uuid::Uuid;
 use serbero::db;
 use serbero::mediation;
 use serbero::models::dispute::InitiatorRole;
-use serbero::models::reasoning::{
-    ClassificationRequest, ClassificationResponse, ReasoningError, SummaryRequest, SummaryResponse,
-};
 use serbero::models::{SolverPermission, TimeoutsConfig};
 use serbero::prompts::{self, PromptBundle};
 use serbero::reasoning::ReasoningProvider;
 
-use common::{publish_dispute, publisher, solver_cfg, spawn_daemon, SolverListener, TestHarness};
-
-/// A reasoning provider whose `health_check` always returns
-/// `ReasoningError::Unreachable`. `classify` and `summarize` also
-/// fail loudly so the test surfaces any regression where the gate
-/// is bypassed and one of them gets called.
-struct UnhealthyReasoningProvider;
-
-#[async_trait]
-impl ReasoningProvider for UnhealthyReasoningProvider {
-    async fn classify(
-        &self,
-        _request: ClassificationRequest,
-    ) -> std::result::Result<ClassificationResponse, ReasoningError> {
-        panic!("classify must not be reached when the reasoning-health gate refuses")
-    }
-
-    async fn summarize(
-        &self,
-        _request: SummaryRequest,
-    ) -> std::result::Result<SummaryResponse, ReasoningError> {
-        panic!("summarize must not be reached when the reasoning-health gate refuses")
-    }
-
-    async fn health_check(&self) -> std::result::Result<(), ReasoningError> {
-        Err(ReasoningError::Unreachable(
-            "provider scripted as unhealthy for the US1 gating test".into(),
-        ))
-    }
-}
+use common::{
+    publish_dispute, publisher, solver_cfg, spawn_daemon, SolverListener, TestHarness,
+    UnhealthyReasoningProvider,
+};
 
 fn fixture_bundle() -> Arc<PromptBundle> {
     let cfg = serbero::models::PromptsConfig {

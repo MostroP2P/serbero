@@ -295,6 +295,20 @@ pub async fn open_session(params: OpenSessionParams<'_>) -> Result<OpenOutcome> 
             persisted_at: now,
         },
     )?;
+    // Audit: the `session_opened` event lands in the same
+    // transaction as the session + outbound rows. A crash between
+    // the commit and the relay publish therefore leaves a
+    // consistent DB view — the session row and its audit trace
+    // rise and fall together, and the reasoning-rationale /
+    // classification-produced events (T038 scope) can later chain
+    // off this `session_opened` row.
+    db::mediation_events::record_session_opened(
+        &tx,
+        &session_id,
+        &params.prompt_bundle.id,
+        &params.prompt_bundle.policy_hash,
+        now,
+    )?;
     tx.commit()?;
     // Release the DB lock before doing network I/O.
     drop(conn);

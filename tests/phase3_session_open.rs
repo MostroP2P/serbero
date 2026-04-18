@@ -24,192 +24,25 @@
 //!   shared keys and contains the clarifying-question text drawn
 //!   from the reasoning provider.
 
+mod common;
+
 use std::sync::Arc;
 use std::time::Duration;
 
-use async_trait::async_trait;
 use nostr_sdk::prelude::*;
 use tokio::sync::Mutex as AsyncMutex;
 use uuid::Uuid;
-
-use mostro_core::dispute::SolverDisputeInfo;
-use mostro_core::message::{Action, Message, Payload};
 
 use serbero::chat::inbound::unwrap_with_shared_key;
 use serbero::chat::shared_key::derive_shared_keys;
 use serbero::db;
 use serbero::mediation;
 use serbero::models::dispute::InitiatorRole;
-use serbero::models::mediation::ClassificationLabel;
-use serbero::models::reasoning::{
-    ClassificationRequest, ClassificationResponse, RationaleText, ReasoningError, SuggestedAction,
-    SummaryRequest, SummaryResponse,
-};
 use serbero::prompts::{self, PromptBundle};
 use serbero::reasoning::ReasoningProvider;
 
+use common::{MockReasoningProvider, MostroChatSim};
 use nostr_relay_builder::MockRelay;
-
-// ---------------------------------------------------------------------------
-// MockReasoningProvider
-// ---------------------------------------------------------------------------
-
-struct MockReasoningProvider {
-    clarification: String,
-}
-
-#[async_trait]
-impl ReasoningProvider for MockReasoningProvider {
-    async fn classify(
-        &self,
-        _request: ClassificationRequest,
-    ) -> std::result::Result<ClassificationResponse, ReasoningError> {
-        Ok(ClassificationResponse {
-            classification: ClassificationLabel::CoordinationFailureResolvable,
-            confidence: 0.9,
-            suggested_action: SuggestedAction::AskClarification(self.clarification.clone()),
-            rationale: RationaleText("both parties seem cooperative".into()),
-            flags: Vec::new(),
-        })
-    }
-
-    async fn summarize(
-        &self,
-        _request: SummaryRequest,
-    ) -> std::result::Result<SummaryResponse, ReasoningError> {
-        // Out of US1 scope — summary is US3.
-        Err(ReasoningError::Unreachable(
-            "summary not expected in US1 test".into(),
-        ))
-    }
-
-    async fn health_check(&self) -> std::result::Result<(), ReasoningError> {
-        Ok(())
-    }
-}
-
-// ---------------------------------------------------------------------------
-// MostroChatSim
-// ---------------------------------------------------------------------------
-
-/// Plays Mostro: listens for Serbero's `AdminTakeDispute` DM and
-/// replies with a canned `AdminTookDispute` carrying the test's
-/// chosen buyer/seller trade pubkeys.
-struct MostroChatSim {
-    keys: Keys,
-    // The relay-pool client has its own lifecycle; we only keep the
-    // handle alive so the task below stays connected.
-    _client: Client,
-    _task: tokio::task::JoinHandle<()>,
-}
-
-impl MostroChatSim {
-    async fn start(relay_url: &str, buyer_trade_pk: PublicKey, seller_trade_pk: PublicKey) -> Self {
-        let keys = Keys::generate();
-        let client = Client::new(keys.clone());
-        client.add_relay(relay_url).await.unwrap();
-        client.connect().await;
-        // Wait for the MockRelay handshake before subscribing, so
-        // our REQ is guaranteed to be registered before Serbero
-        // publishes the AdminTakeDispute DM. Replaces the earlier
-        // fixed `sleep(200ms)` in the test body, which was racy.
-        client.wait_for_connection(Duration::from_secs(5)).await;
-
-        // Subscribe to gift-wraps addressed to us. The `since`
-        // window must be wide enough to cover NIP-59's random
-        // timestamp tweak (up to 2 days in the past); otherwise
-        // the relay will drop incoming events at the REQ filter.
-        let seven_days_ago =
-            Timestamp::from_secs(Timestamp::now().as_secs().saturating_sub(7 * 24 * 60 * 60));
-        let filter = Filter::new()
-            .kind(Kind::GiftWrap)
-            .custom_tag(
-                SingleLetterTag::lowercase(Alphabet::P),
-                keys.public_key().to_hex(),
-            )
-            .since(seven_days_ago);
-        client.subscribe(filter, None).await.unwrap();
-
-        let client_loop = client.clone();
-        let client_for_inner = client.clone();
-        let task = tokio::spawn(async move {
-            let _ = client_loop
-                .handle_notifications(move |notif| {
-                    let client = client_for_inner.clone();
-                    let buyer = buyer_trade_pk;
-                    let seller = seller_trade_pk;
-                    async move {
-                        let RelayPoolNotification::Event { event, .. } = notif else {
-                            return Ok(false);
-                        };
-                        if event.kind != Kind::GiftWrap {
-                            return Ok(false);
-                        }
-                        let Ok(unwrapped) = client.unwrap_gift_wrap(&event).await else {
-                            return Ok(false);
-                        };
-                        let Ok(msg) = Message::from_json(&unwrapped.rumor.content) else {
-                            return Ok(false);
-                        };
-                        let kind = msg.get_inner_message_kind();
-                        if kind.action != Action::AdminTakeDispute {
-                            return Ok(false);
-                        }
-                        let Some(dispute_id) = kind.id else {
-                            return Ok(false);
-                        };
-                        // Build the SolverDisputeInfo reply.
-                        let info = SolverDisputeInfo {
-                            id: dispute_id,
-                            kind: "buy".into(),
-                            status: "in-progress".into(),
-                            hash: None,
-                            preimage: None,
-                            order_previous_status: "active".into(),
-                            initiator_pubkey: buyer.to_hex(),
-                            buyer_pubkey: Some(buyer.to_hex()),
-                            seller_pubkey: Some(seller.to_hex()),
-                            initiator_full_privacy: false,
-                            counterpart_full_privacy: false,
-                            initiator_info: None,
-                            counterpart_info: None,
-                            premium: 0,
-                            payment_method: "".into(),
-                            amount: 0,
-                            fiat_amount: 0,
-                            fee: 0,
-                            routing_fee: 0,
-                            buyer_invoice: None,
-                            invoice_held_at: 0,
-                            taken_at: 0,
-                            created_at: 0,
-                        };
-                        let reply = Message::new_dispute(
-                            Some(dispute_id),
-                            None,
-                            None,
-                            Action::AdminTookDispute,
-                            Some(Payload::Dispute(dispute_id, Some(info))),
-                        );
-                        let json = reply.as_json().unwrap();
-                        let _ = client.send_private_msg(unwrapped.sender, json, []).await;
-                        Ok(false)
-                    }
-                })
-                .await;
-        });
-
-        Self {
-            keys,
-            _client: client,
-            _task: task,
-        }
-    }
-
-    fn pubkey(&self) -> PublicKey {
-        self.keys.public_key()
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Prompt bundle fixture
@@ -346,6 +179,23 @@ async fn opens_session_and_dispatches_first_clarifying_message_to_both_parties()
         Some(seller_shared.public_key().to_hex().as_str()),
         "session row's seller_shared_pubkey must equal the ECDH-derived seller shared pubkey"
     );
+
+    // (a.1) The session_opened audit event landed in the same
+    //       transaction as the session row, carrying the pinned
+    //       bundle provenance (T033 wiring of T037).
+    let (evt_kind, evt_bundle, evt_hash): (String, String, String) = {
+        let c = conn.lock().await;
+        c.query_row(
+            "SELECT kind, prompt_bundle_id, policy_hash
+             FROM mediation_events WHERE session_id = ?1 AND kind = 'session_opened'",
+            rusqlite::params![session_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .unwrap()
+    };
+    assert_eq!(evt_kind, "session_opened");
+    assert_eq!(evt_bundle, bundle.id);
+    assert_eq!(evt_hash, bundle.policy_hash);
 
     // (b) Exactly two outbound mediation_messages rows, addressed
     //     to the computed per-party shared pubkeys.
