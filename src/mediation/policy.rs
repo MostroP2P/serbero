@@ -242,19 +242,20 @@ fn classify_to_decision(classification: &ClassificationResponse) -> PolicyDecisi
             // that maps to a cooperative summary is
             // `CoordinationFailureResolvable`; any other label
             // combined with `Summarize` is an inconsistent
-            // response (e.g. `SuspectedFraud` + "summarize this"),
-            // and we must not let that force a solver-facing
-            // summary. Fall back to `ReasoningUnavailable` — the
-            // same trigger the model-suggested-escalate path
-            // uses — so the dispute escalates instead of leaking
-            // a malformed cooperative summary to the solver DM.
+            // response (e.g. `SuspectedFraud` + "summarize this")
+            // — a structural bug in the model output, not an
+            // infrastructure failure. `ReasoningUnavailable` is
+            // reserved for adapter / transport issues (provider
+            // down), so mapping inconsistent output there would
+            // drown model-quality alerts in infra-health noise.
+            // `InvalidModelOutput` is the dedicated trigger.
             use crate::models::mediation::ClassificationLabel;
             match classification.classification {
                 ClassificationLabel::CoordinationFailureResolvable => PolicyDecision::Summarize {
                     classification: classification.classification,
                     confidence: classification.confidence,
                 },
-                _ => PolicyDecision::Escalate(EscalationTrigger::ReasoningUnavailable),
+                _ => PolicyDecision::Escalate(EscalationTrigger::InvalidModelOutput),
             }
         }
         // Unreachable because the rule above already handled this

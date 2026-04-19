@@ -854,19 +854,29 @@ pub async fn deliver_summary(
     };
     if recipient_list.is_empty() {
         // No configured recipients → the summary cannot be
-        // delivered. We MUST NOT mark the session
-        // `summary_delivered` (that would be a lie recorded in
-        // the audit log). Leave the session at
-        // `summary_pending` so the operator's next step is
-        // visible: either configure a solver or escalate
-        // manually. The summarizer + `mediation_summaries` row
-        // already landed, so the rationale is preserved; this
-        // path is a persist-succeeded / deliver-failed split,
-        // not a rollback.
-        return Err(Error::Notification(format!(
-            "deliver_summary: no solver recipients configured for session_id={session_id}; \
-             session left at summary_pending (summary persisted, not delivered)"
-        )));
+        // delivered. The summarizer + `mediation_summaries` row
+        // already landed (so the rationale is preserved), but
+        // the session MUST NOT be marked `summary_delivered` —
+        // that would be a lie in the audit log. Leaving it at
+        // `summary_pending` forever is also wrong: a human
+        // operator would have to notice and escalate manually.
+        // Instead, escalate automatically with a dedicated
+        // trigger so the operator alert path handles it the same
+        // way it handles every other "needs human attention"
+        // outcome (US4).
+        warn!(
+            session_id = %session_id,
+            "deliver_summary: no solver recipients configured; escalating (notification_failed)"
+        );
+        escalate_from_summary_path(
+            conn,
+            session_id,
+            prompt_bundle,
+            EscalationTrigger::NotificationFailed,
+            "no solver recipients configured",
+        )
+        .await?;
+        return Ok(());
     }
 
     // (5) Per-recipient send + notification row + tracing.
@@ -930,16 +940,27 @@ pub async fn deliver_summary(
         );
     }
 
-    // (6) `summary_pending → summary_delivered → closed`. Only if
-    //     at least one recipient accepted the DM; otherwise the
-    //     session stays at `summary_pending` and the caller sees
-    //     the error — same shape as the empty-recipients branch
-    //     above, but for the "all sends failed" case.
+    // (6) `summary_pending → summary_delivered → closed`, only if
+    //     at least one recipient accepted the DM. Otherwise the
+    //     session is escalated the same way as the no-recipients
+    //     branch above — a persisted-but-undelivered summary
+    //     needs human attention, not an indefinite
+    //     `summary_pending` state.
     if !any_sent {
-        return Err(Error::Notification(format!(
-            "deliver_summary: all recipient sends failed for session_id={session_id}; \
-             session left at summary_pending"
-        )));
+        warn!(
+            session_id = %session_id,
+            recipients = recipient_list.len(),
+            "deliver_summary: all recipient sends failed; escalating (notification_failed)"
+        );
+        escalate_from_summary_path(
+            conn,
+            session_id,
+            prompt_bundle,
+            EscalationTrigger::NotificationFailed,
+            "all recipient sends failed",
+        )
+        .await?;
+        return Ok(());
     }
     let now = current_ts_secs()?;
     transition_session(

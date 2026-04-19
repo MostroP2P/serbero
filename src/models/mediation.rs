@@ -116,6 +116,21 @@ pub enum EscalationTrigger {
     AuthorityBoundaryAttempt,
     MediationTimeout,
     PolicyBundleMissing,
+    /// The reasoning provider returned a structurally inconsistent
+    /// response (e.g. `SuggestedAction::Summarize` paired with a
+    /// non-cooperative `ClassificationLabel`). Distinct from
+    /// `ReasoningUnavailable` — the adapter round-trip succeeded,
+    /// the model just produced something we refuse to act on. The
+    /// operator alert shape is different (model-quality, not
+    /// infra-health), so the trigger stays separate.
+    InvalidModelOutput,
+    /// The summary persisted but no solver DM could be delivered —
+    /// either the configured recipient list resolved empty, or
+    /// every send attempt failed at the relay. The session is
+    /// escalated so a human operator can pick the summary up via
+    /// the audit trail instead of leaving it stranded at
+    /// `summary_pending`.
+    NotificationFailed,
 }
 
 impl fmt::Display for EscalationTrigger {
@@ -132,6 +147,8 @@ impl fmt::Display for EscalationTrigger {
             AuthorityBoundaryAttempt => "authority_boundary_attempt",
             MediationTimeout => "mediation_timeout",
             PolicyBundleMissing => "policy_bundle_missing",
+            InvalidModelOutput => "invalid_model_output",
+            NotificationFailed => "notification_failed",
         };
         f.write_str(s)
     }
