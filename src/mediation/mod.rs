@@ -68,6 +68,7 @@ pub async fn open_dispute_session(
     dispute_uuid: Uuid,
     provider_name: &str,
     model_name: &str,
+    auth_handle: &auth_retry::AuthRetryHandle,
 ) -> Result<session::OpenOutcome> {
     session::open_session(session::OpenSessionParams {
         conn,
@@ -83,6 +84,7 @@ pub async fn open_dispute_session(
         take_flow_poll_interval: Duration::from_millis(250),
         provider_name,
         model_name,
+        auth_handle,
     })
     .await
 }
@@ -294,6 +296,7 @@ pub async fn run_engine(
     prompt_bundle: Arc<PromptBundle>,
     provider_name: String,
     model_name: String,
+    auth_handle: auth_retry::AuthRetryHandle,
 ) {
     info!(
         tick_seconds = ENGINE_TICK_INTERVAL.as_secs(),
@@ -317,6 +320,7 @@ pub async fn run_engine(
             &prompt_bundle,
             &provider_name,
             &model_name,
+            &auth_handle,
         )
         .await
         {
@@ -338,6 +342,7 @@ async fn run_engine_tick(
     prompt_bundle: &Arc<PromptBundle>,
     provider_name: &str,
     model_name: &str,
+    auth_handle: &auth_retry::AuthRetryHandle,
 ) -> Result<()> {
     let eligible = list_eligible_disputes(conn).await?;
     if eligible.is_empty() {
@@ -376,6 +381,7 @@ async fn run_engine_tick(
             take_flow_poll_interval: Duration::from_millis(250),
             provider_name,
             model_name,
+            auth_handle,
         })
         .await
         {
@@ -404,6 +410,20 @@ async fn run_engine_tick(
                     dispute_id = %dispute_id,
                     reason = %reason,
                     "engine tick: reasoning provider unavailable; skipping (SC-105)"
+                );
+            }
+            Ok(session::OpenOutcome::RefusedAuthPending { reason }) => {
+                warn!(
+                    dispute_id = %dispute_id,
+                    reason = %reason,
+                    "engine tick: auth pending; skipping dispute (SC-105)"
+                );
+            }
+            Ok(session::OpenOutcome::RefusedAuthTerminated { reason }) => {
+                error!(
+                    dispute_id = %dispute_id,
+                    reason = %reason,
+                    "engine tick: auth terminated; skipping dispute (SC-105)"
                 );
             }
             Err(e) => {

@@ -37,6 +37,7 @@ use serbero::chat::inbound::unwrap_with_shared_key;
 use serbero::chat::shared_key::derive_shared_keys;
 use serbero::db;
 use serbero::mediation;
+use serbero::mediation::auth_retry::AuthRetryHandle;
 use serbero::models::dispute::InitiatorRole;
 use serbero::prompts::{self, PromptBundle};
 use serbero::reasoning::ReasoningProvider;
@@ -126,6 +127,7 @@ async fn opens_session_and_dispatches_first_clarifying_message_to_both_parties()
         .await;
 
     // Call the session-open entry point.
+    let auth_handle = AuthRetryHandle::new_authorized();
     let outcome = mediation::open_dispute_session(
         &conn,
         &serbero_client,
@@ -138,6 +140,7 @@ async fn opens_session_and_dispatches_first_clarifying_message_to_both_parties()
         dispute_uuid,
         "mock-provider",
         "mock-model",
+        &auth_handle,
     )
     .await
     .expect("open_session must succeed in the happy-path fixture");

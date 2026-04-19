@@ -185,6 +185,19 @@ where
                 )))
             }
         };
+        // T043: run the initial authorization check and get a
+        // handle. US1's stub `check_authorization` always returns
+        // `Ok(())`, so the handle reports `Authorized` and no retry
+        // task is spawned. When US3 swaps the stub for the real
+        // Mostro DM exchange the retry task will spawn itself here
+        // without any daemon-side change.
+        let auth_handle = crate::mediation::auth_retry::ensure_authorized_or_enter_loop(
+            Arc::clone(&conn),
+            client.clone(),
+            engine_keys.clone(),
+            mostro_pubkey,
+        )
+        .await;
         let engine_conn = Arc::clone(&conn);
         let engine_client = client.clone();
         let engine_mostro_pk = mostro_pubkey;
@@ -192,6 +205,7 @@ where
         let engine_reasoning = rt.reasoning;
         let engine_provider_name = config.reasoning.provider.clone();
         let engine_model_name = config.reasoning.model.clone();
+        let engine_auth_handle = auth_handle.clone();
         Some(tokio::spawn(async move {
             crate::mediation::run_engine(
                 engine_conn,
@@ -202,6 +216,7 @@ where
                 engine_bundle,
                 engine_provider_name,
                 engine_model_name,
+                engine_auth_handle,
             )
             .await
         }))
