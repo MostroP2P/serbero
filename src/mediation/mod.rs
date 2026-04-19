@@ -699,6 +699,7 @@ async fn run_engine_tick(
                     session_id: &session_id,
                     trigger,
                     evidence_refs: Vec::new(),
+                    rationale_refs: Vec::new(),
                     prompt_bundle_id: &prompt_bundle.id,
                     policy_hash: &prompt_bundle.policy_hash,
                 })
@@ -1313,7 +1314,46 @@ async fn run_ingest_tick(
 
         for env in &envelopes {
             match session::ingest_inbound(conn, &session_id, env).await {
-                Ok(session::IngestOutcome::Fresh { .. }) => rows_ingested += 1,
+                Ok(session::IngestOutcome::Fresh { round_count_after }) => {
+                    rows_ingested += 1;
+                    // T068 — after each Fresh ingest, check whether
+                    // the session has hit the configured round cap.
+                    // If so, escalate with `RoundLimit`. The
+                    // `check_round_limit` helper is pure; the state
+                    // flip + audit rows happen inside
+                    // `escalation::recommend`. If `recommend` fails
+                    // (e.g., the session was already escalated by
+                    // the timeout sweep on the same tick), the
+                    // conditional UPDATE inside `recommend` returns
+                    // an error which we log and continue — never
+                    // abort the remaining ingest.
+                    let rc_after: u32 = round_count_after.max(0) as u32;
+                    if session::check_round_limit(rc_after, mediation_cfg.max_rounds) {
+                        warn!(
+                            session_id = %session_id,
+                            round_count = rc_after,
+                            max_rounds = mediation_cfg.max_rounds,
+                            "round_limit_escalation"
+                        );
+                        if let Err(e) = escalation::recommend(escalation::RecommendParams {
+                            conn,
+                            session_id: &session_id,
+                            trigger: EscalationTrigger::RoundLimit,
+                            evidence_refs: vec![env.inner_event_id.clone()],
+                            rationale_refs: Vec::new(),
+                            prompt_bundle_id: &prompt_bundle.id,
+                            policy_hash: &prompt_bundle.policy_hash,
+                        })
+                        .await
+                        {
+                            warn!(
+                                session_id = %session_id,
+                                error = %e,
+                                "ingest tick: round_limit escalation failed"
+                            );
+                        }
+                    }
+                }
                 Ok(session::IngestOutcome::Duplicate) => rows_duplicate += 1,
                 Ok(session::IngestOutcome::Stale) => rows_stale += 1,
                 Err(e) => {
@@ -1366,7 +1406,14 @@ async fn run_ingest_tick(
 /// state or at `escalation_recommended` are skipped — the row does
 /// not appear in `list_live_sessions` so the SELECT below naturally
 /// excludes them, but the guard is belt-and-braces.
-async fn check_party_unresponsive_timeout(
+///
+/// Exposed `pub` (not `pub(crate)`) so the US4 integration tests in
+/// `tests/phase3_escalation_triggers.rs` can drive the production
+/// sweep directly rather than duplicating the deadline math — that
+/// way a regression in the deadline rule shows up as a test
+/// failure, not a test that happens to compute the same wrong
+/// answer the code does.
+pub async fn check_party_unresponsive_timeout(
     conn: &Arc<AsyncMutex<rusqlite::Connection>>,
     prompt_bundle: &Arc<PromptBundle>,
     mediation_cfg: &MediationConfig,
@@ -1457,6 +1504,7 @@ async fn check_party_unresponsive_timeout(
             session_id: &c.session_id,
             trigger: EscalationTrigger::PartyUnresponsive,
             evidence_refs: Vec::new(),
+            rationale_refs: Vec::new(),
             prompt_bundle_id: &prompt_bundle.id,
             policy_hash: &prompt_bundle.policy_hash,
         })

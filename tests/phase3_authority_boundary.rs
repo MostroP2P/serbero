@@ -175,6 +175,7 @@ async fn authority_boundary_attempt_suppresses_and_escalates() {
         session_id: "sess-ab",
         trigger: EscalationTrigger::AuthorityBoundaryAttempt,
         evidence_refs: Vec::new(),
+        rationale_refs: Vec::new(),
         prompt_bundle_id: &bundle.id,
         policy_hash: &bundle.policy_hash,
     })

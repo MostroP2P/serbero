@@ -22,11 +22,22 @@
 //! `MediationEscalationRecommended` notification) is fired by the
 //! engine after `recommend` returns, not by `recommend` itself.
 //!
-//! FR-120 discipline: `evidence_refs` carries rationale ids only
-//! (content-hashes), never rationale text. The heuristic below
-//! splits the caller-supplied list into `rationale_refs` (64-char
-//! lowercase hex) and generic `evidence_refs` so Phase 4 can fan
-//! the two kinds out to its own downstream audit.
+//! FR-120 discipline: evidence refs carry ids only (content-hashes
+//! for rationales, event ids for chat / outbound), never raw text.
+//! The caller partitions the two kinds at the call site —
+//! [`RecommendParams`] exposes two distinct fields so we do not
+//! have to guess via a hex-length heuristic. Nostr event ids and
+//! rationale ids are both lowercase 64-char SHA-256 hex, so any
+//! such heuristic would misclassify them.
+//!
+//! Exactly-once handoff: the state flip is a conditional UPDATE
+//! that only advances out of the non-terminal live states. If the
+//! session is already at `escalation_recommended` (or any other
+//! state from which this transition is illegal), the UPDATE affects
+//! zero rows, the transaction is rolled back, and
+//! [`recommend`] returns an error — preventing a duplicate
+//! `handoff_prepared` event in release builds where the
+//! `debug_assert!` inside `set_session_state` is stripped.
 
 use std::sync::Arc;
 
@@ -38,7 +49,7 @@ use tracing::{info, instrument, warn};
 use crate::db;
 use crate::db::mediation_events::MediationEventKind;
 use crate::error::{Error, Result};
-use crate::models::mediation::{EscalationTrigger, MediationSessionState};
+use crate::models::mediation::EscalationTrigger;
 
 /// Phase 4 handoff package. Persisted as the `handoff_prepared`
 /// mediation event's payload so Phase 4 can consume it later by
@@ -50,15 +61,15 @@ pub struct HandoffPackage {
     /// `EscalationTrigger::to_string()` — the snake-case form so
     /// the payload is operator-readable and grep-friendly.
     pub trigger: String,
-    /// Caller-supplied non-rationale evidence refs (inner_event_ids,
-    /// outbound event ids, free-form notes). Filtered out of the
-    /// 64-hex-looking items in the input list.
+    /// Caller-supplied non-rationale evidence refs
+    /// (inner_event_ids, outbound event ids, free-form notes).
     pub evidence_refs: Vec<String>,
     pub prompt_bundle_id: String,
     pub policy_hash: String,
-    /// 64-char lowercase hex entries from the input list —
-    /// heuristically matched to SHA-256 rationale ids in
-    /// `reasoning_rationales`.
+    /// Rationale ids the caller already extracted from
+    /// `reasoning_rationales` (SHA-256 content hashes). Kept
+    /// separate from `evidence_refs` so Phase 4 can fan the two
+    /// kinds out to distinct audit consumers.
     pub rationale_refs: Vec<String>,
     pub assembled_at: i64,
 }
@@ -69,15 +80,24 @@ pub struct RecommendParams<'a> {
     pub conn: &'a Arc<AsyncMutex<rusqlite::Connection>>,
     pub session_id: &'a str,
     pub trigger: EscalationTrigger,
-    /// Caller-supplied list mixing inner_event_ids, rationale_ids,
-    /// and other forensic refs. Split by the heuristic below.
+    /// Non-rationale evidence refs (inner/outer event ids,
+    /// outbound wrap ids, free-form notes). Caller-partitioned.
     pub evidence_refs: Vec<String>,
+    /// Rationale ids from the `reasoning_rationales` audit store.
+    /// Caller-partitioned — `recommend` does not attempt to
+    /// distinguish these from event ids at runtime.
+    pub rationale_refs: Vec<String>,
     pub prompt_bundle_id: &'a str,
     pub policy_hash: &'a str,
 }
 
 /// Mark a session `escalation_recommended`, record the trigger and
 /// assemble the Phase 4 handoff package — all in one transaction.
+///
+/// Exactly-once semantics: the state flip is guarded by a
+/// conditional UPDATE that only transitions out of the live,
+/// non-terminal states. A second call on the same session returns
+/// an error (no rows updated) and writes no events.
 ///
 /// Does NOT send any outbound chat message; does NOT notify solvers
 /// (the engine owns that); does NOT retry on DB error (the single
@@ -89,13 +109,12 @@ pub async fn recommend(params: RecommendParams<'_>) -> Result<()> {
         session_id,
         trigger,
         evidence_refs,
+        rationale_refs,
         prompt_bundle_id,
         policy_hash,
     } = params;
 
     let now = super::current_ts_secs()?;
-
-    let (evidence_refs, rationale_refs) = split_rationale_refs(evidence_refs);
 
     let mut guard = conn.lock().await;
 
@@ -119,12 +138,39 @@ pub async fn recommend(params: RecommendParams<'_>) -> Result<()> {
     // (2)–(4) tx: state flip + 2 events in one atomic block.
     let tx = guard.transaction()?;
 
-    db::mediation::set_session_state(
-        &tx,
-        session_id,
-        MediationSessionState::EscalationRecommended,
-        now,
+    // Conditional state flip. Only transitions OUT of the live
+    // non-terminal states are allowed — a second call on an
+    // already-escalated session updates zero rows, the tx is
+    // rolled back below, and no duplicate events are written.
+    //
+    // The WHERE clause mirrors the allowed-transition set that
+    // `MediationSessionState::can_transition_to` enforces in debug
+    // builds via the `debug_assert!` inside `set_session_state`;
+    // encoding the same rule in SQL makes the guarantee hold in
+    // release builds too.
+    let rows = tx.execute(
+        "UPDATE mediation_sessions
+         SET state = 'escalation_recommended', last_transition_at = ?1
+         WHERE session_id = ?2
+           AND state IN (
+               'opening',
+               'awaiting_response',
+               'classified',
+               'follow_up_pending',
+               'summary_pending'
+           )",
+        params![now, session_id],
     )?;
+    if rows == 0 {
+        // Either the session row is gone (impossible given the
+        // lookup above held the same connection), or the session is
+        // already terminal / already at `escalation_recommended`.
+        // Either way: refuse to write a second handoff.
+        return Err(Error::InvalidStateTransition {
+            from: "<already-terminal-or-escalated>".to_string(),
+            to: "escalation_recommended".to_string(),
+        });
+    }
 
     let escalation_payload = serde_json::json!({
         "trigger": trigger.to_string(),
@@ -183,63 +229,125 @@ pub async fn recommend(params: RecommendParams<'_>) -> Result<()> {
     Ok(())
 }
 
-/// Heuristic: a rationale id is the lowercase hex form of a SHA-256
-/// digest — exactly 64 chars, `[0-9a-f]`. Everything else (nostr
-/// event ids, inbound/outbound ids, free-form notes) stays in
-/// `evidence_refs`.
-fn split_rationale_refs(input: Vec<String>) -> (Vec<String>, Vec<String>) {
-    let mut evidence = Vec::new();
-    let mut rationales = Vec::new();
-    for r in input {
-        if looks_like_rationale_id(&r) {
-            rationales.push(r);
-        } else {
-            evidence.push(r);
-        }
-    }
-    (evidence, rationales)
-}
-
-fn looks_like_rationale_id(s: &str) -> bool {
-    s.len() == 64
-        && s.chars()
-            .all(|c| c.is_ascii_hexdigit() && !c.is_uppercase())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::migrations::run_migrations;
+    use crate::db::open_in_memory;
 
-    #[test]
-    fn looks_like_rationale_id_accepts_lowercase_64_hex() {
-        // SHA-256("abc") — deterministic known-good vector.
-        let sha = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
-        assert_eq!(sha.len(), 64);
-        assert!(looks_like_rationale_id(sha));
+    fn fresh_conn() -> Arc<AsyncMutex<rusqlite::Connection>> {
+        let mut conn = open_in_memory().unwrap();
+        run_migrations(&mut conn).unwrap();
+        conn.execute(
+            "INSERT INTO disputes (
+                dispute_id, event_id, mostro_pubkey, initiator_role,
+                dispute_status, event_timestamp, detected_at, lifecycle_state
+             ) VALUES ('d-esc', 'e1', 'm1', 'buyer',
+                       'initiated', 1, 2, 'notified')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO mediation_sessions (
+                session_id, dispute_id, state, round_count,
+                prompt_bundle_id, policy_hash,
+                started_at, last_transition_at
+             ) VALUES ('sess-esc', 'd-esc', 'awaiting_response', 0,
+                       'phase3-default', 'test-policy-hash',
+                       100, 100)",
+            [],
+        )
+        .unwrap();
+        Arc::new(AsyncMutex::new(conn))
     }
 
-    #[test]
-    fn looks_like_rationale_id_rejects_uppercase_and_wrong_length() {
-        assert!(!looks_like_rationale_id(
-            "BA7816BF8F01CFEA414140DE5DAE2223B00361A396177A9CB410FF61F20015AD"
-        ));
-        assert!(!looks_like_rationale_id("too-short"));
-        assert!(!looks_like_rationale_id(
-            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015adXX"
-        ));
-        assert!(!looks_like_rationale_id(""));
+    async fn count_events(conn: &Arc<AsyncMutex<rusqlite::Connection>>, kind: &str) -> i64 {
+        let c = conn.lock().await;
+        c.query_row(
+            "SELECT COUNT(*) FROM mediation_events WHERE session_id = 'sess-esc' AND kind = ?1",
+            params![kind],
+            |r| r.get::<_, i64>(0),
+        )
+        .unwrap()
     }
 
-    #[test]
-    fn split_rationale_refs_partitions_correctly() {
-        let input = vec![
-            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad".into(),
-            "inner-event-123".into(),
-            "some-note".into(),
-            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".into(),
-        ];
-        let (evidence, rationales) = split_rationale_refs(input);
-        assert_eq!(evidence, vec!["inner-event-123", "some-note"]);
-        assert_eq!(rationales.len(), 2);
+    #[tokio::test]
+    async fn second_call_on_same_session_is_rejected_without_duplicate_events() {
+        let conn = fresh_conn();
+        recommend(RecommendParams {
+            conn: &conn,
+            session_id: "sess-esc",
+            trigger: EscalationTrigger::LowConfidence,
+            evidence_refs: Vec::new(),
+            rationale_refs: Vec::new(),
+            prompt_bundle_id: "phase3-default",
+            policy_hash: "test-policy-hash",
+        })
+        .await
+        .expect("first call must succeed");
+
+        assert_eq!(count_events(&conn, "escalation_recommended").await, 1);
+        assert_eq!(count_events(&conn, "handoff_prepared").await, 1);
+
+        // Second call: the conditional UPDATE affects 0 rows, the
+        // tx rolls back, and no additional event rows land.
+        let err = recommend(RecommendParams {
+            conn: &conn,
+            session_id: "sess-esc",
+            trigger: EscalationTrigger::RoundLimit,
+            evidence_refs: Vec::new(),
+            rationale_refs: Vec::new(),
+            prompt_bundle_id: "phase3-default",
+            policy_hash: "test-policy-hash",
+        })
+        .await
+        .expect_err("second call on the same session must fail");
+        assert!(matches!(err, Error::InvalidStateTransition { .. }));
+
+        assert_eq!(
+            count_events(&conn, "escalation_recommended").await,
+            1,
+            "no duplicate escalation_recommended event in release or debug"
+        );
+        assert_eq!(
+            count_events(&conn, "handoff_prepared").await,
+            1,
+            "no duplicate handoff_prepared event in release or debug"
+        );
+    }
+
+    #[tokio::test]
+    async fn explicit_rationale_refs_are_preserved_verbatim() {
+        let conn = fresh_conn();
+        // Two 64-hex strings that would collide with the old
+        // heuristic — one is an event id, one is a rationale id.
+        // With explicit fields the caller's partitioning sticks.
+        let event_id = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+        let rationale_id = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+        recommend(RecommendParams {
+            conn: &conn,
+            session_id: "sess-esc",
+            trigger: EscalationTrigger::ConflictingClaims,
+            evidence_refs: vec![event_id.into()],
+            rationale_refs: vec![rationale_id.into()],
+            prompt_bundle_id: "phase3-default",
+            policy_hash: "test-policy-hash",
+        })
+        .await
+        .unwrap();
+
+        let payload: String = {
+            let c = conn.lock().await;
+            c.query_row(
+                "SELECT payload_json FROM mediation_events
+                 WHERE session_id='sess-esc' AND kind='handoff_prepared'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        let v: serde_json::Value = serde_json::from_str(&payload).unwrap();
+        assert_eq!(v["evidence_refs"][0], event_id);
+        assert_eq!(v["rationale_refs"][0], rationale_id);
     }
 }

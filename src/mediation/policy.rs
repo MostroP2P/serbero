@@ -125,12 +125,19 @@ pub async fn initial_classification(
             // the operator dashboard can distinguish an infra
             // failure from a silent "no classification event
             // emitted" gap.
+            //
+            // The audit payload stores a stable `error_category`
+            // rather than the raw `e.to_string()` so operators have
+            // a bounded tag space to alert on and so adapter-side
+            // identifiers (URLs, IP addresses, internal host names)
+            // never leak into `mediation_events`. The full message
+            // still goes to `warn!` below for in-process logs.
             let now = current_ts_secs();
             let payload = serde_json::json!({
                 "provider": provider_name,
                 "model": model_name,
                 "attempt_count": 1,
-                "reason": e.to_string(),
+                "error_category": reasoning_error_category(&e),
             })
             .to_string();
             {
@@ -363,6 +370,22 @@ pub(crate) fn classify_to_decision(classification: &ClassificationResponse) -> P
         SuggestedAction::Escalate(_) => {
             PolicyDecision::Escalate(EscalationTrigger::ReasoningUnavailable)
         }
+    }
+}
+
+/// Map a [`ReasoningError`] to a short, stable tag persisted in the
+/// `reasoning_call_failed` audit payload. Keeping the tag space
+/// bounded lets operator dashboards alert on categories without
+/// parsing free-form provider error strings, and keeps adapter
+/// internals (URLs, IPs, keys) out of the audit table.
+fn reasoning_error_category(err: &crate::models::reasoning::ReasoningError) -> &'static str {
+    use crate::models::reasoning::ReasoningError::*;
+    match err {
+        Unreachable(_) => "unreachable",
+        Timeout => "timeout",
+        MalformedResponse(_) => "malformed_response",
+        AuthorityBoundaryViolation(_) => "authority_boundary_violation",
+        Other(_) => "unknown",
     }
 }
 

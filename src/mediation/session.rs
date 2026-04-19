@@ -317,29 +317,14 @@ pub async fn open_session(params: OpenSessionParams<'_>) -> Result<OpenOutcome> 
                 // auth-retry handle so it re-arms. Any other error
                 // bubbles up as before.
                 if let Error::AuthorizationLost(ref msg) = e {
-                    tracing::error!(
-                        session_id = %session_id,
-                        error = %msg,
-                        "authorization_lost"
-                    );
-                    params.auth_handle.signal_auth_lost();
-                    if let Err(esc_err) =
-                        super::escalation::recommend(super::escalation::RecommendParams {
-                            conn: params.conn,
-                            session_id: &session_id,
-                            trigger: crate::models::mediation::EscalationTrigger::AuthorizationLost,
-                            evidence_refs: Vec::new(),
-                            prompt_bundle_id: &params.prompt_bundle.id,
-                            policy_hash: &params.prompt_bundle.policy_hash,
-                        })
-                        .await
-                    {
-                        warn!(
-                            session_id = %session_id,
-                            error = %esc_err,
-                            "open_session: escalation::recommend failed for AuthorizationLost"
-                        );
-                    }
+                    handle_authorization_lost(
+                        params.conn,
+                        &session_id,
+                        params.auth_handle,
+                        params.prompt_bundle,
+                        msg,
+                    )
+                    .await;
                 }
                 return Err(e);
             }
@@ -404,28 +389,22 @@ pub async fn open_session(params: OpenSessionParams<'_>) -> Result<OpenOutcome> 
         }
         PolicyDecision::Escalate(trigger) => {
             // US4 / T070: a non-cooperative classification on the
-            // opening call. Flip the session to
-            // `escalation_recommended` so the engine's eligibility
-            // query does not re-pick this dispute on the next tick,
-            // and return `EscalatedOnOpen { trigger }` so the engine
-            // caller can write the per-trigger
-            // `escalation_recommended` + `handoff_prepared` audit
-            // rows via `escalation::recommend`.
-            let escalation_now = current_ts_secs()?;
-            {
-                let guard = params.conn.lock().await;
-                db::mediation::set_session_state(
-                    &guard,
-                    &session_id,
-                    crate::models::mediation::MediationSessionState::EscalationRecommended,
-                    escalation_now,
-                )?;
-            }
+            // opening call. We do NOT pre-flip the session to
+            // `escalation_recommended` here — `escalation::recommend`
+            // performs the state transition and writes both audit
+            // rows (`escalation_recommended` + `handoff_prepared`)
+            // inside a single transaction, so the state and audit
+            // trail cannot drift. If this function returned without
+            // its caller invoking `recommend`, the session would be
+            // left at `awaiting_response`, which `list_eligible_disputes`
+            // also excludes (its live-session NOT EXISTS clause
+            // covers every non-closed state) — so the dispute is
+            // not re-picked by the next engine tick either way.
             debug!(
                 session_id = %session_id,
                 trigger = %trigger,
                 "policy decision on opening call is Escalate; \
-                 session marked escalation_recommended (engine will record handoff)"
+                 engine will record handoff via escalation::recommend"
             );
             Ok(OpenOutcome::EscalatedOnOpen {
                 session_id,
@@ -570,6 +549,58 @@ async fn register_session_material(
 ) {
     let mut guard = cache.lock().await;
     guard.insert(session_id.to_string(), material);
+}
+
+/// T071 / T074 — dispatch both mid-session authorization-loss
+/// actions through one call:
+///
+/// 1. `tracing::error!` with the underlying error message so
+///    operator dashboards can see the loss immediately.
+/// 2. [`super::auth_retry::AuthRetryHandle::signal_auth_lost`] —
+///    flips the in-memory state so future `open_session` attempts
+///    refuse with `RefusedAuthPending` (SC-105 keeps Phase 1/2
+///    detection unaffected).
+/// 3. [`super::escalation::recommend`] with
+///    [`crate::models::mediation::EscalationTrigger::AuthorizationLost`]
+///    — flips the session to `escalation_recommended` and assembles
+///    the Phase 4 handoff package.
+///
+/// Extracted from the inline outbound-failure handler in
+/// [`open_session`] so integration tests can exercise the "auth
+/// lost mid-session" scenario without simulating the full outbound
+/// pipeline, and so a regression that forgets either (2) or (3)
+/// surfaces as a single-call test failure rather than needing two
+/// separate observations.
+pub async fn handle_authorization_lost(
+    conn: &Arc<AsyncMutex<rusqlite::Connection>>,
+    session_id: &str,
+    auth_handle: &super::auth_retry::AuthRetryHandle,
+    prompt_bundle: &Arc<PromptBundle>,
+    error_msg: &str,
+) {
+    tracing::error!(
+        session_id = %session_id,
+        error = %error_msg,
+        "authorization_lost"
+    );
+    auth_handle.signal_auth_lost();
+    if let Err(esc_err) = super::escalation::recommend(super::escalation::RecommendParams {
+        conn,
+        session_id,
+        trigger: crate::models::mediation::EscalationTrigger::AuthorizationLost,
+        evidence_refs: Vec::new(),
+        rationale_refs: Vec::new(),
+        prompt_bundle_id: &prompt_bundle.id,
+        policy_hash: &prompt_bundle.policy_hash,
+    })
+    .await
+    {
+        warn!(
+            session_id = %session_id,
+            error = %esc_err,
+            "handle_authorization_lost: escalation::recommend failed"
+        );
+    }
 }
 
 /// Publish one outer gift-wrap with a tiny bounded retry. No generic

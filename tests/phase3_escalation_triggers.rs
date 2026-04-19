@@ -1,15 +1,17 @@
 //! US4 — per-trigger escalation integration tests (T063).
 //!
 //! One `#[tokio::test]` per escalation trigger the mediation engine
-//! is expected to surface in Phase 3. Each sub-test uses the
+//! is expected to surface in Phase 3. Most sub-tests use the
 //! direct-seed pattern: insert a `disputes` + `mediation_sessions`
 //! row into an in-memory SQLite, call the function under test
 //! directly (no live relay, no real Nostr), and assert the resulting
 //! DB state.
 //!
-//! These tests deliberately avoid `open_session` so the trigger path
-//! is exercised in isolation; the end-to-end `open → classify →
-//! escalate` flow is covered separately by the session-open tests.
+//! The party-unresponsive and authorization-lost sub-tests exercise
+//! the production helpers (`check_party_unresponsive_timeout`,
+//! `session::handle_authorization_lost`) rather than duplicating
+//! the deadline math / the state-flip + signal pair, so a
+//! regression in either helper shows up as a test failure here.
 
 mod common;
 
@@ -17,7 +19,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use serbero::db;
-use serbero::mediation::auth_retry::{AuthRetryHandle, AuthState};
+use serbero::mediation::auth_retry::AuthRetryHandle;
 use serbero::mediation::escalation::{self, RecommendParams};
 use serbero::mediation::policy::{self, PolicyDecision};
 use serbero::mediation::session;
@@ -27,6 +29,7 @@ use serbero::models::reasoning::{
     ClassificationRequest, ClassificationResponse, RationaleText, ReasoningError, SuggestedAction,
     SummaryRequest, SummaryResponse,
 };
+use serbero::models::MediationConfig;
 use serbero::prompts::PromptBundle;
 use serbero::reasoning::ReasoningProvider;
 use tokio::sync::Mutex as AsyncMutex;
@@ -143,6 +146,7 @@ async fn conflicting_claims_triggers_escalation() {
         session_id: "sess-cc",
         trigger: EscalationTrigger::ConflictingClaims,
         evidence_refs: Vec::new(),
+        rationale_refs: Vec::new(),
         prompt_bundle_id: &bundle.id,
         policy_hash: &bundle.policy_hash,
     })
@@ -181,6 +185,7 @@ async fn fraud_indicator_triggers_escalation() {
         session_id: "sess-fr",
         trigger: EscalationTrigger::FraudIndicator,
         evidence_refs: Vec::new(),
+        rationale_refs: Vec::new(),
         prompt_bundle_id: &bundle.id,
         policy_hash: &bundle.policy_hash,
     })
@@ -216,6 +221,7 @@ async fn low_confidence_triggers_escalation() {
         session_id: "sess-lc",
         trigger: EscalationTrigger::LowConfidence,
         evidence_refs: Vec::new(),
+        rationale_refs: Vec::new(),
         prompt_bundle_id: &bundle.id,
         policy_hash: &bundle.policy_hash,
     })
@@ -233,43 +239,51 @@ async fn low_confidence_triggers_escalation() {
 
 #[tokio::test]
 async fn party_unresponsive_timeout_triggers_escalation() {
-    // T069 — the timeout check is a pure deadline computation.
-    // Replicate it here against a session whose started_at is well
-    // behind the configured timeout, call escalation::recommend with
-    // PartyUnresponsive, and assert the session transitions.
-    const TIMEOUT_SECS: i64 = 3600;
+    // T069 — drive the production sweep directly instead of
+    // recomputing the deadline locally. A regression in the
+    // deadline rule inside `check_party_unresponsive_timeout`
+    // therefore surfaces as this test failing rather than the test
+    // silently matching whatever the code does.
+    const TIMEOUT_SECS: u64 = 3600;
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_secs() as i64;
-    let started_at = now - TIMEOUT_SECS - 10;
+    let started_at = now - TIMEOUT_SECS as i64 - 10;
     let conn = seed_session("dispute-pu", "sess-pu", started_at).await;
     let bundle = test_bundle();
 
-    // Deadline computation (verbatim from run_ingest_tick):
-    // reference = max(started_at, buyer_last, seller_last)
-    // deadline  = reference + timeout
-    let reference = started_at; // neither party has replied yet
-    let deadline = reference + TIMEOUT_SECS;
-    assert!(now > deadline, "precondition: session must be overdue");
+    let cfg = MediationConfig {
+        party_response_timeout_seconds: TIMEOUT_SECS,
+        ..MediationConfig::default()
+    };
 
-    escalation::recommend(RecommendParams {
-        conn: &conn,
-        session_id: "sess-pu",
-        trigger: EscalationTrigger::PartyUnresponsive,
-        evidence_refs: Vec::new(),
-        prompt_bundle_id: &bundle.id,
-        policy_hash: &bundle.policy_hash,
-    })
-    .await
-    .unwrap();
+    serbero::mediation::check_party_unresponsive_timeout(&conn, &bundle, &cfg)
+        .await
+        .expect("timeout sweep must not return Err");
 
     assert_eq!(
         session_state(&conn, "sess-pu").await,
         "escalation_recommended"
     );
     let payload = escalation_payload(&conn, "sess-pu").await;
-    assert!(payload.contains("party_unresponsive"), "{payload}");
+    assert!(
+        payload.contains("party_unresponsive"),
+        "payload must carry party_unresponsive: {payload}"
+    );
+    assert_eq!(count_event(&conn, "sess-pu", "handoff_prepared").await, 1);
+
+    // Running the sweep again must be a no-op on the same overdue
+    // session — it is already at `escalation_recommended` and the
+    // sweep skips terminal / escalated rows, so no duplicate events.
+    serbero::mediation::check_party_unresponsive_timeout(&conn, &bundle, &cfg)
+        .await
+        .unwrap();
+    assert_eq!(
+        count_event(&conn, "sess-pu", "escalation_recommended").await,
+        1,
+        "sweep must be idempotent once a session has escalated"
+    );
 }
 
 #[tokio::test]
@@ -295,6 +309,7 @@ async fn round_limit_triggers_escalation() {
         session_id: "sess-rl",
         trigger: EscalationTrigger::RoundLimit,
         evidence_refs: Vec::new(),
+        rationale_refs: Vec::new(),
         prompt_bundle_id: &bundle.id,
         policy_hash: &bundle.policy_hash,
     })
@@ -355,11 +370,33 @@ async fn reasoning_unavailable_triggers_escalation() {
         PolicyDecision::Escalate(EscalationTrigger::ReasoningUnavailable)
     );
 
+    // The transport-error path in `initial_classification` records a
+    // `reasoning_call_failed` audit row with a stable error category
+    // (not the raw provider error string). Pin both facts: the row
+    // exists AND the payload does NOT leak the raw error text.
+    let payload: String = {
+        let c = conn.lock().await;
+        c.query_row(
+            "SELECT payload_json FROM mediation_events
+             WHERE session_id = 'sess-ru' AND kind = 'reasoning_call_failed'",
+            [],
+            |r| r.get::<_, String>(0),
+        )
+        .unwrap()
+    };
+    let v: serde_json::Value = serde_json::from_str(&payload).unwrap();
+    assert_eq!(v["error_category"], "unreachable");
+    assert!(
+        !payload.contains("network down"),
+        "raw provider error text must not leak into the audit payload: {payload}"
+    );
+
     escalation::recommend(RecommendParams {
         conn: &conn,
         session_id: "sess-ru",
         trigger: EscalationTrigger::ReasoningUnavailable,
         evidence_refs: Vec::new(),
+        rationale_refs: Vec::new(),
         prompt_bundle_id: &bundle.id,
         policy_hash: &bundle.policy_hash,
     })
@@ -373,31 +410,26 @@ async fn reasoning_unavailable_triggers_escalation() {
     let payload = escalation_payload(&conn, "sess-ru").await;
     assert!(payload.contains("reasoning_unavailable"), "{payload}");
     assert_eq!(count_event(&conn, "sess-ru", "handoff_prepared").await, 1);
-
-    // The transport-error path in `initial_classification` also
-    // writes a `reasoning_call_failed` audit row (T070 / T074).
-    assert!(
-        count_event(&conn, "sess-ru", "reasoning_call_failed").await >= 1,
-        "initial_classification must record reasoning_call_failed on provider error"
-    );
 }
 
 #[tokio::test]
 async fn authorization_lost_mid_session_triggers_escalation() {
+    // Exercise the real session-level handler
+    // `session::handle_authorization_lost`, which is the same code
+    // path invoked from `open_session` when `draft_and_send_initial_message`
+    // returns `Error::AuthorizationLost`. A regression where the
+    // handler forgets either the `signal_auth_lost` or the
+    // `escalation::recommend` call surfaces here as a single
+    // session-driven failure.
     let conn = seed_session("dispute-al", "sess-al", 100).await;
     let bundle = test_bundle();
+    let handle = AuthRetryHandle::new_authorized();
+    assert!(handle.is_authorized(), "precondition: handle authorized");
 
-    escalation::recommend(RecommendParams {
-        conn: &conn,
-        session_id: "sess-al",
-        trigger: EscalationTrigger::AuthorizationLost,
-        evidence_refs: Vec::new(),
-        prompt_bundle_id: &bundle.id,
-        policy_hash: &bundle.policy_hash,
-    })
-    .await
-    .unwrap();
+    session::handle_authorization_lost(&conn, "sess-al", &handle, &bundle, "mostro revoked us")
+        .await;
 
+    // (1) Escalation events landed with the matching trigger.
     assert_eq!(
         session_state(&conn, "sess-al").await,
         "escalation_recommended"
@@ -406,23 +438,9 @@ async fn authorization_lost_mid_session_triggers_escalation() {
     assert!(payload.contains("authorization_lost"), "{payload}");
     assert_eq!(count_event(&conn, "sess-al", "handoff_prepared").await, 1);
 
-    // `signal_auth_lost` flips an `Authorized` handle to
-    // `Unauthorized`, and `is_authorized` returns false afterwards.
-    let handle = AuthRetryHandle::new_authorized();
-    assert!(handle.is_authorized());
-    handle.signal_auth_lost();
-    assert!(!handle.is_authorized());
-
-    // Re-signalling while already Unauthorized is a no-op.
-    handle.signal_auth_lost();
-    assert!(!handle.is_authorized());
-
-    // A `Terminated` handle is also left alone (documented no-op for
-    // the other two non-Authorized states).
-    let handle = AuthRetryHandle::new_authorized();
-    // Flip to Unauthorized then Terminated is not directly
-    // exposable outside `#[cfg(test)]`, but the Authorized/Unauth
-    // transition above already covers the public invariant.
-    let _ = AuthState::Terminated; // imported to silence unused warnings in no-op branch
-    drop(handle);
+    // (2) The auth-retry handle flipped out of `Authorized`.
+    assert!(
+        !handle.is_authorized(),
+        "handle_authorization_lost must flip the auth handle"
+    );
 }
