@@ -67,22 +67,47 @@ pub struct AuthRetryHandle {
 }
 
 impl AuthRetryHandle {
-    /// Test / daemon-helper constructor: a handle that already
-    /// reports `Authorized`. Used when the initial check passes on
-    /// the first try (no retry loop spawned) and by integration
-    /// tests that want to pin the gate to `Authorized` without
-    /// running the real check.
+    /// Build a handle that already reports `Authorized`. Two valid
+    /// callers:
+    ///
+    /// - `ensure_authorized_or_enter_loop` when the initial check
+    ///   passes on the first try (no retry loop spawned).
+    /// - Integration tests under `tests/` that want to pin the
+    ///   session-open gate to `Authorized` without running the real
+    ///   check.
+    ///
+    /// Both of those only need the `Authorized` seed — the other
+    /// two states (`Unauthorized` / `Terminated`) are loop-driven,
+    /// so there is no legitimate production reason to fabricate
+    /// them. Seeding those states is covered by [`Self::with_state_for_testing`]
+    /// below, which is test-gated.
     pub fn new_authorized() -> Self {
         Self::with_state(AuthState::Authorized)
     }
 
-    /// Test-only constructor — seed any state without going through
-    /// the loop. Kept public (not `#[cfg(test)]`) so integration
-    /// tests under `tests/` can pin gate refusal paths.
-    pub fn with_state(state: AuthState) -> Self {
+    /// Module-private constructor used by
+    /// [`ensure_authorized_or_enter_loop_inner`] to seed an
+    /// `Unauthorized` handle before spawning the retry task. Kept
+    /// private so the one-writer invariant (only the spawned loop
+    /// mutates state away from its initial value) is enforced at
+    /// the type system level — no production caller outside this
+    /// module can fabricate a handle in any state.
+    fn with_state(state: AuthState) -> Self {
         Self {
             state: Arc::new(Mutex::new(state)),
         }
+    }
+
+    /// Test-only seed for arbitrary states. Gated behind
+    /// `#[cfg(test)]` so integration tests in `tests/*.rs` (which
+    /// compile against the non-test lib) cannot reach it, and so
+    /// the public API of a release build does NOT expose a way to
+    /// bypass the retry loop's one-writer invariant. Unit tests in
+    /// sibling modules (e.g. `mediation::session::tests`) use this
+    /// to pin the `Unauthorized` / `Terminated` gate paths.
+    #[cfg(test)]
+    pub(crate) fn with_state_for_testing(state: AuthState) -> Self {
+        Self::with_state(state)
     }
 
     /// Cheap read of the current state. Never panics: the inner

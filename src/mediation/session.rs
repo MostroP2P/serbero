@@ -606,7 +606,7 @@ mod tests {
     #[tokio::test]
     async fn unauthorized_gate_refuses_with_pending_and_writes_nothing() {
         let conn = fresh_conn();
-        let handle = AuthRetryHandle::with_state(AuthState::Unauthorized);
+        let handle = AuthRetryHandle::with_state_for_testing(AuthState::Unauthorized);
         let outcome = run_gate_with(&handle, &conn).await;
         match outcome {
             OpenOutcome::RefusedAuthPending { reason } => {
@@ -623,7 +623,7 @@ mod tests {
     #[tokio::test]
     async fn terminated_gate_refuses_with_terminated_and_writes_nothing() {
         let conn = fresh_conn();
-        let handle = AuthRetryHandle::with_state(AuthState::Terminated);
+        let handle = AuthRetryHandle::with_state_for_testing(AuthState::Terminated);
         let outcome = run_gate_with(&handle, &conn).await;
         match outcome {
             OpenOutcome::RefusedAuthTerminated { reason } => {
