@@ -114,6 +114,9 @@ pub async fn open_dispute_session(
         // ingest tick runs alongside, so no cache to register the
         // material in.
         session_key_cache: None,
+        // No solver fan-out from this wrapper either — the test
+        // harness manages its own recipient set.
+        solvers: &[],
     })
     .await
 }
@@ -393,6 +396,7 @@ pub async fn run_engine(
             &session_key_cache,
             &prompt_bundle,
             &mediation_cfg,
+            &solvers,
         )
         .await
         {
@@ -620,6 +624,7 @@ async fn run_engine_tick(
             model_name,
             auth_handle,
             session_key_cache: Some(session_key_cache),
+            solvers,
         })
         .await
         {
@@ -678,12 +683,6 @@ async fn run_engine_tick(
                     "engine tick: dispute already has an open mediation session"
                 );
             }
-            Ok(session::OpenOutcome::DeferredToLaterPhase) => {
-                debug!(
-                    dispute_id = %dispute_id,
-                    "engine tick: dispute deferred (non-AskClarification suggestion)"
-                );
-            }
             Ok(session::OpenOutcome::EscalatedOnOpen {
                 session_id,
                 trigger,
@@ -694,7 +693,7 @@ async fn run_engine_tick(
                     trigger = %trigger,
                     "session escalated on open"
                 );
-                if let Err(e) = escalation::recommend(escalation::RecommendParams {
+                match escalation::recommend(escalation::RecommendParams {
                     conn,
                     session_id: &session_id,
                     trigger,
@@ -705,11 +704,24 @@ async fn run_engine_tick(
                 })
                 .await
                 {
-                    error!(
-                        session_id = %session_id,
-                        error = %e,
-                        "engine: escalation::recommend failed for EscalatedOnOpen"
-                    );
+                    Ok(()) => {
+                        notify_solvers_escalation(
+                            conn,
+                            client,
+                            solvers,
+                            dispute_id,
+                            &session_id,
+                            trigger,
+                        )
+                        .await;
+                    }
+                    Err(e) => {
+                        error!(
+                            session_id = %session_id,
+                            error = %e,
+                            "engine: escalation::recommend failed for EscalatedOnOpen"
+                        );
+                    }
                 }
             }
             Ok(session::OpenOutcome::RefusedReasoningUnavailable { reason }) => {
@@ -1020,6 +1032,110 @@ pub async fn deliver_summary(
     Ok(())
 }
 
+/// T072 — deliver the "needs human judgment" gift-wrap DM to the
+/// configured solver(s) after a session has been escalated.
+///
+/// Must be called AFTER [`escalation::recommend`] returns `Ok(())`
+/// — that way the DB-side state flip + audit rows are durable
+/// before we tell a human about the handoff. Per-recipient send
+/// failures are recorded as `NotificationStatus::Failed`
+/// notification rows; the function never returns `Err` because a
+/// single flaky relay must not abort the surrounding engine tick.
+///
+/// Recipient resolution goes through
+/// [`router::resolve_recipients`] so the routing rule stays in one
+/// place for both summary and escalation paths.
+pub(crate) async fn notify_solvers_escalation(
+    conn: &Arc<AsyncMutex<rusqlite::Connection>>,
+    client: &Client,
+    solvers: &[SolverConfig],
+    dispute_id: &str,
+    session_id: &str,
+    trigger: EscalationTrigger,
+) {
+    let assigned_solver: Option<String> = {
+        let guard = conn.lock().await;
+        guard
+            .query_row(
+                "SELECT assigned_solver FROM disputes WHERE dispute_id = ?1",
+                rusqlite::params![dispute_id],
+                |r| r.get::<_, Option<String>>(0),
+            )
+            .ok()
+            .flatten()
+    };
+    let recipients = router::resolve_recipients(solvers, assigned_solver.as_deref());
+    let recipient_list: Vec<String> = match recipients {
+        router::Recipients::Targeted(pk) => vec![pk],
+        router::Recipients::Broadcast(v) => v,
+    };
+    if recipient_list.is_empty() {
+        warn!(
+            dispute_id = %dispute_id,
+            session_id = %session_id,
+            trigger = %trigger,
+            "notify_solvers_escalation: no solver recipients configured"
+        );
+        return;
+    }
+
+    // Operator-facing body. Kept compact so it renders cleanly in
+    // typical Nostr clients; the full handoff package lives in the
+    // `handoff_prepared` mediation_events row for Phase 4.
+    let dm_body = format!(
+        "Mediation session {session_id} (dispute {dispute_id}) escalated — \
+         trigger: {trigger}. Needs human judgment."
+    );
+
+    for pk_hex in &recipient_list {
+        let sent_at = current_ts_secs().unwrap_or(0);
+        let (status, error_message) = match PublicKey::parse(pk_hex) {
+            Ok(pk) => match send_gift_wrap_notification(client, &pk, &dm_body).await {
+                Ok(()) => {
+                    info!(
+                        session_id = %session_id,
+                        solver_pubkey = %pk_hex,
+                        trigger = %trigger,
+                        "solver_escalation_notified"
+                    );
+                    (NotificationStatus::Sent, None)
+                }
+                Err(e) => {
+                    warn!(
+                        session_id = %session_id,
+                        solver_pubkey = %pk_hex,
+                        error = %e,
+                        "notify_solvers_escalation: notifier send failed; recording Failed row"
+                    );
+                    (NotificationStatus::Failed, Some(e.to_string()))
+                }
+            },
+            Err(e) => {
+                warn!(
+                    session_id = %session_id,
+                    solver_pubkey = %pk_hex,
+                    error = %e,
+                    "notify_solvers_escalation: recipient pubkey parse failed"
+                );
+                (
+                    NotificationStatus::Failed,
+                    Some(format!("invalid pubkey: {e}")),
+                )
+            }
+        };
+        let guard = conn.lock().await;
+        db::notifications::record_notification_logged(
+            &guard,
+            dispute_id,
+            pk_hex,
+            sent_at,
+            status,
+            error_message.as_deref(),
+            NotificationType::MediationEscalationRecommended,
+        );
+    }
+}
+
 async fn transition_session(
     conn: &Arc<AsyncMutex<rusqlite::Connection>>,
     session_id: &str,
@@ -1171,12 +1287,14 @@ pub(crate) fn current_ts_secs() -> Result<i64> {
         rows_stale = tracing::field::Empty,
     )
 )]
+#[allow(clippy::too_many_arguments)]
 async fn run_ingest_tick(
     conn: &Arc<AsyncMutex<rusqlite::Connection>>,
     client: &Client,
     session_key_cache: &SessionKeyCache,
     prompt_bundle: &Arc<PromptBundle>,
     mediation_cfg: &MediationConfig,
+    solvers: &[SolverConfig],
 ) -> Result<()> {
     debug!("ingest tick starting");
 
@@ -1335,7 +1453,7 @@ async fn run_ingest_tick(
                             max_rounds = mediation_cfg.max_rounds,
                             "round_limit_escalation"
                         );
-                        if let Err(e) = escalation::recommend(escalation::RecommendParams {
+                        match escalation::recommend(escalation::RecommendParams {
                             conn,
                             session_id: &session_id,
                             trigger: EscalationTrigger::RoundLimit,
@@ -1346,11 +1464,41 @@ async fn run_ingest_tick(
                         })
                         .await
                         {
-                            warn!(
-                                session_id = %session_id,
-                                error = %e,
-                                "ingest tick: round_limit escalation failed"
-                            );
+                            Ok(()) => {
+                                // Look up dispute_id for the solver
+                                // notification. The JoinSet fan-out
+                                // only carried session_id through, so
+                                // the cheap SQL hop is the simplest
+                                // place to resolve it.
+                                let dispute_id: Option<String> = {
+                                    let g = conn.lock().await;
+                                    g.query_row(
+                                        "SELECT dispute_id FROM mediation_sessions \
+                                         WHERE session_id = ?1",
+                                        rusqlite::params![session_id],
+                                        |r| r.get::<_, String>(0),
+                                    )
+                                    .ok()
+                                };
+                                if let Some(did) = dispute_id {
+                                    notify_solvers_escalation(
+                                        conn,
+                                        client,
+                                        solvers,
+                                        &did,
+                                        &session_id,
+                                        EscalationTrigger::RoundLimit,
+                                    )
+                                    .await;
+                                }
+                            }
+                            Err(e) => {
+                                warn!(
+                                    session_id = %session_id,
+                                    error = %e,
+                                    "ingest tick: round_limit escalation failed"
+                                );
+                            }
                         }
                     }
                 }
@@ -1383,7 +1531,9 @@ async fn run_ingest_tick(
     // T069 — party-response timeout sweep. Runs AFTER the ingest
     // JoinSet drains so last-seen timestamps reflect any fresh
     // envelope written this tick.
-    if let Err(e) = check_party_unresponsive_timeout(conn, prompt_bundle, mediation_cfg).await {
+    if let Err(e) =
+        check_party_unresponsive_timeout(conn, client, solvers, prompt_bundle, mediation_cfg).await
+    {
         warn!(error = %e, "ingest tick: party-unresponsive timeout sweep failed");
     }
 
@@ -1415,6 +1565,8 @@ async fn run_ingest_tick(
 /// answer the code does.
 pub async fn check_party_unresponsive_timeout(
     conn: &Arc<AsyncMutex<rusqlite::Connection>>,
+    client: &Client,
+    solvers: &[SolverConfig],
     prompt_bundle: &Arc<PromptBundle>,
     mediation_cfg: &MediationConfig,
 ) -> Result<()> {
@@ -1424,6 +1576,7 @@ pub async fn check_party_unresponsive_timeout(
     #[derive(Debug)]
     struct Candidate {
         session_id: String,
+        dispute_id: String,
         state: MediationSessionState,
         started_at: i64,
         buyer_last: Option<i64>,
@@ -1434,7 +1587,7 @@ pub async fn check_party_unresponsive_timeout(
         use std::str::FromStr;
         let guard = conn.lock().await;
         let mut stmt = guard.prepare(
-            "SELECT session_id, state, started_at,
+            "SELECT session_id, dispute_id, state, started_at,
                     buyer_last_seen_inner_ts, seller_last_seen_inner_ts
              FROM mediation_sessions
              WHERE state NOT IN (
@@ -1448,14 +1601,15 @@ pub async fn check_party_unresponsive_timeout(
             Ok((
                 r.get::<_, String>(0)?,
                 r.get::<_, String>(1)?,
-                r.get::<_, i64>(2)?,
-                r.get::<_, Option<i64>>(3)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, i64>(3)?,
                 r.get::<_, Option<i64>>(4)?,
+                r.get::<_, Option<i64>>(5)?,
             ))
         })?;
         let mut out = Vec::new();
         for row in rows {
-            let (session_id, state_s, started_at, buyer_last, seller_last) = row?;
+            let (session_id, dispute_id, state_s, started_at, buyer_last, seller_last) = row?;
             let state = match MediationSessionState::from_str(&state_s) {
                 Ok(s) => s,
                 Err(e) => {
@@ -1470,6 +1624,7 @@ pub async fn check_party_unresponsive_timeout(
             };
             out.push(Candidate {
                 session_id,
+                dispute_id,
                 state,
                 started_at,
                 buyer_last,
@@ -1499,7 +1654,7 @@ pub async fn check_party_unresponsive_timeout(
             now,
             "party_unresponsive_escalation"
         );
-        if let Err(e) = escalation::recommend(escalation::RecommendParams {
+        match escalation::recommend(escalation::RecommendParams {
             conn,
             session_id: &c.session_id,
             trigger: EscalationTrigger::PartyUnresponsive,
@@ -1510,11 +1665,24 @@ pub async fn check_party_unresponsive_timeout(
         })
         .await
         {
-            error!(
-                session_id = %c.session_id,
-                error = %e,
-                "timeout sweep: escalation::recommend failed"
-            );
+            Ok(()) => {
+                notify_solvers_escalation(
+                    conn,
+                    client,
+                    solvers,
+                    &c.dispute_id,
+                    &c.session_id,
+                    EscalationTrigger::PartyUnresponsive,
+                )
+                .await;
+            }
+            Err(e) => {
+                error!(
+                    session_id = %c.session_id,
+                    error = %e,
+                    "timeout sweep: escalation::recommend failed"
+                );
+            }
         }
     }
 

@@ -35,10 +35,10 @@
 //!      [`OpenOutcome::ReadyForSummary`] so the engine can call
 //!      `deliver_summary` on this same tick (US3 / T060). No
 //!      outbound clarifying message is drafted on this path.
-//!    - `Escalate(_)` → transition the session to
-//!      `escalation_recommended` and return
-//!      [`OpenOutcome::DeferredToLaterPhase`]; US4 owns the
-//!      structured escalation handoff.
+//!    - `Escalate(trigger)` → return
+//!      [`OpenOutcome::EscalatedOnOpen`] carrying the trigger;
+//!      the engine caller invokes `escalation::recommend`, which
+//!      owns the atomic state flip + Phase 4 handoff audit rows.
 //!
 //! Every session open therefore goes through the same audit path
 //! the engine drives on subsequent ticks, so the
@@ -83,15 +83,6 @@ pub enum OpenOutcome {
         classification: crate::models::mediation::ClassificationLabel,
         confidence: f64,
     },
-    /// The reasoning provider returned an escalation / non-actionable
-    /// action on the opening call. The session row is flipped to
-    /// `escalation_recommended`; US4 will own the structured handoff.
-    ///
-    /// Superseded by [`OpenOutcome::EscalatedOnOpen`] for the
-    /// Escalate path. Retained so future enum-widening does not have
-    /// to reshuffle variants, and left available for a hypothetical
-    /// non-Escalate deferral.
-    DeferredToLaterPhase,
     /// `open_session` ran `initial_classification` and the policy
     /// layer returned `Escalate(trigger)`. The session row was
     /// transitioned to `escalation_recommended` inside `open_session`,
@@ -171,6 +162,14 @@ pub struct OpenSessionParams<'a> {
     /// Tests / callers that do not run an ingest tick can pass
     /// `None`; the session-open path behaves identically otherwise.
     pub session_key_cache: Option<&'a SessionKeyCache>,
+    /// Configured solver pubkeys. Threaded in so the
+    /// authorization-lost branch (T071 / T072) can dispatch the
+    /// `MediationEscalationRecommended` gift-wrap DM to the
+    /// appropriate solver(s) after `escalation::recommend` commits.
+    /// Callers that do not require solver notification can pass
+    /// `&[]` — `router::resolve_recipients` returns an empty
+    /// broadcast and `notify_solvers_escalation` short-circuits.
+    pub solvers: &'a [crate::models::SolverConfig],
 }
 
 #[instrument(skip_all, fields(dispute_id = %params.dispute_id))]
@@ -319,6 +318,9 @@ pub async fn open_session(params: OpenSessionParams<'_>) -> Result<OpenOutcome> 
                 if let Error::AuthorizationLost(ref msg) = e {
                     handle_authorization_lost(
                         params.conn,
+                        params.client,
+                        params.solvers,
+                        params.dispute_id,
                         &session_id,
                         params.auth_handle,
                         params.prompt_bundle,
@@ -551,8 +553,8 @@ async fn register_session_material(
     guard.insert(session_id.to_string(), material);
 }
 
-/// T071 / T074 — dispatch both mid-session authorization-loss
-/// actions through one call:
+/// T071 / T072 / T074 — dispatch every mid-session
+/// authorization-loss action through one call:
 ///
 /// 1. `tracing::error!` with the underlying error message so
 ///    operator dashboards can see the loss immediately.
@@ -564,15 +566,21 @@ async fn register_session_material(
 ///    [`crate::models::mediation::EscalationTrigger::AuthorizationLost`]
 ///    — flips the session to `escalation_recommended` and assembles
 ///    the Phase 4 handoff package.
+/// 4. [`super::notify_solvers_escalation`] — delivers the
+///    `MediationEscalationRecommended` gift-wrap DM to the
+///    configured solver(s). Only runs if (3) succeeded.
 ///
 /// Extracted from the inline outbound-failure handler in
 /// [`open_session`] so integration tests can exercise the "auth
 /// lost mid-session" scenario without simulating the full outbound
-/// pipeline, and so a regression that forgets either (2) or (3)
-/// surfaces as a single-call test failure rather than needing two
-/// separate observations.
+/// pipeline, and so a regression that forgets any of (2)-(4)
+/// surfaces as a single-call test failure.
+#[allow(clippy::too_many_arguments)]
 pub async fn handle_authorization_lost(
     conn: &Arc<AsyncMutex<rusqlite::Connection>>,
+    client: &Client,
+    solvers: &[crate::models::SolverConfig],
+    dispute_id: &str,
     session_id: &str,
     auth_handle: &super::auth_retry::AuthRetryHandle,
     prompt_bundle: &Arc<PromptBundle>,
@@ -584,7 +592,7 @@ pub async fn handle_authorization_lost(
         "authorization_lost"
     );
     auth_handle.signal_auth_lost();
-    if let Err(esc_err) = super::escalation::recommend(super::escalation::RecommendParams {
+    match super::escalation::recommend(super::escalation::RecommendParams {
         conn,
         session_id,
         trigger: crate::models::mediation::EscalationTrigger::AuthorizationLost,
@@ -595,11 +603,24 @@ pub async fn handle_authorization_lost(
     })
     .await
     {
-        warn!(
-            session_id = %session_id,
-            error = %esc_err,
-            "handle_authorization_lost: escalation::recommend failed"
-        );
+        Ok(()) => {
+            super::notify_solvers_escalation(
+                conn,
+                client,
+                solvers,
+                dispute_id,
+                session_id,
+                crate::models::mediation::EscalationTrigger::AuthorizationLost,
+            )
+            .await;
+        }
+        Err(esc_err) => {
+            warn!(
+                session_id = %session_id,
+                error = %esc_err,
+                "handle_authorization_lost: escalation::recommend failed"
+            );
+        }
     }
 }
 
@@ -794,6 +815,7 @@ mod tests {
             model_name: "mock-model",
             auth_handle,
             session_key_cache: None,
+            solvers: &[],
         })
         .await
         .expect("auth-gate path must not return Err")

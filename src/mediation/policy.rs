@@ -132,7 +132,7 @@ pub async fn initial_classification(
             // identifiers (URLs, IP addresses, internal host names)
             // never leak into `mediation_events`. The full message
             // still goes to `warn!` below for in-process logs.
-            let now = current_ts_secs();
+            let now = current_ts_secs()?;
             let payload = serde_json::json!({
                 "provider": provider_name,
                 "model": model_name,
@@ -356,7 +356,7 @@ async fn persist_classification_audit(
     model_name: &str,
     classification: &ClassificationResponse,
 ) -> Result<String> {
-    let now = current_ts_secs();
+    let now = current_ts_secs()?;
     let mut guard = conn.lock().await;
     let tx = guard.transaction()?;
     let rationale_id = db::rationales::insert_rationale(
@@ -399,16 +399,13 @@ fn reasoning_error_category(err: &crate::models::reasoning::ReasoningError) -> &
     }
 }
 
-/// Fail loudly on a clock-before-UNIX-EPOCH error. A silent `0`
-/// would corrupt rationale / event ordering; the audit store relies
-/// on `generated_at` / `occurred_at` being a real Unix timestamp.
-fn current_ts_secs() -> i64 {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system clock is before UNIX_EPOCH; refusing to persist audit rows with ts = 0")
-        .as_secs() as i64
-}
+// Clock access is delegated to `super::current_ts_secs()` so this
+// module, `session.rs`, `summarizer.rs`, and the engine in `mod.rs`
+// share one implementation of the "system clock is before UNIX_EPOCH"
+// guard. Failure surfaces as `Error::ChatTransport` so the engine
+// loop keeps running — a pre-epoch clock is operator-facing, not a
+// reason to panic the mediation tick.
+use super::current_ts_secs;
 
 #[cfg(test)]
 mod tests {

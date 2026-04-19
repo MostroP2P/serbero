@@ -258,7 +258,11 @@ async fn party_unresponsive_timeout_triggers_escalation() {
         ..MediationConfig::default()
     };
 
-    serbero::mediation::check_party_unresponsive_timeout(&conn, &bundle, &cfg)
+    // Relay-less client; empty solvers slice — notify_solvers_escalation
+    // short-circuits without any relay I/O in this test.
+    let client = nostr_sdk::Client::new(nostr_sdk::Keys::generate());
+
+    serbero::mediation::check_party_unresponsive_timeout(&conn, &client, &[], &bundle, &cfg)
         .await
         .expect("timeout sweep must not return Err");
 
@@ -276,7 +280,7 @@ async fn party_unresponsive_timeout_triggers_escalation() {
     // Running the sweep again must be a no-op on the same overdue
     // session — it is already at `escalation_recommended` and the
     // sweep skips terminal / escalated rows, so no duplicate events.
-    serbero::mediation::check_party_unresponsive_timeout(&conn, &bundle, &cfg)
+    serbero::mediation::check_party_unresponsive_timeout(&conn, &client, &[], &bundle, &cfg)
         .await
         .unwrap();
     assert_eq!(
@@ -418,16 +422,30 @@ async fn authorization_lost_mid_session_triggers_escalation() {
     // `session::handle_authorization_lost`, which is the same code
     // path invoked from `open_session` when `draft_and_send_initial_message`
     // returns `Error::AuthorizationLost`. A regression where the
-    // handler forgets either the `signal_auth_lost` or the
-    // `escalation::recommend` call surfaces here as a single
-    // session-driven failure.
+    // handler forgets any of signal_auth_lost / escalation::recommend /
+    // notify_solvers_escalation surfaces here as one failure.
+    use nostr_sdk::{Client, Keys};
     let conn = seed_session("dispute-al", "sess-al", 100).await;
     let bundle = test_bundle();
     let handle = AuthRetryHandle::new_authorized();
     assert!(handle.is_authorized(), "precondition: handle authorized");
 
-    session::handle_authorization_lost(&conn, "sess-al", &handle, &bundle, "mostro revoked us")
-        .await;
+    // Minimal relay-less client — `notify_solvers_escalation` runs
+    // with an empty `solvers` slice so it short-circuits without
+    // attempting any relay I/O.
+    let client = Client::new(Keys::generate());
+
+    session::handle_authorization_lost(
+        &conn,
+        &client,
+        &[],
+        "dispute-al",
+        "sess-al",
+        &handle,
+        &bundle,
+        "mostro revoked us",
+    )
+    .await;
 
     // (1) Escalation events landed with the matching trigger.
     assert_eq!(
