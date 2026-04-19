@@ -22,6 +22,29 @@
 //!   for the session's lifetime). Restart-resume of live sessions
 //!   is US2 scope and has an open verification point.
 //!
+//! # Key-lifecycle discipline
+//!
+//! `DisputeChatMaterial::{buyer,seller}_shared_keys` hold the ECDH
+//! secrets required to decrypt inbound gift-wraps and (for the
+//! outbound path) to key NIP-44 encryption toward the per-party
+//! shared pubkey. Per `data-model.md` §Key lifecycle, those secrets
+//! are **in-process only** for the duration of the session — the DB
+//! persists only the derived `*_shared_pubkey` on `mediation_sessions`.
+//! That choice is deliberate: the secrets are sensitive enough that
+//! writing them to disk would widen the compromise blast radius of
+//! a leaked SQLite file, and they can always be re-derived by
+//! re-running the take-flow against a Mostro instance that still
+//! has the dispute.
+//!
+//! [`load_chat_keys_for_session`] is the hook point for a future
+//! restart-resume extension that either (a) re-runs the take-flow
+//! at engine startup for every live session or (b) persists the
+//! secret under a key-wrapping scheme. Until one of those lands,
+//! the function returns an error and the T052 startup path handles
+//! it gracefully — the session stays alive and the ingest tick
+//! skips it until the process that originally derived the secrets
+//! is still running.
+//!
 //! Verification discipline:
 //! - Every non-trivial step has a code comment naming the Mostrix
 //!   file + function it was ported from.
@@ -273,6 +296,39 @@ fn material_from_solver_info(
     })
 }
 
+/// Attempt to re-derive the in-memory chat material for an existing
+/// session on engine startup (T053 / restart-resume hook).
+///
+/// # Limitations (US2)
+///
+/// The ECDH shared-key secret is **not** persisted — only the derived
+/// pubkeys appear on `mediation_sessions` (see the module header's
+/// key-lifecycle paragraph and `data-model.md`). Re-deriving therefore
+/// requires either (a) re-running the take-flow against the relay,
+/// which is network I/O not available synchronously at engine startup,
+/// or (b) a key-wrapping scheme that stores the secret at rest.
+/// Neither path ships in US2, so this function always returns
+/// `Err(Error::ChatTransport(…))` with a message that names the
+/// limitation. The restart-resume path in
+/// `mediation::run_engine` handles that `Err` gracefully — the
+/// session row stays alive and the ingest tick skips it until the
+/// process that originally derived the secrets is still running.
+///
+/// Kept as a documented hook so the US2+ extension can be slotted
+/// in without touching every call site — the engine already treats
+/// the error path as "skip this session for now" and the success
+/// path as "populate the in-memory cache and proceed with ingest".
+pub fn load_chat_keys_for_session(
+    _buyer_shared_pubkey: &str,
+    _seller_shared_pubkey: &str,
+) -> Result<DisputeChatMaterial> {
+    Err(Error::ChatTransport(
+        "shared-key secret not persisted; restart-resume requires relay re-fetch \
+         (deferred to US2+)"
+            .into(),
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -365,5 +421,24 @@ mod tests {
             matches!(err, Error::ChatTransport(_)),
             "expected ChatTransport, got {err}"
         );
+    }
+
+    #[test]
+    fn load_chat_keys_for_session_documents_the_us2_limitation() {
+        // T053 stub: always returns `Err` in US2. The T052 startup
+        // pass relies on this — pinning it here keeps a future slice
+        // that accidentally implements half of the restart-resume
+        // path (and flips this to `Ok` without updating callers)
+        // from silently changing engine behavior.
+        let err = load_chat_keys_for_session("buyer-shared-pk", "seller-shared-pk").unwrap_err();
+        match err {
+            Error::ChatTransport(msg) => {
+                assert!(
+                    msg.contains("not persisted"),
+                    "error message should name the key-lifecycle limitation: {msg}"
+                );
+            }
+            other => panic!("expected ChatTransport, got {other}"),
+        }
     }
 }
