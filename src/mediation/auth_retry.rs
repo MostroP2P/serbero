@@ -122,6 +122,37 @@ impl AuthRetryHandle {
         matches!(self.current_state(), AuthState::Authorized)
     }
 
+    /// T071 — signal that authorization was lost mid-session so
+    /// callers reading [`Self::is_authorized`] start seeing `false`
+    /// immediately. Intended for the outbound-send failure path in
+    /// `mediation::mod.rs`: when an outbound wrap surfaces an
+    /// [`Error::AuthorizationLost`], the caller also escalates the
+    /// session via `escalation::recommend(..., AuthorizationLost, ...)`.
+    ///
+    /// Semantics:
+    /// - `Authorized` → `Unauthorized`. This is the mid-session loss
+    ///   case the task table names `PendingRetry` in spec text.
+    /// - `Unauthorized` / `Terminated` → no-op. A retry loop may
+    ///   already be running (Unauthorized) or the handle may have
+    ///   reached its terminal cap (Terminated); in either case a
+    ///   fresh loss signal changes nothing observable.
+    ///
+    /// Does NOT spawn a retry loop here — the original
+    /// `ensure_authorized_or_enter_loop` call on daemon startup is
+    /// the only place that runs. Re-arming a new loop from the
+    /// outbound path would violate the one-writer invariant on the
+    /// state mutex (the spawned loop is the sole writer after the
+    /// initial check). Operators can restart the daemon if they want
+    /// a fresh retry cycle; session-level escalation is the
+    /// immediate response and Phase 1/2 (which does not depend on
+    /// this handle) continues unaffected.
+    pub fn signal_auth_lost(&self) {
+        let mut guard = self.state.lock().expect("auth-retry state mutex poisoned");
+        if matches!(*guard, AuthState::Authorized) {
+            *guard = AuthState::Unauthorized;
+        }
+    }
+
     fn set_state(&self, new_state: AuthState) {
         let mut guard = self.state.lock().expect("auth-retry state mutex poisoned");
         *guard = new_state;

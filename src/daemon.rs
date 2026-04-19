@@ -207,6 +207,7 @@ where
         let engine_model_name = config.reasoning.model.clone();
         let engine_auth_handle = auth_handle.clone();
         let engine_solvers = config.solvers.clone();
+        let engine_mediation_cfg = config.mediation.clone();
         Some(tokio::spawn(async move {
             crate::mediation::run_engine(
                 engine_conn,
@@ -219,6 +220,7 @@ where
                 engine_model_name,
                 engine_auth_handle,
                 engine_solvers,
+                engine_mediation_cfg,
             )
             .await
         }))

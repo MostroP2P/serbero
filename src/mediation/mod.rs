@@ -47,7 +47,7 @@ use crate::models::mediation::{
     ClassificationLabel, EscalationTrigger, MediationSessionState, TranscriptParty,
 };
 use crate::models::reasoning::TranscriptEntry;
-use crate::models::{NotificationStatus, NotificationType, SolverConfig};
+use crate::models::{MediationConfig, NotificationStatus, NotificationType, SolverConfig};
 use crate::nostr::notifier::send_gift_wrap_notification;
 use crate::prompts::PromptBundle;
 use crate::reasoning::ReasoningProvider;
@@ -327,6 +327,7 @@ pub async fn run_engine(
     model_name: String,
     auth_handle: auth_retry::AuthRetryHandle,
     solvers: Vec<SolverConfig>,
+    mediation_cfg: MediationConfig,
 ) {
     info!(
         tick_seconds = ENGINE_TICK_INTERVAL.as_secs(),
@@ -386,7 +387,15 @@ pub async fn run_engine(
         // so `fetch_inbound` for that freshly-opened session is a
         // cheap no-op — but the session is not hidden for an extra
         // 30 s cycle.
-        if let Err(e) = run_ingest_tick(&conn, &client, &session_key_cache).await {
+        if let Err(e) = run_ingest_tick(
+            &conn,
+            &client,
+            &session_key_cache,
+            &prompt_bundle,
+            &mediation_cfg,
+        )
+        .await
+        {
             error!(error = %e, "mediation ingest tick failed");
         }
     }
@@ -674,6 +683,33 @@ async fn run_engine_tick(
                     dispute_id = %dispute_id,
                     "engine tick: dispute deferred (non-AskClarification suggestion)"
                 );
+            }
+            Ok(session::OpenOutcome::EscalatedOnOpen {
+                session_id,
+                trigger,
+            }) => {
+                warn!(
+                    dispute_id = %dispute_id,
+                    session_id = %session_id,
+                    trigger = %trigger,
+                    "session escalated on open"
+                );
+                if let Err(e) = escalation::recommend(escalation::RecommendParams {
+                    conn,
+                    session_id: &session_id,
+                    trigger,
+                    evidence_refs: Vec::new(),
+                    prompt_bundle_id: &prompt_bundle.id,
+                    policy_hash: &prompt_bundle.policy_hash,
+                })
+                .await
+                {
+                    error!(
+                        session_id = %session_id,
+                        error = %e,
+                        "engine: escalation::recommend failed for EscalatedOnOpen"
+                    );
+                }
             }
             Ok(session::OpenOutcome::RefusedReasoningUnavailable { reason }) => {
                 warn!(
@@ -1138,6 +1174,8 @@ async fn run_ingest_tick(
     conn: &Arc<AsyncMutex<rusqlite::Connection>>,
     client: &Client,
     session_key_cache: &SessionKeyCache,
+    prompt_bundle: &Arc<PromptBundle>,
+    mediation_cfg: &MediationConfig,
 ) -> Result<()> {
     debug!("ingest tick starting");
 
@@ -1301,6 +1339,137 @@ async fn run_ingest_tick(
         sessions_checked,
         envelopes_fetched, rows_ingested, rows_duplicate, rows_stale, "ingest tick finished"
     );
+
+    // T069 — party-response timeout sweep. Runs AFTER the ingest
+    // JoinSet drains so last-seen timestamps reflect any fresh
+    // envelope written this tick.
+    if let Err(e) = check_party_unresponsive_timeout(conn, prompt_bundle, mediation_cfg).await {
+        warn!(error = %e, "ingest tick: party-unresponsive timeout sweep failed");
+    }
+
+    Ok(())
+}
+
+/// T069 — for every live mediation session, check whether the
+/// per-party response deadline has been exceeded. If so, escalate via
+/// [`escalation::recommend`] with [`EscalationTrigger::PartyUnresponsive`].
+///
+/// Deadline rule (from spec §FR-111):
+/// ```text
+/// reference_ts = max(buyer_last_seen_inner_ts,
+///                    seller_last_seen_inner_ts,
+///                    started_at)
+/// deadline     = reference_ts + party_response_timeout_seconds
+/// ```
+/// If neither party has ever responded (both `last_seen` are NULL)
+/// `started_at` is the reference. Sessions already in a terminal
+/// state or at `escalation_recommended` are skipped — the row does
+/// not appear in `list_live_sessions` so the SELECT below naturally
+/// excludes them, but the guard is belt-and-braces.
+async fn check_party_unresponsive_timeout(
+    conn: &Arc<AsyncMutex<rusqlite::Connection>>,
+    prompt_bundle: &Arc<PromptBundle>,
+    mediation_cfg: &MediationConfig,
+) -> Result<()> {
+    let now = current_ts_secs()?;
+    let timeout = mediation_cfg.party_response_timeout_seconds as i64;
+
+    #[derive(Debug)]
+    struct Candidate {
+        session_id: String,
+        state: MediationSessionState,
+        started_at: i64,
+        buyer_last: Option<i64>,
+        seller_last: Option<i64>,
+    }
+
+    let candidates: Vec<Candidate> = {
+        use std::str::FromStr;
+        let guard = conn.lock().await;
+        let mut stmt = guard.prepare(
+            "SELECT session_id, state, started_at,
+                    buyer_last_seen_inner_ts, seller_last_seen_inner_ts
+             FROM mediation_sessions
+             WHERE state NOT IN (
+                 'closed',
+                 'summary_delivered',
+                 'escalation_recommended',
+                 'superseded_by_human'
+             )",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, i64>(2)?,
+                r.get::<_, Option<i64>>(3)?,
+                r.get::<_, Option<i64>>(4)?,
+            ))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (session_id, state_s, started_at, buyer_last, seller_last) = row?;
+            let state = match MediationSessionState::from_str(&state_s) {
+                Ok(s) => s,
+                Err(e) => {
+                    warn!(
+                        session_id = %session_id,
+                        state = %state_s,
+                        error = %e,
+                        "timeout sweep: skipping session with unparseable state"
+                    );
+                    continue;
+                }
+            };
+            out.push(Candidate {
+                session_id,
+                state,
+                started_at,
+                buyer_last,
+                seller_last,
+            });
+        }
+        out
+    };
+
+    for c in candidates {
+        if c.state.is_terminal() || c.state == MediationSessionState::EscalationRecommended {
+            continue;
+        }
+        let reference = [Some(c.started_at), c.buyer_last, c.seller_last]
+            .into_iter()
+            .flatten()
+            .max()
+            .unwrap_or(c.started_at);
+        let deadline = reference.saturating_add(timeout);
+        if now <= deadline {
+            continue;
+        }
+        warn!(
+            session_id = %c.session_id,
+            reference_ts = reference,
+            deadline,
+            now,
+            "party_unresponsive_escalation"
+        );
+        if let Err(e) = escalation::recommend(escalation::RecommendParams {
+            conn,
+            session_id: &c.session_id,
+            trigger: EscalationTrigger::PartyUnresponsive,
+            evidence_refs: Vec::new(),
+            prompt_bundle_id: &prompt_bundle.id,
+            policy_hash: &prompt_bundle.policy_hash,
+        })
+        .await
+        {
+            error!(
+                session_id = %c.session_id,
+                error = %e,
+                "timeout sweep: escalation::recommend failed"
+            );
+        }
+    }
+
     Ok(())
 }
 
