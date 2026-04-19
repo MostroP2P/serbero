@@ -271,37 +271,6 @@ async fn run_retry_loop<C, Fut>(
         cumulative = cumulative.saturating_add(current_delay);
         attempt += 1;
 
-        // Termination check runs BEFORE the next authorization call
-        // so we never exceed the documented bounds by one round-trip.
-        if attempt > config.max_attempts || cumulative >= config.max_total {
-            {
-                let mut guard = state.lock().expect("auth-retry state mutex poisoned");
-                *guard = AuthState::Terminated;
-            }
-            let payload = json!({
-                "attempt": attempt,
-                "cumulative_secs": cumulative.as_secs(),
-            })
-            .to_string();
-            let now = current_ts_secs();
-            if let Err(db_err) = record_auth_event(
-                &conn,
-                MediationEventKind::AuthRetryTerminated,
-                &payload,
-                now,
-            )
-            .await
-            {
-                warn!(error = %db_err, "failed to record auth_retry_terminated");
-            }
-            error!(
-                attempt = attempt,
-                cumulative_secs = cumulative.as_secs(),
-                "solver auth retry loop terminated without recovery"
-            );
-            return;
-        }
-
         match checker().await {
             Ok(()) => {
                 {
@@ -330,6 +299,42 @@ async fn run_retry_loop<C, Fut>(
                 }
                 warn!(attempt = attempt, error = %e, "solver auth retry attempt failed");
             }
+        }
+
+        // Termination check runs AFTER the attempt + its audit row,
+        // so `attempt` / `cumulative_secs` in the terminated payload
+        // reflect what actually ran (no +1 drift) and we never sleep
+        // one extra round-trip past the documented bounds. The
+        // cumulative branch also gets to consume its full budget —
+        // the last attempt inside the cumulative window always
+        // runs, which is the last realistic chance to recover.
+        if attempt >= config.max_attempts || cumulative >= config.max_total {
+            {
+                let mut guard = state.lock().expect("auth-retry state mutex poisoned");
+                *guard = AuthState::Terminated;
+            }
+            let payload = json!({
+                "attempt": attempt,
+                "cumulative_secs": cumulative.as_secs(),
+            })
+            .to_string();
+            let now = current_ts_secs();
+            if let Err(db_err) = record_auth_event(
+                &conn,
+                MediationEventKind::AuthRetryTerminated,
+                &payload,
+                now,
+            )
+            .await
+            {
+                warn!(error = %db_err, "failed to record auth_retry_terminated");
+            }
+            error!(
+                attempt = attempt,
+                cumulative_secs = cumulative.as_secs(),
+                "solver auth retry loop terminated without recovery"
+            );
+            return;
         }
 
         current_delay = next_delay(current_delay, config.max_interval);
@@ -475,8 +480,8 @@ mod tests {
         let conn = fresh_conn();
         let checker =
             Arc::new(|| async { Err::<(), _>(AuthCheckError("mock always fails".into())) });
-        let handle =
-            ensure_authorized_or_enter_loop_inner(Arc::clone(&conn), checker, tight_config()).await;
+        let cfg = tight_config();
+        let handle = ensure_authorized_or_enter_loop_inner(Arc::clone(&conn), checker, cfg).await;
         assert_eq!(handle.current_state(), AuthState::Unauthorized);
         wait_until(&handle, AuthState::Terminated, 40).await;
 
@@ -487,6 +492,31 @@ mod tests {
         );
         let recovered = count_events(&conn, MediationEventKind::AuthRetryRecovered).await;
         assert_eq!(recovered, 0);
+
+        // Pin the post-fix semantics: exactly `max_attempts`
+        // `auth_retry_attempt` rows (one per real checker call) and
+        // the terminated payload's `attempt` matches the final
+        // attempt that ran — no +1 drift from an extra sleep.
+        let attempts = count_events(&conn, MediationEventKind::AuthRetryAttempt).await;
+        assert_eq!(
+            attempts as u32, cfg.max_attempts,
+            "expected exactly max_attempts auth_retry_attempt rows"
+        );
+        let terminated_attempt: i64 = {
+            let guard = conn.lock().await;
+            guard
+                .query_row(
+                    "SELECT json_extract(payload_json, '$.attempt')
+                     FROM mediation_events WHERE kind = 'auth_retry_terminated'",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap()
+        };
+        assert_eq!(
+            terminated_attempt as u32, cfg.max_attempts,
+            "terminated payload must report the final attempt, not max+1"
+        );
     }
 
     #[test]
