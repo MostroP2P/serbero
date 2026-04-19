@@ -273,4 +273,86 @@ async fn cooperative_summary_closes_session_and_notifies_assigned_solver() {
         evt_payload.contains(&rationale_id),
         "event payload must reference the rationale id: {evt_payload}"
     );
+
+    // (e) SC-103 audit consistency: every audit row carries non-empty
+    //     `policy_hash` + `prompt_bundle_id`, and they all match the
+    //     bundle pinned on `mediation_sessions` at session open.
+    let (sess_bundle, sess_hash): (String, String) = {
+        let c = conn.lock().await;
+        c.query_row(
+            "SELECT prompt_bundle_id, policy_hash
+             FROM mediation_sessions WHERE session_id = ?1",
+            rusqlite::params![session_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap()
+    };
+    assert!(
+        !sess_hash.is_empty(),
+        "SC-103: policy_hash must be non-empty"
+    );
+    assert!(
+        !sess_bundle.is_empty(),
+        "SC-103: prompt_bundle_id must be non-empty"
+    );
+    assert_eq!(sess_bundle, bundle.id);
+    assert_eq!(sess_hash, bundle.policy_hash);
+
+    let (sum_bundle, sum_hash): (String, String) = {
+        let c = conn.lock().await;
+        c.query_row(
+            "SELECT prompt_bundle_id, policy_hash
+             FROM mediation_summaries WHERE session_id = ?1",
+            rusqlite::params![session_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap()
+    };
+    assert_eq!(
+        sum_bundle, sess_bundle,
+        "SC-103: mediation_summaries.prompt_bundle_id must match session"
+    );
+    assert_eq!(
+        sum_hash, sess_hash,
+        "SC-103: mediation_summaries.policy_hash must match session"
+    );
+
+    let (rat_bundle, rat_hash): (String, String) = {
+        let c = conn.lock().await;
+        c.query_row(
+            "SELECT prompt_bundle_id, policy_hash
+             FROM reasoning_rationales WHERE rationale_id = ?1",
+            rusqlite::params![rationale_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap()
+    };
+    assert_eq!(
+        rat_bundle, sess_bundle,
+        "SC-103: reasoning_rationales.prompt_bundle_id must match session"
+    );
+    assert_eq!(
+        rat_hash, sess_hash,
+        "SC-103: reasoning_rationales.policy_hash must match session"
+    );
+
+    let (evt_bundle, evt_hash): (String, String) = {
+        let c = conn.lock().await;
+        c.query_row(
+            "SELECT prompt_bundle_id, policy_hash
+             FROM mediation_events
+             WHERE session_id = ?1 AND kind = 'summary_generated'",
+            rusqlite::params![session_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap()
+    };
+    assert_eq!(
+        evt_bundle, sess_bundle,
+        "SC-103: mediation_events.prompt_bundle_id must match session"
+    );
+    assert_eq!(
+        evt_hash, sess_hash,
+        "SC-103: mediation_events.policy_hash must match session"
+    );
 }

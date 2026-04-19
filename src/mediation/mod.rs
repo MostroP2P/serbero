@@ -165,6 +165,11 @@ pub async fn draft_and_send_initial_message(
     let buyer_content = format!("Buyer: {}", clarification_text);
     let seller_content = format!("Seller: {}", clarification_text);
 
+    // SC-107: addresses shared pubkey, not primary — `buyer_shared_keys`
+    // / `seller_shared_keys` are the ECDH-derived per-trade keys
+    // surfaced via the Mostro key-material adapter; the parties'
+    // primary pubkeys never appear as recipients on outbound mediation
+    // wraps.
     let buyer_wrap = outbound::build_wrap(
         serbero_keys,
         &buyer_shared_keys.public_key(),
@@ -949,6 +954,10 @@ pub async fn deliver_summary(
     );
     let mut any_sent = false;
     for pk_hex in &recipient_list {
+        // SC-107: addresses solver pubkey, not party pubkey — the
+        // recipients here come from the configured `[solvers]` list (or
+        // the `disputes.assigned_solver` row) and are operator pubkeys,
+        // never party primary or party shared pubkeys.
         let sent_at = current_ts_secs()?;
         let (status, error_message) = match PublicKey::parse(pk_hex) {
             Ok(pk) => match send_gift_wrap_notification(client, &pk, &dm_body).await {
@@ -1113,6 +1122,10 @@ pub(crate) async fn notify_solvers_escalation(
          trigger: {trigger}. Needs human judgment."
     );
 
+    // SC-107: addresses solver pubkey, not party pubkey — recipients
+    // resolve from `[solvers]` config (broadcast) or from
+    // `disputes.assigned_solver` (targeted); party primary / shared
+    // pubkeys are never used as escalation recipients.
     for pk_hex in &recipient_list {
         // Surface the clock-before-UNIX-EPOCH guard instead of silently
         // recording `sent_at = 0`. We still best-effort the fallback

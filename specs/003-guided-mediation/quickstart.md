@@ -93,15 +93,23 @@ SERBERO_REASONING_API_KEY="<key>" ./target/release/serbero
 At startup you will see (among the Phase 1/2 log lines):
 
 ```text
-loaded config                    mediation=enabled reasoning=enabled provider=openai model=gpt-5 ...
-prompt bundle loaded             policy_hash=<hex> prompt_bundle_id=phase3-default
-reasoning provider health check  provider=openai ok=true
-solver auth check                result=authorized
-Phase 3 mediation engine ready
+loaded config                    mostro_pubkey=<hex> db_path=serbero.db relay_count=N solver_count=M ...
+Phase 3 prompt bundle loaded     prompt_bundle_id=phase3-default policy_hash=<hex>
+reasoning provider health check ok
+Phase 3 mediation is fully configured; engine task will be spawned    prompt_bundle_id=phase3-default policy_hash=<hex>
 ```
 
-If solver auth fails, Phase 3 refuses to open sessions and the
-background revalidation loop begins. Phase 1/2 continues unaffected.
+If reasoning health-check fails, Phase 3 stays disabled for the run
+(SC-105) and Phase 1/2 detection + notification continue unaffected.
+You will see instead:
+
+```text
+Phase 3 reasoning health check failed; mediation disabled for this run (Phase 1/2 detection and notification continue unaffected)
+```
+
+If solver auth fails on the initial check, Phase 3 refuses to open
+sessions and the background revalidation loop begins (warns logged
+per attempt). Phase 1/2 continues unaffected.
 
 ## Verify mediation end-to-end (US1 + US2 + US3)
 
