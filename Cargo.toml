@@ -33,6 +33,10 @@ uuid = { version = "1", features = ["v4"] }
 tempfile = "3"
 nostr-relay-builder = "0.44.0"
 httpmock = "0.7"
+# `test-util` enables `tokio::time::pause` / `advance` for auth-retry
+# loop tests; feature is not in the `full` set so we opt into it on
+# the dev side only.
+tokio = { version = "1", features = ["full", "test-util"] }
 
 [profile.release]
 lto = "thin"

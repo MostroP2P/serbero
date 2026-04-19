@@ -28,6 +28,7 @@ use uuid::Uuid;
 
 use serbero::db;
 use serbero::mediation;
+use serbero::mediation::auth_retry::AuthRetryHandle;
 use serbero::models::dispute::InitiatorRole;
 use serbero::models::{SolverPermission, TimeoutsConfig};
 use serbero::prompts::{self, PromptBundle};
@@ -113,6 +114,7 @@ async fn refuses_session_open_when_reasoning_health_fails_and_phase12_still_noti
     let conn_raw = db::open_connection(&harness.db_path).expect("open mediation-side conn");
     let mediation_conn = Arc::new(AsyncMutex::new(conn_raw));
 
+    let auth_handle = AuthRetryHandle::new_authorized();
     let outcome = mediation::open_dispute_session(
         &mediation_conn,
         &serbero_client,
@@ -125,6 +127,7 @@ async fn refuses_session_open_when_reasoning_health_fails_and_phase12_still_noti
         dispute_uuid,
         "mock-provider",
         "mock-model",
+        &auth_handle,
     )
     .await
     .expect("open_dispute_session must not return an Err for the health-check gate path");

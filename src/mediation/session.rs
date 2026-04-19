@@ -9,9 +9,13 @@
 //! between commit and publish leaves a resumable state rather than
 //! relay events with no DB trace:
 //!
-//! 0. Gate: is the reasoning provider reachable? (`health_check`)
-//!    If not, refuse deterministically — no relay I/O, no DB row
-//!    (FR-102 / SC-105).
+//! 0a. Gate: is Serbero currently authorized as a Mostro solver?
+//!     (T043 / SC-105). Read-only check on the [`auth_retry`]
+//!     handle; `Unauthorized` / `Terminated` short-circuit with a
+//!     refusal variant, no DB row, no relay I/O.
+//! 0b. Gate: is the reasoning provider reachable? (`health_check`)
+//!     If not, refuse deterministically — no relay I/O, no DB row
+//!     (FR-102 / SC-105).
 //! 1. Gate: is another session already open for this dispute?
 //! 2. Take-dispute exchange via `chat::dispute_chat_flow::run_take_flow`.
 //! 3. Insert the `mediation_sessions` row + `session_opened` audit
@@ -71,6 +75,15 @@ pub enum OpenOutcome {
     /// for operator-facing logs; no rows are written to the
     /// mediation tables and no chat events are emitted.
     RefusedReasoningUnavailable { reason: String },
+    /// Serbero's solver authorization is being revalidated (the
+    /// bounded retry loop from `auth_retry` is running). Phase 1/2
+    /// is unaffected (SC-105) — this arm only refuses the Phase 3
+    /// mediation path.
+    RefusedAuthPending { reason: String },
+    /// The auth-retry loop terminated without recovering
+    /// authorization. Terminal for this daemon run; Phase 1/2
+    /// continues normally (SC-105).
+    RefusedAuthTerminated { reason: String },
 }
 
 /// Parameters for [`open_session`]. Grouped to keep the signature
@@ -102,17 +115,45 @@ pub struct OpenSessionParams<'a> {
     /// Model identifier (e.g. `"gpt-4o-mini"`). Same provenance
     /// rationale as `provider_name`.
     pub model_name: &'a str,
+    /// Read-only handle to the auth-retry state machine. The gate
+    /// in step (0a) reads `current_state()` and refuses session
+    /// opens while `Unauthorized` or `Terminated`. Phase 1/2
+    /// detection and solver notification are NEVER affected by the
+    /// auth state (SC-105).
+    pub auth_handle: &'a super::auth_retry::AuthRetryHandle,
 }
 
 #[instrument(skip_all, fields(dispute_id = %params.dispute_id))]
 pub async fn open_session(params: OpenSessionParams<'_>) -> Result<OpenOutcome> {
-    // (0) Fast-path reasoning-provider reachability gate (T044 /
-    //     FR-102 / SC-105). A cheap `health_check` call runs *before*
-    //     any relay I/O or DB work so an unreachable provider never
-    //     causes the mediation path to publish chat events or write
-    //     `mediation_sessions` rows. Phase 1/2 detection and solver
-    //     notification continue regardless — `open_session` simply
-    //     returns without side effects.
+    // (0a) Auth gate (T043 / SC-105). Serbero must be authorized as
+    //      a Mostro solver before opening any mediation session.
+    //      This is a read-only check on in-memory state — no DB
+    //      writes, no relay I/O. Phase 1/2 detection and solver
+    //      notification are NEVER affected: the early return here
+    //      touches no tables, publishes no events, and never
+    //      reaches `check_authorization` (which is US3's job; the
+    //      retry task owns that call site).
+    match params.auth_handle.current_state() {
+        super::auth_retry::AuthState::Authorized => {}
+        super::auth_retry::AuthState::Unauthorized => {
+            let reason = "solver authorization pending (retry loop running)".to_string();
+            warn!(reason = %reason, "refusing to open mediation session: auth pending");
+            return Ok(OpenOutcome::RefusedAuthPending { reason });
+        }
+        super::auth_retry::AuthState::Terminated => {
+            let reason = "solver authorization terminated without recovery".to_string();
+            warn!(reason = %reason, "refusing to open mediation session: auth terminated");
+            return Ok(OpenOutcome::RefusedAuthTerminated { reason });
+        }
+    }
+
+    // (0b) Fast-path reasoning-provider reachability gate (T044 /
+    //      FR-102 / SC-105). A cheap `health_check` call runs *before*
+    //      any relay I/O or DB work so an unreachable provider never
+    //      causes the mediation path to publish chat events or write
+    //      `mediation_sessions` rows. Phase 1/2 detection and solver
+    //      notification continue regardless — `open_session` simply
+    //      returns without side effects.
     if let Err(e) = params.reasoning.health_check().await {
         warn!(
             error = %e,
@@ -442,4 +483,157 @@ fn current_ts_secs() -> Result<i64> {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .map_err(|e| Error::ChatTransport(format!("system clock is before UNIX_EPOCH: {e}")))
+}
+
+#[cfg(test)]
+mod tests {
+    //! Auth-gate coverage for [`open_session`] (T043).
+    //!
+    //! These tests pin that `RefusedAuthPending` and
+    //! `RefusedAuthTerminated` short-circuit **before** any DB
+    //! write or relay I/O. All other fields of `OpenSessionParams`
+    //! are dummies because the gate returns on the first line; any
+    //! regression that lets execution past the gate would either
+    //! panic on the mock reasoning provider or return a distinct
+    //! error, which is itself detectable.
+    use super::*;
+    use crate::db::migrations::run_migrations;
+    use crate::db::open_in_memory;
+    use crate::mediation::auth_retry::{AuthRetryHandle, AuthState};
+    use crate::models::reasoning::{
+        ClassificationRequest, ClassificationResponse, ReasoningError, SummaryRequest,
+        SummaryResponse,
+    };
+    use async_trait::async_trait;
+
+    /// Reasoning stub that panics on use — guarantees the gate
+    /// returned before the reasoning path was ever reached.
+    struct PanicReasoning;
+
+    #[async_trait]
+    impl ReasoningProvider for PanicReasoning {
+        async fn classify(
+            &self,
+            _request: ClassificationRequest,
+        ) -> std::result::Result<ClassificationResponse, ReasoningError> {
+            panic!("auth gate must refuse before classify is called");
+        }
+        async fn summarize(
+            &self,
+            _request: SummaryRequest,
+        ) -> std::result::Result<SummaryResponse, ReasoningError> {
+            panic!("auth gate must refuse before summarize is called");
+        }
+        async fn health_check(&self) -> std::result::Result<(), ReasoningError> {
+            panic!("auth gate must refuse before health_check is called");
+        }
+    }
+
+    fn fresh_conn() -> Arc<AsyncMutex<rusqlite::Connection>> {
+        let mut conn = open_in_memory().unwrap();
+        run_migrations(&mut conn).unwrap();
+        // Seed a parent `disputes` row so any accidental foreign-key
+        // write past the gate would surface as a distinct error
+        // rather than a FK-constraint panic that could be mistaken
+        // for the gate working.
+        conn.execute(
+            "INSERT INTO disputes (
+                dispute_id, event_id, mostro_pubkey, initiator_role,
+                dispute_status, event_timestamp, detected_at, lifecycle_state
+             ) VALUES ('dispute-auth-gate', 'e1', 'm1', 'buyer',
+                       'initiated', 0, 0, 'notified')",
+            [],
+        )
+        .unwrap();
+        Arc::new(AsyncMutex::new(conn))
+    }
+
+    fn fresh_bundle() -> Arc<PromptBundle> {
+        Arc::new(PromptBundle {
+            id: "phase3-default".into(),
+            policy_hash: "test-policy-hash".into(),
+            system: "sys".into(),
+            classification: "cls".into(),
+            escalation: "esc".into(),
+            mediation_style: "style".into(),
+            message_templates: "tpl".into(),
+        })
+    }
+
+    async fn run_gate_with(
+        auth_handle: &AuthRetryHandle,
+        conn: &Arc<AsyncMutex<rusqlite::Connection>>,
+    ) -> OpenOutcome {
+        let serbero_keys = Keys::generate();
+        let mostro_pk = Keys::generate().public_key();
+        let client = Client::new(Keys::generate());
+        let reasoning = PanicReasoning;
+        let bundle = fresh_bundle();
+        open_session(OpenSessionParams {
+            conn,
+            client: &client,
+            serbero_keys: &serbero_keys,
+            mostro_pubkey: &mostro_pk,
+            reasoning: &reasoning,
+            prompt_bundle: &bundle,
+            dispute_id: "dispute-auth-gate",
+            initiator_role: InitiatorRole::Buyer,
+            dispute_uuid: Uuid::new_v4(),
+            take_flow_timeout: Duration::from_secs(1),
+            take_flow_poll_interval: Duration::from_millis(50),
+            provider_name: "mock-provider",
+            model_name: "mock-model",
+            auth_handle,
+        })
+        .await
+        .expect("auth-gate path must not return Err")
+    }
+
+    async fn mediation_row_counts(conn: &Arc<AsyncMutex<rusqlite::Connection>>) -> (i64, i64, i64) {
+        let guard = conn.lock().await;
+        let sessions: i64 = guard
+            .query_row("SELECT COUNT(*) FROM mediation_sessions", [], |r| r.get(0))
+            .unwrap();
+        let messages: i64 = guard
+            .query_row("SELECT COUNT(*) FROM mediation_messages", [], |r| r.get(0))
+            .unwrap();
+        let events: i64 = guard
+            .query_row("SELECT COUNT(*) FROM mediation_events", [], |r| r.get(0))
+            .unwrap();
+        (sessions, messages, events)
+    }
+
+    #[tokio::test]
+    async fn unauthorized_gate_refuses_with_pending_and_writes_nothing() {
+        let conn = fresh_conn();
+        let handle = AuthRetryHandle::with_state_for_testing(AuthState::Unauthorized);
+        let outcome = run_gate_with(&handle, &conn).await;
+        match outcome {
+            OpenOutcome::RefusedAuthPending { reason } => {
+                assert!(reason.contains("pending"), "unexpected reason: {reason}");
+            }
+            other => panic!("expected RefusedAuthPending, got {other:?}"),
+        }
+        let (sessions, messages, events) = mediation_row_counts(&conn).await;
+        assert_eq!(sessions, 0, "no mediation_sessions row may be written");
+        assert_eq!(messages, 0, "no mediation_messages row may be written");
+        assert_eq!(events, 0, "no mediation_events row may be written");
+    }
+
+    #[tokio::test]
+    async fn terminated_gate_refuses_with_terminated_and_writes_nothing() {
+        let conn = fresh_conn();
+        let handle = AuthRetryHandle::with_state_for_testing(AuthState::Terminated);
+        let outcome = run_gate_with(&handle, &conn).await;
+        match outcome {
+            OpenOutcome::RefusedAuthTerminated { reason } => {
+                assert!(reason.contains("terminated"), "unexpected reason: {reason}");
+            }
+            other => panic!("expected RefusedAuthTerminated, got {other:?}"),
+        }
+        let (sessions, messages, events) = mediation_row_counts(&conn).await;
+        assert_eq!(sessions, 0);
+        assert_eq!(messages, 0);
+        assert_eq!(events, 0);
+    }
 }
