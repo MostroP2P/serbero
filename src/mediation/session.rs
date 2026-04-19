@@ -35,10 +35,10 @@
 //!      [`OpenOutcome::ReadyForSummary`] so the engine can call
 //!      `deliver_summary` on this same tick (US3 / T060). No
 //!      outbound clarifying message is drafted on this path.
-//!    - `Escalate(_)` → transition the session to
-//!      `escalation_recommended` and return
-//!      [`OpenOutcome::DeferredToLaterPhase`]; US4 owns the
-//!      structured escalation handoff.
+//!    - `Escalate(trigger)` → return
+//!      [`OpenOutcome::EscalatedOnOpen`] carrying the trigger;
+//!      the engine caller invokes `escalation::recommend`, which
+//!      owns the atomic state flip + Phase 4 handoff audit rows.
 //!
 //! Every session open therefore goes through the same audit path
 //! the engine drives on subsequent ticks, so the
@@ -83,10 +83,22 @@ pub enum OpenOutcome {
         classification: crate::models::mediation::ClassificationLabel,
         confidence: f64,
     },
-    /// The reasoning provider returned an escalation / non-actionable
-    /// action on the opening call. The session row is flipped to
-    /// `escalation_recommended`; US4 will own the structured handoff.
-    DeferredToLaterPhase,
+    /// `open_session` ran `initial_classification` and the policy
+    /// layer returned `Escalate(trigger)`. The session row was
+    /// transitioned to `escalation_recommended` inside `open_session`,
+    /// but the per-trigger audit rows (the
+    /// `escalation_recommended` + `handoff_prepared` events) have
+    /// NOT been written yet — the engine caller must call
+    /// [`super::escalation::recommend`] with the carried `trigger`.
+    ///
+    /// The trigger is surfaced here (rather than swallowed inside
+    /// `open_session`) so the engine can emit a faithful
+    /// `handoff_prepared` payload: the caller knows exactly which
+    /// US4 trigger fired.
+    EscalatedOnOpen {
+        session_id: String,
+        trigger: crate::models::mediation::EscalationTrigger,
+    },
     /// The reasoning provider's `health_check` failed; we refuse
     /// to open a session and leave Phase 1/2 behavior untouched
     /// (SC-105). The `reason` is the provider-reported error text
@@ -150,6 +162,14 @@ pub struct OpenSessionParams<'a> {
     /// Tests / callers that do not run an ingest tick can pass
     /// `None`; the session-open path behaves identically otherwise.
     pub session_key_cache: Option<&'a SessionKeyCache>,
+    /// Configured solver pubkeys. Threaded in so the
+    /// authorization-lost branch (T071 / T072) can dispatch the
+    /// `MediationEscalationRecommended` gift-wrap DM to the
+    /// appropriate solver(s) after `escalation::recommend` commits.
+    /// Callers that do not require solver notification can pass
+    /// `&[]` — `router::resolve_recipients` returns an empty
+    /// broadcast and `notify_solvers_escalation` short-circuits.
+    pub solvers: &'a [crate::models::SolverConfig],
 }
 
 #[instrument(skip_all, fields(dispute_id = %params.dispute_id))]
@@ -278,7 +298,7 @@ pub async fn open_session(params: OpenSessionParams<'_>) -> Result<OpenOutcome> 
     // (5) Dispatch on the policy decision.
     match decision {
         PolicyDecision::AskClarification(text) => {
-            super::draft_and_send_initial_message(
+            if let Err(e) = super::draft_and_send_initial_message(
                 params.conn,
                 params.client,
                 params.serbero_keys,
@@ -288,7 +308,28 @@ pub async fn open_session(params: OpenSessionParams<'_>) -> Result<OpenOutcome> 
                 params.prompt_bundle,
                 &text,
             )
-            .await?;
+            .await
+            {
+                // T071: if the outbound publish surfaced an
+                // `AuthorizationLost` we MUST escalate the session
+                // with the matching trigger AND signal the
+                // auth-retry handle so it re-arms. Any other error
+                // bubbles up as before.
+                if let Error::AuthorizationLost(ref msg) = e {
+                    handle_authorization_lost(
+                        params.conn,
+                        params.client,
+                        params.solvers,
+                        params.dispute_id,
+                        &session_id,
+                        params.auth_handle,
+                        params.prompt_bundle,
+                        msg,
+                    )
+                    .await;
+                }
+                return Err(e);
+            }
             // Register the derived chat material with the engine's
             // in-memory cache so the ingest tick (T051) can decrypt
             // inbound gift-wraps on this session. The cache is a
@@ -348,40 +389,29 @@ pub async fn open_session(params: OpenSessionParams<'_>) -> Result<OpenOutcome> 
                 confidence,
             })
         }
-        PolicyDecision::Escalate(_) => {
-            // US4 territory: a non-cooperative classification on
-            // the opening call. Flip the session to
-            // `escalation_recommended` so the engine's eligibility
-            // query does not re-pick this dispute on the next tick.
-            // The per-trigger escalation audit rows land with US4's
-            // `escalation::recommend` path.
-            let escalation_now = current_ts_secs()?;
-            {
-                let guard = params.conn.lock().await;
-                // TODO(US4): if this UPDATE fails the session row is
-                // left at `awaiting_response` with no compensating
-                // write. The `list_eligible_disputes` query excludes
-                // awaiting_response sessions so the dispute is not
-                // re-picked by the next engine tick, but the audit
-                // log is silent about why. US4's escalation path
-                // (`escalation::recommend`) should own the retry /
-                // reconciliation of this transition alongside the
-                // `escalation_recommended` + `handoff_prepared`
-                // audit rows.
-                db::mediation::set_session_state(
-                    &guard,
-                    &session_id,
-                    crate::models::mediation::MediationSessionState::EscalationRecommended,
-                    escalation_now,
-                )?;
-            }
+        PolicyDecision::Escalate(trigger) => {
+            // US4 / T070: a non-cooperative classification on the
+            // opening call. We do NOT pre-flip the session to
+            // `escalation_recommended` here — `escalation::recommend`
+            // performs the state transition and writes both audit
+            // rows (`escalation_recommended` + `handoff_prepared`)
+            // inside a single transaction, so the state and audit
+            // trail cannot drift. If this function returned without
+            // its caller invoking `recommend`, the session would be
+            // left at `awaiting_response`, which `list_eligible_disputes`
+            // also excludes (its live-session NOT EXISTS clause
+            // covers every non-closed state) — so the dispute is
+            // not re-picked by the next engine tick either way.
             debug!(
                 session_id = %session_id,
-                ?decision,
+                trigger = %trigger,
                 "policy decision on opening call is Escalate; \
-                 session marked escalation_recommended for US4"
+                 engine will record handoff via escalation::recommend"
             );
-            Ok(OpenOutcome::DeferredToLaterPhase)
+            Ok(OpenOutcome::EscalatedOnOpen {
+                session_id,
+                trigger,
+            })
         }
     }
 }
@@ -523,6 +553,77 @@ async fn register_session_material(
     guard.insert(session_id.to_string(), material);
 }
 
+/// T071 / T072 / T074 — dispatch every mid-session
+/// authorization-loss action through one call:
+///
+/// 1. `tracing::error!` with the underlying error message so
+///    operator dashboards can see the loss immediately.
+/// 2. [`super::auth_retry::AuthRetryHandle::signal_auth_lost`] —
+///    flips the in-memory state so future `open_session` attempts
+///    refuse with `RefusedAuthPending` (SC-105 keeps Phase 1/2
+///    detection unaffected).
+/// 3. [`super::escalation::recommend`] with
+///    [`crate::models::mediation::EscalationTrigger::AuthorizationLost`]
+///    — flips the session to `escalation_recommended` and assembles
+///    the Phase 4 handoff package.
+/// 4. [`super::notify_solvers_escalation`] — delivers the
+///    `MediationEscalationRecommended` gift-wrap DM to the
+///    configured solver(s). Only runs if (3) succeeded.
+///
+/// Extracted from the inline outbound-failure handler in
+/// [`open_session`] so integration tests can exercise the "auth
+/// lost mid-session" scenario without simulating the full outbound
+/// pipeline, and so a regression that forgets any of (2)-(4)
+/// surfaces as a single-call test failure.
+#[allow(clippy::too_many_arguments)]
+pub async fn handle_authorization_lost(
+    conn: &Arc<AsyncMutex<rusqlite::Connection>>,
+    client: &Client,
+    solvers: &[crate::models::SolverConfig],
+    dispute_id: &str,
+    session_id: &str,
+    auth_handle: &super::auth_retry::AuthRetryHandle,
+    prompt_bundle: &Arc<PromptBundle>,
+    error_msg: &str,
+) {
+    tracing::error!(
+        session_id = %session_id,
+        error = %error_msg,
+        "authorization_lost"
+    );
+    auth_handle.signal_auth_lost();
+    match super::escalation::recommend(super::escalation::RecommendParams {
+        conn,
+        session_id,
+        trigger: crate::models::mediation::EscalationTrigger::AuthorizationLost,
+        evidence_refs: Vec::new(),
+        rationale_refs: Vec::new(),
+        prompt_bundle_id: &prompt_bundle.id,
+        policy_hash: &prompt_bundle.policy_hash,
+    })
+    .await
+    {
+        Ok(()) => {
+            super::notify_solvers_escalation(
+                conn,
+                client,
+                solvers,
+                dispute_id,
+                session_id,
+                crate::models::mediation::EscalationTrigger::AuthorizationLost,
+            )
+            .await;
+        }
+        Err(esc_err) => {
+            warn!(
+                session_id = %session_id,
+                error = %esc_err,
+                "handle_authorization_lost: escalation::recommend failed"
+            );
+        }
+    }
+}
+
 /// Publish one outer gift-wrap with a tiny bounded retry. No generic
 /// retry framework — three attempts, exponential-ish backoff capped
 /// at a few hundred milliseconds, aligned with the plan's "plain
@@ -561,6 +662,58 @@ pub(crate) async fn publish_with_bounded_retry(
 // `mediation/mod.rs` all share one implementation of the
 // clock-before-UNIX-EPOCH guard.
 use super::current_ts_secs;
+
+/// Round-limit gate (T068). Returns `true` when the session has
+/// reached or exceeded `max_rounds` without a cooperative
+/// resolution — the engine should escalate with
+/// `EscalationTrigger::RoundLimit`.
+///
+/// Pure: takes the round count and the configured cap directly so
+/// the check has zero DB cost. The caller (engine) reads the
+/// round count from the session row or keeps it in hand from the
+/// latest `ingest_inbound(...) -> Fresh { round_count_after }`
+/// return.
+///
+/// Evaluation sites per spec §FR-111:
+/// - After every `ingest_inbound` that returns
+///   `IngestOutcome::Fresh` — round just completed, check whether
+///   the cap is hit.
+/// - After every `policy::evaluate` that returns
+///   `AskClarification` — another clarification round is about
+///   to start, check whether we have budget for it.
+pub fn check_round_limit(round_count: u32, max_rounds: u32) -> bool {
+    round_count >= max_rounds
+}
+
+#[cfg(test)]
+mod round_limit_tests {
+    use super::check_round_limit;
+
+    #[test]
+    fn at_limit_returns_true() {
+        assert!(check_round_limit(3, 3));
+    }
+
+    #[test]
+    fn below_limit_returns_false() {
+        assert!(!check_round_limit(2, 3));
+    }
+
+    #[test]
+    fn above_limit_returns_true() {
+        // Shouldn't normally happen (caller guards with this
+        // function on every round-boundary), but if it does the
+        // gate must still fire.
+        assert!(check_round_limit(4, 3));
+    }
+
+    #[test]
+    fn zero_max_always_true() {
+        // Degenerate config: max_rounds = 0 means "don't even try
+        // the first clarifying round". `0 >= 0` fires immediately.
+        assert!(check_round_limit(0, 0));
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -662,6 +815,7 @@ mod tests {
             model_name: "mock-model",
             auth_handle,
             session_key_cache: None,
+            solvers: &[],
         })
         .await
         .expect("auth-gate path must not return Err")

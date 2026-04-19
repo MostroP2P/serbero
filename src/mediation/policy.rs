@@ -117,12 +117,51 @@ pub async fn initial_classification(
     let classification = match reasoning.classify(request).await {
         Ok(response) => response,
         Err(e) => {
-            // Every provider-level error on the opening call maps to
-            // `reasoning_unavailable` escalation. We do NOT persist a
-            // rationale (there is no rationale text to content-hash)
-            // and we do NOT emit a `classification_produced` event
-            // (US4 will ship `reasoning_call_failed`). The engine
-            // logs this path at the call site.
+            // Every provider-level error on the opening call maps
+            // to `reasoning_unavailable` escalation. No rationale
+            // (there is no text to content-hash) and no
+            // `classification_produced` event — but we DO emit a
+            // `reasoning_call_failed` audit row (T070 / T074) so
+            // the operator dashboard can distinguish an infra
+            // failure from a silent "no classification event
+            // emitted" gap.
+            //
+            // The audit payload stores a stable `error_category`
+            // rather than the raw `e.to_string()` so operators have
+            // a bounded tag space to alert on and so adapter-side
+            // identifiers (URLs, IP addresses, internal host names)
+            // never leak into `mediation_events`. The full message
+            // still goes to `warn!` below for in-process logs.
+            let now = current_ts_secs()?;
+            let payload = serde_json::json!({
+                "provider": provider_name,
+                "model": model_name,
+                "attempt_count": 1,
+                "error_category": reasoning_error_category(&e),
+            })
+            .to_string();
+            {
+                let guard = conn.lock().await;
+                if let Err(db_err) = db::mediation_events::record_event(
+                    &guard,
+                    db::mediation_events::MediationEventKind::ReasoningCallFailed,
+                    Some(session_id),
+                    &payload,
+                    None,
+                    Some(&prompt_bundle.id),
+                    Some(&prompt_bundle.policy_hash),
+                    now,
+                ) {
+                    // Best-effort: a failed audit write must not
+                    // hide the escalation from the engine. Log
+                    // and still return the escalation decision.
+                    warn!(
+                        session_id = %session_id,
+                        error = %db_err,
+                        "failed to record reasoning_call_failed event"
+                    );
+                }
+            }
             warn!(
                 session_id = %session_id,
                 error = %e,
@@ -138,33 +177,15 @@ pub async fn initial_classification(
 
     // Persist rationale + emit audit event BEFORE returning: the
     // decision is only legitimate once the audit trail is durable.
-    // The same DB lock covers both writes so a crash leaves a
-    // consistent view.
-    let now = current_ts_secs();
-    let mut guard = conn.lock().await;
-    let tx = guard.transaction()?;
-    let rationale_id = db::rationales::insert_rationale(
-        &tx,
-        Some(session_id),
+    let rationale_id = persist_classification_audit(
+        conn,
+        session_id,
+        prompt_bundle,
         provider_name,
         model_name,
-        &prompt_bundle.id,
-        &prompt_bundle.policy_hash,
-        &classification.rationale.0,
-        now,
-    )?;
-    db::mediation_events::record_classification_produced(
-        &tx,
-        session_id,
-        &rationale_id,
-        &classification.classification.to_string(),
-        classification.confidence,
-        Some(&prompt_bundle.id),
-        Some(&prompt_bundle.policy_hash),
-        now,
-    )?;
-    tx.commit()?;
-    drop(guard);
+        &classification,
+    )
+    .await?;
 
     debug!(
         session_id = %session_id,
@@ -178,11 +199,62 @@ pub async fn initial_classification(
     Ok(decision)
 }
 
+/// Re-run the policy evaluator against a classification that was
+/// produced mid-session (after at least one inbound round).
+///
+/// Identical rule table to [`initial_classification`] — the only
+/// difference is the entry point: `evaluate` does NOT call the
+/// reasoning provider. The caller supplies an already-produced
+/// [`ClassificationResponse`] (from a scripted provider in tests, or
+/// from a mid-session reasoning call the engine owns). This keeps the
+/// "where does the call happen" decision outside the policy layer
+/// while the "is this response acceptable" decision stays inside.
+///
+/// Audit writes are identical: one rationale row + one
+/// `classification_produced` event, both inside a single transaction
+/// so the decision is only surfaced once the audit trail is durable.
+///
+/// Like [`initial_classification`], `evaluate` does NOT send any
+/// outbound chat on its own — the caller dispatches on the returned
+/// [`PolicyDecision`].
+#[allow(clippy::too_many_arguments)]
+pub async fn evaluate(
+    conn: &Arc<AsyncMutex<rusqlite::Connection>>,
+    session_id: &str,
+    prompt_bundle: &Arc<PromptBundle>,
+    provider_name: &str,
+    model_name: &str,
+    classification: ClassificationResponse,
+) -> Result<PolicyDecision> {
+    let decision = classify_to_decision(&classification);
+
+    let rationale_id = persist_classification_audit(
+        conn,
+        session_id,
+        prompt_bundle,
+        provider_name,
+        model_name,
+        &classification,
+    )
+    .await?;
+
+    debug!(
+        session_id = %session_id,
+        classification = %classification.classification,
+        confidence = classification.confidence,
+        rationale_id = %rationale_id,
+        ?decision,
+        "evaluate: mid-session classification persisted"
+    );
+
+    Ok(decision)
+}
+
 /// Pure validation: run the contract rules against a single
 /// [`ClassificationResponse`] and return the resulting decision.
 /// Extracted so unit tests can exercise the rule table without
 /// setting up a DB / rationale store.
-fn classify_to_decision(classification: &ClassificationResponse) -> PolicyDecision {
+pub(crate) fn classify_to_decision(classification: &ClassificationResponse) -> PolicyDecision {
     // Rule 1: fraud / conflicting-claims flags dominate every other
     // signal. Both are explicit "this dispute does not belong in
     // guided mediation" indicators from the model.
@@ -267,16 +339,73 @@ fn classify_to_decision(classification: &ClassificationResponse) -> PolicyDecisi
     }
 }
 
-/// Fail loudly on a clock-before-UNIX-EPOCH error. A silent `0`
-/// would corrupt rationale / event ordering; the audit store relies
-/// on `generated_at` / `occurred_at` being a real Unix timestamp.
-fn current_ts_secs() -> i64 {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system clock is before UNIX_EPOCH; refusing to persist audit rows with ts = 0")
-        .as_secs() as i64
+/// Persist the rationale + emit the `classification_produced`
+/// audit event for one classification response inside a single
+/// transaction. Returns the content-addressed rationale id.
+///
+/// Single source of truth for the audit-write path shared by
+/// [`initial_classification`] and [`evaluate`]. A crash between the
+/// two inserts is impossible because the transaction either lands
+/// both or neither, and the content-hash dedup on
+/// `reasoning_rationales` makes a retried call idempotent.
+async fn persist_classification_audit(
+    conn: &Arc<AsyncMutex<rusqlite::Connection>>,
+    session_id: &str,
+    prompt_bundle: &Arc<PromptBundle>,
+    provider_name: &str,
+    model_name: &str,
+    classification: &ClassificationResponse,
+) -> Result<String> {
+    let now = current_ts_secs()?;
+    let mut guard = conn.lock().await;
+    let tx = guard.transaction()?;
+    let rationale_id = db::rationales::insert_rationale(
+        &tx,
+        Some(session_id),
+        provider_name,
+        model_name,
+        &prompt_bundle.id,
+        &prompt_bundle.policy_hash,
+        &classification.rationale.0,
+        now,
+    )?;
+    db::mediation_events::record_classification_produced(
+        &tx,
+        session_id,
+        &rationale_id,
+        &classification.classification.to_string(),
+        classification.confidence,
+        Some(&prompt_bundle.id),
+        Some(&prompt_bundle.policy_hash),
+        now,
+    )?;
+    tx.commit()?;
+    Ok(rationale_id)
 }
+
+/// Map a [`ReasoningError`] to a short, stable tag persisted in the
+/// `reasoning_call_failed` audit payload. Keeping the tag space
+/// bounded lets operator dashboards alert on categories without
+/// parsing free-form provider error strings, and keeps adapter
+/// internals (URLs, IPs, keys) out of the audit table.
+fn reasoning_error_category(err: &crate::models::reasoning::ReasoningError) -> &'static str {
+    use crate::models::reasoning::ReasoningError::*;
+    match err {
+        Unreachable(_) => "unreachable",
+        Timeout => "timeout",
+        MalformedResponse(_) => "malformed_response",
+        AuthorityBoundaryViolation(_) => "authority_boundary_violation",
+        Other(_) => "unknown",
+    }
+}
+
+// Clock access is delegated to `super::current_ts_secs()` so this
+// module, `session.rs`, `summarizer.rs`, and the engine in `mod.rs`
+// share one implementation of the "system clock is before UNIX_EPOCH"
+// guard. Failure surfaces as `Error::ChatTransport` so the engine
+// loop keeps running — a pre-epoch clock is operator-facing, not a
+// reason to panic the mediation tick.
+use super::current_ts_secs;
 
 #[cfg(test)]
 mod tests {
@@ -536,5 +665,95 @@ mod tests {
             decision,
             PolicyDecision::Escalate(EscalationTrigger::ReasoningUnavailable)
         );
+    }
+
+    // ------------------------------------------------------------------
+    // `evaluate` — mid-session entry point (US4 / T066).
+    //
+    // Same rule table as `initial_classification` but the caller
+    // supplies the `ClassificationResponse` directly. These tests
+    // drive the audit-write path (rationale + classification_produced
+    // event) without going through a reasoning-provider stub.
+    // ------------------------------------------------------------------
+
+    async fn run_evaluate(
+        conn: &Arc<AsyncMutex<rusqlite::Connection>>,
+        classification: ClassificationResponse,
+    ) -> Result<PolicyDecision> {
+        let bundle = test_bundle();
+        evaluate(
+            conn,
+            "sess-policy",
+            &bundle,
+            "openai",
+            "gpt-test",
+            classification,
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn evaluate_fraud_flag_escalates() {
+        let conn = fresh_conn();
+        let mut resp = base_response();
+        resp.flags = vec![Flag::FraudRisk];
+        let decision = run_evaluate(&conn, resp).await.unwrap();
+        assert_eq!(
+            decision,
+            PolicyDecision::Escalate(EscalationTrigger::FraudIndicator)
+        );
+    }
+
+    #[tokio::test]
+    async fn evaluate_authority_boundary_escalates() {
+        let conn = fresh_conn();
+        let mut resp = base_response();
+        resp.flags = vec![Flag::AuthorityBoundaryAttempt];
+        let decision = run_evaluate(&conn, resp).await.unwrap();
+        assert_eq!(
+            decision,
+            PolicyDecision::Escalate(EscalationTrigger::AuthorityBoundaryAttempt)
+        );
+    }
+
+    #[tokio::test]
+    async fn evaluate_low_confidence_escalates() {
+        let conn = fresh_conn();
+        let mut resp = base_response();
+        resp.confidence = 0.3;
+        let decision = run_evaluate(&conn, resp).await.unwrap();
+        assert_eq!(
+            decision,
+            PolicyDecision::Escalate(EscalationTrigger::LowConfidence)
+        );
+    }
+
+    #[tokio::test]
+    async fn evaluate_happy_path_persists_audit() {
+        let conn = fresh_conn();
+        let decision = run_evaluate(&conn, base_response()).await.unwrap();
+        assert_eq!(
+            decision,
+            PolicyDecision::AskClarification("please confirm X".into())
+        );
+        let (rat_count, evt_count): (i64, i64) = {
+            let guard = conn.lock().await;
+            let rat = guard
+                .query_row("SELECT COUNT(*) FROM reasoning_rationales", [], |r| {
+                    r.get(0)
+                })
+                .unwrap();
+            let evt = guard
+                .query_row(
+                    "SELECT COUNT(*) FROM mediation_events
+                     WHERE session_id='sess-policy' AND kind='classification_produced'",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            (rat, evt)
+        };
+        assert_eq!(rat_count, 1, "rationale audit row expected");
+        assert_eq!(evt_count, 1, "classification_produced event expected");
     }
 }

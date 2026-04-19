@@ -54,6 +54,12 @@ pub enum NotificationType {
     /// `notifications` table — `notif_type` is TEXT, no schema
     /// migration needed.
     MediationSummary,
+    /// Phase 3 (US4): "needs human judgment" alert delivered to the
+    /// assigned (or broadcast) solver(s) when a session escalates.
+    /// Reuses the Phase 1/2 notifier verbatim; the Phase 4 handoff
+    /// package lives alongside in `mediation_events` as a
+    /// `handoff_prepared` row, not in `notifications`.
+    MediationEscalationRecommended,
 }
 
 impl fmt::Display for NotificationType {
@@ -64,6 +70,7 @@ impl fmt::Display for NotificationType {
             Self::Assignment => f.write_str("assignment"),
             Self::Escalation => f.write_str("escalation"),
             Self::MediationSummary => f.write_str("mediation_summary"),
+            Self::MediationEscalationRecommended => f.write_str("mediation_escalation_recommended"),
         }
     }
 }
@@ -78,6 +85,7 @@ impl FromStr for NotificationType {
             "assignment" => Ok(Self::Assignment),
             "escalation" => Ok(Self::Escalation),
             "mediation_summary" => Ok(Self::MediationSummary),
+            "mediation_escalation_recommended" => Ok(Self::MediationEscalationRecommended),
             other => Err(Error::InvalidEvent(format!(
                 "unknown notification type: {other}"
             ))),

@@ -67,6 +67,16 @@ pub enum Error {
     /// `contracts/reasoning-provider.md` §Policy-Layer Validation.
     #[error("policy violation: {0}")]
     PolicyViolation(String),
+
+    /// An outbound Mostro exchange (auth check, take-flow, etc.)
+    /// surfaced a loud "solver authorization was revoked" signal
+    /// mid-session. The caller MUST escalate the affected session
+    /// with `EscalationTrigger::AuthorizationLost` and call
+    /// `AuthRetryHandle::signal_auth_lost` so the retry loop
+    /// re-arms. Separate from `AuthNotRegistered` (startup) and
+    /// `AuthTerminated` (terminal cap) — this is the mid-run loss.
+    #[error("authorization lost mid-session: {0}")]
+    AuthorizationLost(String),
     // --- end Phase 3 additions ---
     #[error(transparent)]
     Other(#[from] anyhow::Error),
