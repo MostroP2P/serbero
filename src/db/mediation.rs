@@ -210,6 +210,118 @@ pub fn recompute_round_count(conn: &Connection, session_id: &str) -> Result<i64>
     Ok(new_rounds)
 }
 
+/// Snapshot of a live mediation_sessions row, used by the engine's
+/// startup-resume pass and its per-tick ingest loop (T051 / T052).
+/// Only the fields both paths need — keep thin.
+#[derive(Debug, Clone)]
+pub struct LiveSession {
+    pub session_id: String,
+    pub dispute_id: String,
+    pub state: MediationSessionState,
+    pub prompt_bundle_id: String,
+    pub policy_hash: String,
+    pub buyer_shared_pubkey: Option<String>,
+    pub seller_shared_pubkey: Option<String>,
+}
+
+/// List all mediation sessions that are NOT in a terminal or
+/// handed-off state. Same exclusion set as
+/// [`latest_open_session_for`]: `closed`, `summary_delivered`,
+/// `escalation_recommended`, `superseded_by_human`. The engine uses
+/// this to decide which sessions to poll for inbound replies on each
+/// tick and to rebuild in-memory chat material at startup.
+pub fn list_live_sessions(conn: &Connection) -> Result<Vec<LiveSession>> {
+    use std::str::FromStr;
+
+    let mut stmt = conn.prepare(
+        "SELECT session_id, dispute_id, state,
+                prompt_bundle_id, policy_hash,
+                buyer_shared_pubkey, seller_shared_pubkey
+         FROM mediation_sessions
+         WHERE state NOT IN (
+             'closed',
+             'summary_delivered',
+             'escalation_recommended',
+             'superseded_by_human'
+         )
+         ORDER BY started_at ASC",
+    )?;
+    let rows = stmt.query_map([], |r| {
+        Ok((
+            r.get::<_, String>(0)?,
+            r.get::<_, String>(1)?,
+            r.get::<_, String>(2)?,
+            r.get::<_, String>(3)?,
+            r.get::<_, String>(4)?,
+            r.get::<_, Option<String>>(5)?,
+            r.get::<_, Option<String>>(6)?,
+        ))
+    })?;
+    let mut out = Vec::new();
+    for row in rows {
+        let (session_id, dispute_id, state_s, bundle, hash, bsp, ssp) = row?;
+        let state = MediationSessionState::from_str(&state_s)?;
+        out.push(LiveSession {
+            session_id,
+            dispute_id,
+            state,
+            prompt_bundle_id: bundle,
+            policy_hash: hash,
+            buyer_shared_pubkey: bsp,
+            seller_shared_pubkey: ssp,
+        });
+    }
+    Ok(out)
+}
+
+/// Write a new lifecycle state onto a session row.
+///
+/// In debug builds this helper asserts that the current → next
+/// transition is legal per
+/// [`MediationSessionState::can_transition_to`], surfacing
+/// callers that forget the state-machine check before writing.
+/// Release builds skip the assert and just issue the UPDATE, so
+/// the check adds zero cost on the hot path.
+///
+/// Used by the T052 restart-resume pass to flip a session to
+/// `escalation_recommended` when its pinned prompt bundle is no
+/// longer loadable (trigger `policy_bundle_missing`), and by the
+/// session-open path to mark non-AskClarification opens escalated.
+pub fn set_session_state(
+    conn: &Connection,
+    session_id: &str,
+    new_state: MediationSessionState,
+    at: i64,
+) -> Result<()> {
+    #[cfg(debug_assertions)]
+    {
+        use std::str::FromStr;
+        let current: Option<String> = conn
+            .query_row(
+                "SELECT state FROM mediation_sessions WHERE session_id = ?1",
+                params![session_id],
+                |r| r.get(0),
+            )
+            .ok();
+        if let Some(current) = current {
+            let current = MediationSessionState::from_str(&current)
+                .expect("set_session_state: persisted state must parse");
+            debug_assert!(
+                current.can_transition_to(new_state),
+                "set_session_state: illegal transition {current} -> {new_state} \
+                 for session_id={session_id}"
+            );
+        }
+    }
+    conn.execute(
+        "UPDATE mediation_sessions
+         SET state = ?1, last_transition_at = ?2
+         WHERE session_id = ?3",
+        params![new_state.to_string(), at, session_id],
+    )?;
+    Ok(())
+}
+
 /// Lookup the most recently opened *live* mediation_sessions row for
 /// a given dispute_id, if any. Rows in terminal / handed-off states
 /// (`closed`, `summary_delivered`, `escalation_recommended`,
@@ -469,5 +581,67 @@ mod tests {
                 "latest_open_session_for must skip state '{terminal}', got {found:?}"
             );
         }
+    }
+
+    #[test]
+    fn list_live_sessions_returns_only_non_terminal_rows() {
+        let conn = fresh();
+        insert_session(&conn, &new_session("pol-hash-live")).unwrap();
+
+        // Alive row: should show up.
+        let live = list_live_sessions(&conn).unwrap();
+        assert_eq!(live.len(), 1);
+        assert_eq!(live[0].session_id, "sess-1");
+        assert_eq!(live[0].state, MediationSessionState::AwaitingResponse);
+        assert_eq!(live[0].prompt_bundle_id, "phase3-test");
+        assert_eq!(live[0].policy_hash, "pol-hash-live");
+        assert_eq!(
+            live[0].buyer_shared_pubkey.as_deref(),
+            Some("buyer-shared-pk")
+        );
+
+        // Flip to each terminal / handed-off state; the row must
+        // disappear from the live list.
+        for terminal in [
+            "closed",
+            "summary_delivered",
+            "escalation_recommended",
+            "superseded_by_human",
+        ] {
+            conn.execute(
+                "UPDATE mediation_sessions SET state = ?1 WHERE session_id = 'sess-1'",
+                params![terminal],
+            )
+            .unwrap();
+            let live = list_live_sessions(&conn).unwrap();
+            assert!(
+                live.is_empty(),
+                "state '{terminal}' must be excluded from list_live_sessions; got {live:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn set_session_state_updates_state_and_transition_ts() {
+        let conn = fresh();
+        insert_session(&conn, &new_session("pol-hash-trans")).unwrap();
+
+        set_session_state(
+            &conn,
+            "sess-1",
+            MediationSessionState::EscalationRecommended,
+            555,
+        )
+        .unwrap();
+
+        let (state, ts): (String, i64) = conn
+            .query_row(
+                "SELECT state, last_transition_at FROM mediation_sessions WHERE session_id = 'sess-1'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(state, "escalation_recommended");
+        assert_eq!(ts, 555);
     }
 }

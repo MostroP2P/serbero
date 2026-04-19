@@ -42,13 +42,13 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use nostr_sdk::prelude::*;
-use rusqlite::params;
 use tokio::sync::Mutex as AsyncMutex;
 use tracing::{debug, info, instrument, warn};
 use uuid::Uuid;
 
 use super::policy::{self, PolicyDecision};
-use crate::chat::dispute_chat_flow;
+use super::SessionKeyCache;
+use crate::chat::dispute_chat_flow::{self, DisputeChatMaterial};
 use crate::chat::inbound::InboundEnvelope;
 use crate::db;
 use crate::error::{Error, Result};
@@ -121,6 +121,17 @@ pub struct OpenSessionParams<'a> {
     /// detection and solver notification are NEVER affected by the
     /// auth state (SC-105).
     pub auth_handle: &'a super::auth_retry::AuthRetryHandle,
+    /// Optional in-memory cache that maps `session_id` to the
+    /// [`DisputeChatMaterial`] derived by the take-flow. When
+    /// `Some`, the session-open path registers the freshly-derived
+    /// material keyed by the new `session_id` on a successful
+    /// `OpenOutcome::Opened` return — that is how the engine's
+    /// ingest tick (T051) gets the shared-key secrets needed to
+    /// decrypt inbound gift-wraps.
+    ///
+    /// Tests / callers that do not run an ingest tick can pass
+    /// `None`; the session-open path behaves identically otherwise.
+    pub session_key_cache: Option<&'a SessionKeyCache>,
 }
 
 #[instrument(skip_all, fields(dispute_id = %params.dispute_id))]
@@ -260,6 +271,16 @@ pub async fn open_session(params: OpenSessionParams<'_>) -> Result<OpenOutcome> 
                 &text,
             )
             .await?;
+            // Register the derived chat material with the engine's
+            // in-memory cache so the ingest tick (T051) can decrypt
+            // inbound gift-wraps on this session. The cache is a
+            // process-local `HashMap` — the raw secrets never touch
+            // disk (see `dispute_chat_flow` key-lifecycle doc). A
+            // daemon restart therefore loses the material; T052
+            // handles that by either re-deriving or escalating.
+            if let Some(cache) = params.session_key_cache {
+                register_session_material(cache, &session_id, material.clone()).await;
+            }
             info!(
                 session_id = %session_id,
                 prompt_bundle_id = %params.prompt_bundle.id,
@@ -291,12 +312,11 @@ pub async fn open_session(params: OpenSessionParams<'_>) -> Result<OpenOutcome> 
                 // reconciliation of this transition alongside the
                 // `escalation_recommended` + `handoff_prepared`
                 // audit rows.
-                guard.execute(
-                    "UPDATE mediation_sessions
-                     SET state = 'escalation_recommended',
-                         last_transition_at = ?1
-                     WHERE session_id = ?2",
-                    params![escalation_now, &session_id],
+                db::mediation::set_session_state(
+                    &guard,
+                    &session_id,
+                    crate::models::mediation::MediationSessionState::EscalationRecommended,
+                    escalation_now,
                 )?;
             }
             debug!(
@@ -401,9 +421,8 @@ pub async fn ingest_inbound(
         tx.commit()?;
         debug!(
             session_id = %session_id,
-            party = %envelope.party,
             inner_event_id = %envelope.inner_event_id,
-            "inbound replay ignored (already persisted)"
+            "inbound_duplicate"
         );
         return Ok(IngestOutcome::Duplicate);
     }
@@ -412,10 +431,9 @@ pub async fn ingest_inbound(
         tx.commit()?;
         debug!(
             session_id = %session_id,
-            party = %envelope.party,
             inner_event_id = %envelope.inner_event_id,
-            inner_created_at = envelope.inner_created_at,
-            "inbound persisted as stale; last-seen and round_count unchanged"
+            stale = true,
+            "inbound_ingested_stale"
         );
         return Ok(IngestOutcome::Stale);
     }
@@ -435,9 +453,18 @@ pub async fn ingest_inbound(
         inner_event_id = %envelope.inner_event_id,
         inner_created_at = envelope.inner_created_at,
         round_count_after = round_count_after,
-        "inbound ingested"
+        "inbound_ingested"
     );
     Ok(IngestOutcome::Fresh { round_count_after })
+}
+
+async fn register_session_material(
+    cache: &SessionKeyCache,
+    session_id: &str,
+    material: DisputeChatMaterial,
+) {
+    let mut guard = cache.lock().await;
+    guard.insert(session_id.to_string(), material);
 }
 
 /// Publish one outer gift-wrap with a tiny bounded retry. No generic
@@ -584,6 +611,7 @@ mod tests {
             provider_name: "mock-provider",
             model_name: "mock-model",
             auth_handle,
+            session_key_cache: None,
         })
         .await
         .expect("auth-gate path must not return Err")
