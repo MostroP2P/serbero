@@ -50,6 +50,21 @@ use crate::db;
 use crate::db::mediation_events::MediationEventKind;
 use crate::error::{Error, Result};
 use crate::models::mediation::EscalationTrigger;
+#[cfg(test)]
+use crate::models::mediation::MediationSessionState;
+
+/// The set of `mediation_sessions.state` values from which a
+/// transition to `escalation_recommended` is legal. Single source of
+/// truth used by both the SQL conditional UPDATE in [`recommend`]
+/// and the invariant pin test below, so the whitelist cannot drift
+/// away from [`MediationSessionState::can_transition_to`].
+const ESCALATABLE_STATES: &[&str] = &[
+    "opening",
+    "awaiting_response",
+    "classified",
+    "follow_up_pending",
+    "summary_pending",
+];
 
 /// Phase 4 handoff package. Persisted as the `handoff_prepared`
 /// mediation event's payload so Phase 4 can consume it later by
@@ -143,31 +158,46 @@ pub async fn recommend(params: RecommendParams<'_>) -> Result<()> {
     // already-escalated session updates zero rows, the tx is
     // rolled back below, and no duplicate events are written.
     //
-    // The WHERE clause mirrors the allowed-transition set that
-    // `MediationSessionState::can_transition_to` enforces in debug
-    // builds via the `debug_assert!` inside `set_session_state`;
-    // encoding the same rule in SQL makes the guarantee hold in
-    // release builds too.
-    let rows = tx.execute(
+    // The WHERE clause binds the shared [`ESCALATABLE_STATES`]
+    // whitelist so the allowed-transition set stays in lockstep
+    // with [`MediationSessionState::can_transition_to`] (pinned by
+    // the `escalatable_states_match_can_transition_to` unit test).
+    // Encoding the rule in SQL makes the guarantee hold in release
+    // builds where the `debug_assert!` inside `set_session_state`
+    // is stripped.
+    let placeholders = (0..ESCALATABLE_STATES.len())
+        .map(|i| format!("?{}", i + 3))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let update_sql = format!(
         "UPDATE mediation_sessions
          SET state = 'escalation_recommended', last_transition_at = ?1
-         WHERE session_id = ?2
-           AND state IN (
-               'opening',
-               'awaiting_response',
-               'classified',
-               'follow_up_pending',
-               'summary_pending'
-           )",
-        params![now, session_id],
-    )?;
+         WHERE session_id = ?2 AND state IN ({placeholders})"
+    );
+    let mut sql_params: Vec<&dyn rusqlite::ToSql> =
+        Vec::with_capacity(2 + ESCALATABLE_STATES.len());
+    sql_params.push(&now);
+    sql_params.push(&session_id);
+    for s in ESCALATABLE_STATES {
+        sql_params.push(s);
+    }
+    let rows = tx.execute(&update_sql, sql_params.as_slice())?;
     if rows == 0 {
-        // Either the session row is gone (impossible given the
-        // lookup above held the same connection), or the session is
-        // already terminal / already at `escalation_recommended`.
-        // Either way: refuse to write a second handoff.
+        // Read the actual current state inside the same transaction
+        // so the error carries the real `from` value rather than a
+        // placeholder string. Operators reading the resulting log
+        // then see "classified -> escalation_recommended" (or
+        // similar) — enough context to tell whether this was a
+        // double-escalation attempt vs. a FK / race bug.
+        let actual: String = tx
+            .query_row(
+                "SELECT state FROM mediation_sessions WHERE session_id = ?1",
+                params![session_id],
+                |r| r.get::<_, String>(0),
+            )
+            .unwrap_or_else(|_| "<session row missing>".to_string());
         return Err(Error::InvalidStateTransition {
-            from: "<already-terminal-or-escalated>".to_string(),
+            from: actual,
             to: "escalation_recommended".to_string(),
         });
     }
@@ -234,6 +264,38 @@ mod tests {
     use super::*;
     use crate::db::migrations::run_migrations;
     use crate::db::open_in_memory;
+
+    /// Drift-pin: the SQL whitelist used by `recommend` and the
+    /// Rust-side `can_transition_to` table must agree on which
+    /// states are escalatable. This test walks every
+    /// [`MediationSessionState`] variant and asserts membership in
+    /// [`ESCALATABLE_STATES`] matches
+    /// `self.can_transition_to(EscalationRecommended)`. If either
+    /// side adds or removes a state without touching the other,
+    /// this fires.
+    #[test]
+    fn escalatable_states_match_can_transition_to() {
+        for s in [
+            MediationSessionState::Opening,
+            MediationSessionState::AwaitingResponse,
+            MediationSessionState::Classified,
+            MediationSessionState::FollowUpPending,
+            MediationSessionState::SummaryPending,
+            MediationSessionState::SummaryDelivered,
+            MediationSessionState::EscalationRecommended,
+            MediationSessionState::SupersededByHuman,
+            MediationSessionState::Closed,
+        ] {
+            let tag = s.to_string();
+            let sql_allows = ESCALATABLE_STATES.contains(&tag.as_str());
+            let rust_allows = s.can_transition_to(MediationSessionState::EscalationRecommended);
+            assert_eq!(
+                sql_allows, rust_allows,
+                "drift for {tag}: SQL whitelist says {sql_allows}, \
+                 can_transition_to says {rust_allows}"
+            );
+        }
+    }
 
     fn fresh_conn() -> Arc<AsyncMutex<rusqlite::Connection>> {
         let mut conn = open_in_memory().unwrap();
@@ -302,7 +364,15 @@ mod tests {
         })
         .await
         .expect_err("second call on the same session must fail");
-        assert!(matches!(err, Error::InvalidStateTransition { .. }));
+        // The error reflects the real persisted state so operators
+        // can tell a double-escalation attempt apart from a FK bug.
+        match err {
+            Error::InvalidStateTransition { from, to } => {
+                assert_eq!(from, "escalation_recommended");
+                assert_eq!(to, "escalation_recommended");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
 
         assert_eq!(
             count_events(&conn, "escalation_recommended").await,

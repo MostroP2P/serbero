@@ -177,33 +177,15 @@ pub async fn initial_classification(
 
     // Persist rationale + emit audit event BEFORE returning: the
     // decision is only legitimate once the audit trail is durable.
-    // The same DB lock covers both writes so a crash leaves a
-    // consistent view.
-    let now = current_ts_secs();
-    let mut guard = conn.lock().await;
-    let tx = guard.transaction()?;
-    let rationale_id = db::rationales::insert_rationale(
-        &tx,
-        Some(session_id),
+    let rationale_id = persist_classification_audit(
+        conn,
+        session_id,
+        prompt_bundle,
         provider_name,
         model_name,
-        &prompt_bundle.id,
-        &prompt_bundle.policy_hash,
-        &classification.rationale.0,
-        now,
-    )?;
-    db::mediation_events::record_classification_produced(
-        &tx,
-        session_id,
-        &rationale_id,
-        &classification.classification.to_string(),
-        classification.confidence,
-        Some(&prompt_bundle.id),
-        Some(&prompt_bundle.policy_hash),
-        now,
-    )?;
-    tx.commit()?;
-    drop(guard);
+        &classification,
+    )
+    .await?;
 
     debug!(
         session_id = %session_id,
@@ -246,31 +228,15 @@ pub async fn evaluate(
 ) -> Result<PolicyDecision> {
     let decision = classify_to_decision(&classification);
 
-    let now = current_ts_secs();
-    let mut guard = conn.lock().await;
-    let tx = guard.transaction()?;
-    let rationale_id = db::rationales::insert_rationale(
-        &tx,
-        Some(session_id),
+    let rationale_id = persist_classification_audit(
+        conn,
+        session_id,
+        prompt_bundle,
         provider_name,
         model_name,
-        &prompt_bundle.id,
-        &prompt_bundle.policy_hash,
-        &classification.rationale.0,
-        now,
-    )?;
-    db::mediation_events::record_classification_produced(
-        &tx,
-        session_id,
-        &rationale_id,
-        &classification.classification.to_string(),
-        classification.confidence,
-        Some(&prompt_bundle.id),
-        Some(&prompt_bundle.policy_hash),
-        now,
-    )?;
-    tx.commit()?;
-    drop(guard);
+        &classification,
+    )
+    .await?;
 
     debug!(
         session_id = %session_id,
@@ -371,6 +337,50 @@ pub(crate) fn classify_to_decision(classification: &ClassificationResponse) -> P
             PolicyDecision::Escalate(EscalationTrigger::ReasoningUnavailable)
         }
     }
+}
+
+/// Persist the rationale + emit the `classification_produced`
+/// audit event for one classification response inside a single
+/// transaction. Returns the content-addressed rationale id.
+///
+/// Single source of truth for the audit-write path shared by
+/// [`initial_classification`] and [`evaluate`]. A crash between the
+/// two inserts is impossible because the transaction either lands
+/// both or neither, and the content-hash dedup on
+/// `reasoning_rationales` makes a retried call idempotent.
+async fn persist_classification_audit(
+    conn: &Arc<AsyncMutex<rusqlite::Connection>>,
+    session_id: &str,
+    prompt_bundle: &Arc<PromptBundle>,
+    provider_name: &str,
+    model_name: &str,
+    classification: &ClassificationResponse,
+) -> Result<String> {
+    let now = current_ts_secs();
+    let mut guard = conn.lock().await;
+    let tx = guard.transaction()?;
+    let rationale_id = db::rationales::insert_rationale(
+        &tx,
+        Some(session_id),
+        provider_name,
+        model_name,
+        &prompt_bundle.id,
+        &prompt_bundle.policy_hash,
+        &classification.rationale.0,
+        now,
+    )?;
+    db::mediation_events::record_classification_produced(
+        &tx,
+        session_id,
+        &rationale_id,
+        &classification.classification.to_string(),
+        classification.confidence,
+        Some(&prompt_bundle.id),
+        Some(&prompt_bundle.policy_hash),
+        now,
+    )?;
+    tx.commit()?;
+    Ok(rationale_id)
 }
 
 /// Map a [`ReasoningError`] to a short, stable tag persisted in the
