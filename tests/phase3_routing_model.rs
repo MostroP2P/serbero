@@ -108,12 +108,22 @@ fn seed_session(
     .unwrap();
 }
 
+/// Return both the connection and the `NamedTempFile` guard so the
+/// caller can hold the guard for the duration of its assertions.
+/// Previously this helper used `std::mem::forget(tmp)` to keep the
+/// temp file alive past the function boundary — that leaked the
+/// temp file on every test run. Returning the guard is both leak-
+/// free and explicit about the lifetime relationship between the
+/// SQLite connection and the backing file.
 async fn run_scenario(
     dispute_id: &str,
     session_id: &str,
     assigned_solver: Option<&str>,
     configured_solvers: Vec<SolverConfig>,
-) -> Arc<AsyncMutex<rusqlite::Connection>> {
+) -> (
+    Arc<AsyncMutex<rusqlite::Connection>>,
+    tempfile::NamedTempFile,
+) {
     let relay = MockRelay::run().await.expect("start mock relay");
     let relay_url = relay.url().await.to_string();
     let serbero_keys = Keys::generate();
@@ -150,13 +160,7 @@ async fn run_scenario(
     .await
     .expect("deliver_summary must succeed on the routing happy paths");
 
-    // Keep the NamedTempFile alive for the life of the test by
-    // holding the raw path and not closing the temp; `conn` keeps
-    // the connection alive and SQLite keeps the file alive.
-    // tempfile is dropped at end of the scenario helper; rows are
-    // read before that via the returned conn arc.
-    std::mem::forget(tmp);
-    conn
+    (conn, tmp)
 }
 
 async fn count_notifications_for(
@@ -202,7 +206,7 @@ async fn targeted_routing_delivers_only_to_assigned_solver() {
     let pk_a = Keys::generate().public_key().to_hex();
     let pk_b = Keys::generate().public_key().to_hex();
 
-    let conn = run_scenario(
+    let (conn, _tmp) = run_scenario(
         dispute_id,
         session_id,
         Some(&pk_a),
@@ -230,7 +234,7 @@ async fn broadcast_routing_when_assigned_solver_is_null() {
     let pk_a = Keys::generate().public_key().to_hex();
     let pk_b = Keys::generate().public_key().to_hex();
 
-    let conn = run_scenario(
+    let (conn, _tmp) = run_scenario(
         dispute_id,
         session_id,
         None,
@@ -254,7 +258,7 @@ async fn fallback_to_broadcast_when_assigned_solver_unknown() {
     // `assigned_solver` references an unknown pk — router falls
     // back to broadcast with a single `warn!`. We still expect
     // two rows, one per configured solver.
-    let conn = run_scenario(
+    let (conn, _tmp) = run_scenario(
         dispute_id,
         session_id,
         Some(&unknown_pk),

@@ -265,13 +265,9 @@ fn contains_authority_boundary_phrase(text: &str) -> bool {
         .any(|phrase| lower.contains(phrase))
 }
 
-fn current_ts_secs() -> Result<i64> {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .map_err(|e| Error::ChatTransport(format!("system clock is before UNIX_EPOCH: {e}")))
-}
+// Shares the `current_ts_secs` helper with `session.rs` and the
+// deliver-summary path in `mediation/mod.rs`.
+use super::current_ts_secs;
 
 #[cfg(test)]
 mod tests {

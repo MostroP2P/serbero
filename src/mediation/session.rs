@@ -556,17 +556,11 @@ pub(crate) async fn publish_with_bounded_retry(
     )))
 }
 
-/// Surface clock-before-UNIX-EPOCH as a loud error rather than a
-/// silent `0` timestamp. A zero would corrupt `started_at` /
-/// `persisted_at` ordering across `mediation_sessions` and
-/// `mediation_messages` rows without leaving any trace.
-fn current_ts_secs() -> Result<i64> {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .map_err(|e| Error::ChatTransport(format!("system clock is before UNIX_EPOCH: {e}")))
-}
+// `current_ts_secs` moved to `super::current_ts_secs` so
+// `session.rs`, `summarizer.rs`, and the deliver-summary path in
+// `mediation/mod.rs` all share one implementation of the
+// clock-before-UNIX-EPOCH guard.
+use super::current_ts_secs;
 
 #[cfg(test)]
 mod tests {

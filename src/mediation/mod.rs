@@ -739,6 +739,14 @@ async fn run_engine_tick(
 pub async fn deliver_summary(
     conn: &Arc<AsyncMutex<rusqlite::Connection>>,
     client: &Client,
+    // TODO(US4): `serbero_keys` is unused on the summary path —
+    // `send_gift_wrap_notification` signs via the `Client`'s
+    // internal signer (which is already keyed by the same secret).
+    // US4's escalation-handoff path is expected to build a
+    // structured handoff package signed directly with these keys
+    // (outside the nostr_sdk client scope), so the parameter is
+    // retained to keep the engine-side call site stable when US4
+    // lands. Drop the `_` prefix then.
     _serbero_keys: &Keys,
     session_id: &str,
     dispute_id: &str,
@@ -1087,7 +1095,14 @@ async fn list_eligible_disputes(
     Ok(out)
 }
 
-fn current_ts_secs() -> Result<i64> {
+/// Seconds since the UNIX epoch. Shared by `session.rs`,
+/// `summarizer.rs`, and the deliver-summary / escalation paths in
+/// this module so there is a single source of truth for the
+/// "system clock is before UNIX_EPOCH" error tag. Returns
+/// `Error::ChatTransport` on a pre-epoch clock because the downstream
+/// callers are all on the chat / transport path; the tag is load-
+/// bearing for the existing log + error-filter pipeline.
+pub(crate) fn current_ts_secs() -> Result<i64> {
     use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
