@@ -329,13 +329,17 @@ async fn phase3_bring_up(config: &Config) -> Option<Phase3Runtime> {
         }
     };
     if let Err(e) = crate::reasoning::health::run_startup_health_check(&*reasoning).await {
+        // SC-105: a Phase 3 health-check failure MUST NOT exit the
+        // daemon. Returning `None` here leaves `mediation.enabled`
+        // effectively off for this run while Phase 1/2 detection and
+        // solver notification continue unaffected in the caller.
         error!(
             provider = %config.reasoning.provider,
             model = %config.reasoning.model,
             api_base = %config.reasoning.api_base,
             error = %e,
-            "Phase 3 reasoning provider health check failed; \
-             mediation will stay disabled this run"
+            "Phase 3 reasoning health check failed; mediation disabled for this run \
+             (Phase 1/2 detection and notification continue unaffected)"
         );
         return None;
     }
