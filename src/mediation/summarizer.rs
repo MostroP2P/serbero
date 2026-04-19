@@ -131,12 +131,29 @@ pub async fn summarize(params: SummarizeParams<'_>) -> Result<MediationSummary> 
         .await
         .map_err(|e| Error::ReasoningUnavailable(e.to_string()))?;
 
-    // (3) Authority-boundary suppression. BOTH the summary text and
-    //     the suggested next step flow to the solver DM, so both are
-    //     checked. Any match is loud: we return a distinct
-    //     `PolicyViolation` so the caller can tag the escalation
-    //     with `AuthorityBoundaryAttempt` instead of a generic
-    //     reasoning failure.
+    // (3a) Reject empty / whitespace-only fields. Both
+    //      `summary_text` and `suggested_next_step` flow to the
+    //      solver DM, so an empty either side produces a
+    //      meaningless message — worse than escalating. Matches
+    //      the empty-clarification guard in policy.rs and the
+    //      session-open `build_wrap` guard. We classify this as
+    //      `PolicyViolation` so the caller escalates with
+    //      `AuthorityBoundaryAttempt` — an empty response from
+    //      an LLM prompted to summarize is likely a guard-rail
+    //      refusal, which is the shape the operator most wants
+    //      to inspect.
+    if response.summary_text.trim().is_empty() || response.suggested_next_step.trim().is_empty() {
+        return Err(Error::PolicyViolation(
+            "empty summary or suggested next step from reasoning provider".into(),
+        ));
+    }
+
+    // (3b) Authority-boundary suppression. BOTH the summary text and
+    //      the suggested next step flow to the solver DM, so both are
+    //      checked. Any match is loud: we return a distinct
+    //      `PolicyViolation` so the caller can tag the escalation
+    //      with `AuthorityBoundaryAttempt` instead of a generic
+    //      reasoning failure.
     if contains_authority_boundary_phrase(&response.summary_text)
         || contains_authority_boundary_phrase(&response.suggested_next_step)
     {

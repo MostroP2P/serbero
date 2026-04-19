@@ -815,15 +815,35 @@ pub async fn deliver_summary(
     // (3) Read `disputes.assigned_solver` fresh — the value can have
     //     changed since the session was opened (a human solver may
     //     have taken the dispute mid-mediation).
+    //
+    //     Three distinct outcomes we must NOT conflate:
+    //     - `Ok(Some(pk))`: a solver is explicitly assigned → try targeted.
+    //     - `Ok(None)`: the dispute row exists but `assigned_solver`
+    //       column is NULL → broadcast.
+    //     - `Err(QueryReturnedNoRows)`: the dispute row itself is
+    //       missing. This is a real bug (the session row's FK on
+    //       `dispute_id` should prevent it), but if it ever happens
+    //       we surface an error rather than silently broadcasting.
+    //     - Any other `Err`: DB failure → surface; the caller will
+    //       log and retry on a later tick.
     let assigned_solver: Option<String> = {
         let guard = conn.lock().await;
-        guard
-            .query_row(
-                "SELECT assigned_solver FROM disputes WHERE dispute_id = ?1",
-                params![dispute_id],
-                |r| r.get::<_, Option<String>>(0),
-            )
-            .unwrap_or(None)
+        match guard.query_row(
+            "SELECT assigned_solver FROM disputes WHERE dispute_id = ?1",
+            params![dispute_id],
+            |r| r.get::<_, Option<String>>(0),
+        ) {
+            Ok(opt) => opt,
+            Err(rusqlite::Error::QueryReturnedNoRows) => {
+                return Err(Error::InvalidEvent(format!(
+                    "deliver_summary: dispute row missing for dispute_id={dispute_id}; \
+                     refusing to broadcast without a valid parent row"
+                )));
+            }
+            Err(e) => {
+                return Err(Error::Db(e));
+            }
+        }
     };
 
     // (4) Route.
@@ -833,17 +853,38 @@ pub async fn deliver_summary(
         router::Recipients::Broadcast(v) => v,
     };
     if recipient_list.is_empty() {
-        warn!(
-            session_id = %session_id,
-            "deliver_summary: no solver recipients configured; summary persisted but not delivered"
-        );
+        // No configured recipients → the summary cannot be
+        // delivered. We MUST NOT mark the session
+        // `summary_delivered` (that would be a lie recorded in
+        // the audit log). Leave the session at
+        // `summary_pending` so the operator's next step is
+        // visible: either configure a solver or escalate
+        // manually. The summarizer + `mediation_summaries` row
+        // already landed, so the rationale is preserved; this
+        // path is a persist-succeeded / deliver-failed split,
+        // not a rollback.
+        return Err(Error::Notification(format!(
+            "deliver_summary: no solver recipients configured for session_id={session_id}; \
+             session left at summary_pending (summary persisted, not delivered)"
+        )));
     }
 
     // (5) Per-recipient send + notification row + tracing.
+    //
+    // The DM body concatenates `summary_text` and
+    // `suggested_next_step` so the solver sees both the narrative
+    // recap and the actionable recommendation in a single wrap.
+    // Separator is a blank line — renders cleanly in most Nostr
+    // clients and keeps the two fields visually distinct.
+    let dm_body = format!(
+        "{}\n\nSuggested next step: {}",
+        summary.summary_text, summary.suggested_next_step
+    );
+    let mut any_sent = false;
     for pk_hex in &recipient_list {
         let sent_at = current_ts_secs()?;
         let (status, error_message) = match PublicKey::parse(pk_hex) {
-            Ok(pk) => match send_gift_wrap_notification(client, &pk, &summary.summary_text).await {
+            Ok(pk) => match send_gift_wrap_notification(client, &pk, &dm_body).await {
                 Ok(()) => {
                     info!(
                         session_id = %session_id,
@@ -851,6 +892,7 @@ pub async fn deliver_summary(
                         rationale_id = %summary.rationale_id,
                         "solver_summary_delivered"
                     );
+                    any_sent = true;
                     (NotificationStatus::Sent, None)
                 }
                 Err(e) => {
@@ -888,7 +930,17 @@ pub async fn deliver_summary(
         );
     }
 
-    // (6) `summary_pending → summary_delivered → closed`.
+    // (6) `summary_pending → summary_delivered → closed`. Only if
+    //     at least one recipient accepted the DM; otherwise the
+    //     session stays at `summary_pending` and the caller sees
+    //     the error — same shape as the empty-recipients branch
+    //     above, but for the "all sends failed" case.
+    if !any_sent {
+        return Err(Error::Notification(format!(
+            "deliver_summary: all recipient sends failed for session_id={session_id}; \
+             session left at summary_pending"
+        )));
+    }
     let now = current_ts_secs()?;
     transition_session(
         conn,

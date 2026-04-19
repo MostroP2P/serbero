@@ -235,7 +235,7 @@ session transitions `classified → summary_pending → summary_delivered
 
 ### Tests for User Story 3
 
-- [X] T055 [P] [US3] Integration test `tests/phase3_cooperative_summary.rs`: US1 + US2 two-round cooperative flow; `MockReasoningProvider` returns a `SummaryResponse`; assert the row + the Phase 1/2 notifier delivery + the session-state progression above
+- [X] T055 [P] [US3] Integration test `tests/phase3_cooperative_summary.rs`: direct-seed open-time cooperative flow (empty transcript — the two-round US1+US2 variant lands with a later slice when US2's in-memory transcript can feed the summarizer on restart); scripted `SummaryOnlyProvider` returns a `SummaryResponse`; assert the `mediation_summaries` row (rationale_id = SHA-256 of rationale text), targeted notifier delivery with `status = 'sent'`, session-state progression to `closed`, and the `summary_generated` audit event referencing the rationale id without inlining its text (FR-120)
 - [X] T056 [P] [US3] Integration test `tests/phase3_routing_model.rs`: with `disputes.assigned_solver` set via a simulated Phase 2 `s=in-progress`, assert the summary DM routes ONLY to that solver; without `assigned_solver`, assert it broadcasts to every configured solver; with assignment flipping mid-session, assert the next notification switches to targeted
 - [X] T057 [P] [US3] Inline unit test in `src/mediation/router.rs` (`#[cfg(test)] mod tests`): `resolve_recipients(solvers_cfg, assigned_solver_opt)` returns `Targeted(pubkey)` when `assigned_solver` is `Some`, `Broadcast(all_configured)` otherwise
 

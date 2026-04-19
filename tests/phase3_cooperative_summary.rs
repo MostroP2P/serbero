@@ -223,21 +223,31 @@ async fn cooperative_summary_closes_session_and_notifies_assigned_solver() {
     assert_eq!(state, "closed");
 
     // (c) Exactly one `notifications` row, targeted to the assigned
-    //     solver, with notif_type = mediation_summary.
-    let (notif_count, notif_solver, notif_type): (i64, String, String) = {
+    //     solver, with notif_type = mediation_summary AND
+    //     status = 'sent'. Pinning the status here keeps the test
+    //     from passing if the relay publish silently fails and a
+    //     `Failed` row lands instead — we want to verify the
+    //     successful-delivery path specifically.
+    let (notif_count, notif_solver, notif_type, notif_status): (i64, String, String, String) = {
         let c = conn.lock().await;
         c.query_row(
-            "SELECT COUNT(*), MIN(solver_pubkey), MIN(notif_type)
+            "SELECT COUNT(*), MIN(solver_pubkey), MIN(notif_type), MIN(status)
              FROM notifications
-             WHERE dispute_id = ?1 AND notif_type = 'mediation_summary'",
+             WHERE dispute_id = ?1
+               AND notif_type = 'mediation_summary'
+               AND status = 'sent'",
             rusqlite::params![dispute_id],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
         )
         .unwrap()
     };
     assert_eq!(notif_count, 1, "targeted routing → one notification row");
     assert_eq!(notif_solver, solver_pk_hex);
     assert_eq!(notif_type, "mediation_summary");
+    assert_eq!(
+        notif_status, "sent",
+        "targeted delivery must record status = sent"
+    );
 
     // (d) A `summary_generated` mediation_events row referencing the
     //     rationale id by content-hash. The raw rationale text MUST

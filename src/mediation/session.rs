@@ -28,10 +28,17 @@
 //!    - `AskClarification(text)` → call
 //!      [`super::draft_and_send_initial_message`], which persists
 //!      the outbound rows, publishes the gift-wraps, and records
-//!      `outbound_sent` only after each successful publish.
-//!    - `Summarize` / `Escalate(_)` → transition the session to
-//!      `escalation_recommended` (the cooperative-summary and
-//!      trigger-specific-escalation paths land with US3 / US4).
+//!      `outbound_sent` only after each successful publish. The
+//!      session stays at `awaiting_response`.
+//!    - `Summarize { classification, confidence }` → transition
+//!      `awaiting_response → classified` and return
+//!      [`OpenOutcome::ReadyForSummary`] so the engine can call
+//!      `deliver_summary` on this same tick (US3 / T060). No
+//!      outbound clarifying message is drafted on this path.
+//!    - `Escalate(_)` → transition the session to
+//!      `escalation_recommended` and return
+//!      [`OpenOutcome::DeferredToLaterPhase`]; US4 owns the
+//!      structured escalation handoff.
 //!
 //! Every session open therefore goes through the same audit path
 //! the engine drives on subsequent ticks, so the

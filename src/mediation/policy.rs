@@ -236,10 +236,27 @@ fn classify_to_decision(classification: &ClassificationResponse) -> PolicyDecisi
             }
             PolicyDecision::AskClarification(text.clone())
         }
-        SuggestedAction::Summarize => PolicyDecision::Summarize {
-            classification: classification.classification,
-            confidence: classification.confidence,
-        },
+        SuggestedAction::Summarize => {
+            // Cross-check the classification label before trusting
+            // the model's `Summarize` suggestion. The only label
+            // that maps to a cooperative summary is
+            // `CoordinationFailureResolvable`; any other label
+            // combined with `Summarize` is an inconsistent
+            // response (e.g. `SuspectedFraud` + "summarize this"),
+            // and we must not let that force a solver-facing
+            // summary. Fall back to `ReasoningUnavailable` — the
+            // same trigger the model-suggested-escalate path
+            // uses — so the dispute escalates instead of leaking
+            // a malformed cooperative summary to the solver DM.
+            use crate::models::mediation::ClassificationLabel;
+            match classification.classification {
+                ClassificationLabel::CoordinationFailureResolvable => PolicyDecision::Summarize {
+                    classification: classification.classification,
+                    confidence: classification.confidence,
+                },
+                _ => PolicyDecision::Escalate(EscalationTrigger::ReasoningUnavailable),
+            }
+        }
         // Unreachable because the rule above already handled this
         // case; kept defensive so an accidental enum widening does
         // not silently bypass the escalation path.
