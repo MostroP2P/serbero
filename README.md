@@ -53,91 +53,95 @@ Mostro operates normally with or without Serbero. If Serbero is offline, operato
 ## Architecture
 
 ```text
-┌──────────────┐      kind 38386 events     ┌──────────────────────┐
-│    Mostro    │ ──────────────────────────▶│       Serbero        │
-│              │                             │                      │
-│  - Escrow    │                             │  - Detection         │
-│  - Settle    │      NIP-59 gift wraps      │  - Dedup (SQLite)    │
-│  - Cancel    │ ◀─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ │  - Notification      │
-│  - Perms     │       (to solvers)          │  - Lifecycle state   │
-└──────────────┘                             │  - Re-notification   │
-                                             │  - Audit log         │
-                                             └──────────┬───────────┘
-                                                        │
-                                                ┌───────▼────────┐
-                                                │    SQLite      │
-                                                │  - disputes    │
-                                                │  - notifs      │
-                                                │  - transitions │
-                                                └────────────────┘
+┌──────────────┐      kind 38386 events     ┌────────────────────────────────┐
+│    Mostro    │ ──────────────────────────▶│            Serbero             │
+│              │                             │                                │
+│  - Escrow    │                             │  Phase 1/2:                    │
+│  - Settle    │      NIP-59 gift wraps      │   - Detection + dedup          │
+│  - Cancel    │ ◀─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ │   - Solver notification        │
+│  - Perms     │       (to solvers)          │   - Lifecycle + assignment     │
+│  - Chat      │                             │   - Re-notification timer      │
+│              │   NIP-59 to shared keys     │                                │
+│              │ ◀─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ │  Phase 3 (mediation engine):   │
+│              │      (to dispute parties)   │   - Take-flow + clarifying msg │
+└──────┬───────┘                             │   - Inbound ingest + dedup     │
+       │                                     │   - Classification + policy    │
+       │                                     │   - Summary or escalation      │
+       │                                     │   - Handoff package (Phase 4)  │
+       │                                     └─────────┬──────────────┬───────┘
+       │ NIP-44 chat                                   │              │
+       │ (parties ↔ Serbero)                  HTTP /chat/completions  │
+       │                                       (OpenAI-compatible)    │
+       │                                               │              │
+       ▼                                               ▼              ▼
+┌──────────────┐                                ┌─────────────┐  ┌──────────┐
+│ Buyer/Seller │                                │  Reasoning  │  │  SQLite  │
+│ (per-trade   │                                │  endpoint   │  │   v3     │
+│ shared keys) │                                └─────────────┘  └──────────┘
+└──────────────┘
 ```
 
 - **Mostro** owns escrow state, permissions, and dispute-closing authority.
-- **Serbero** owns notification, coordination, assignment visibility, and audit logging.
-- **Reasoning backend** (Phase 5) — documented as a planning contract in [`specs/002-phased-dispute-coordination/contracts/reasoning-backend.md`](specs/002-phased-dispute-coordination/contracts/reasoning-backend.md). No Rust code has been scaffolded for it yet. It will only be implemented when Phase 5 is planned.
+- **Serbero** owns notification, coordination, assignment visibility, audit logging, and (Phase 3) guided mediation.
+- **Reasoning backend** (Phase 3): an OpenAI-compatible HTTP endpoint that Serbero calls for classification + summary drafting. Pluggable via config (`api_base` + `api_key_env`); covers hosted OpenAI, self-hosted vLLM / llama.cpp / Ollama, LiteLLM, and any router proxy exposing `/chat/completions`. Outputs flow through a strict policy layer that suppresses fund-moving / dispute-closing instructions before any solver ever sees them.
 
 ---
 
 ## Implementation Status
 
 Serbero evolves in five phases. `main` currently implements
-**Phases 1 and 2** plus the Phase 3 setup, foundational, and the
-first US1 + US2 slices — the session-open path, its reasoning-
-reachability gate, and inbound-ingest helpers. The mediation engine
-loop itself is still not wired (see caveat below).
+**Phases 1, 2, and 3** end-to-end. Phase 3 ships the full guided-
+mediation engine: take-flow, clarifying messages, inbound ingest,
+classification, summary delivery, and escalation routing.
 
 | Phase | Scope                                                        | Status on `main`                                                                                  |
 |-------|--------------------------------------------------------------|---------------------------------------------------------------------------------------------------|
 | 1     | Always-on dispute listener and solver notification           | **Implemented**                                                                                   |
 | 2     | Intake tracking, assignment visibility, re-notification      | **Implemented**                                                                                   |
-| 3     | Guided mediation for low-risk disputes                       | **Partial** (~38 / 88 tasks): setup, foundational, US1 session-open + gating, US2 ingest helpers  |
-| 4     | Escalation support for write-permission operators            | Planned                                                                                           |
-| 5     | Optional reasoning backend (OpenAI-compatible / OpenClaw)    | Boundary shipped; additional adapters future work                                                 |
+| 3     | Guided mediation for low-risk disputes                       | **Implemented** (88 / 88 tasks): US1–US5 + foundational + polish all closed                       |
+| 4     | Escalation support for write-permission operators            | Planned (Phase 3 prepares the handoff package; Phase 4 will execute it)                           |
+| 5     | Optional reasoning backend                                   | OpenAI-compatible adapter shipped (covers hosted OpenAI, vLLM, llama.cpp, Ollama, LiteLLM, etc.); other vendor adapters are future work |
 
-### Phase 3 caveat — what "enabled" actually means today
+### What Phase 3 ships
 
-Setting `[mediation].enabled = true` does **NOT** yet start live
-mediation. The daemon runs the Phase 3 *bring-up* steps (loads the
-prompt bundle, builds the reasoning adapter, runs a health check)
-and then logs that the engine task is deliberately not spawned:
+Setting `[mediation].enabled = true` and `[reasoning].enabled = true`
+spawns the mediation engine task. On every tick it:
 
-```text
-Phase 3 mediation is fully configured but the engine task is NOT yet
-spawned — engine loop (T019 / T040 / T051) pending. See
-src/mediation/ module headers for the remaining scope.
-```
+- **Opens sessions** (`open_dispute_session`) for new disputes that
+  pass the mediation-eligibility gate, executes the dispute-chat
+  take-flow, and dispatches the first clarifying message to each
+  party's **shared (per-trade) pubkey** — never their primary pubkey.
+- **Ingests inbound replies** (`fetch_inbound` + `ingest_inbound`)
+  with author authentication, dedup by `(session_id,
+  inner_event_id)`, transcript recomputation, and per-party last-seen
+  tracking.
+- **Classifies** each turn through the configured reasoning provider
+  using the versioned prompt bundle. The policy layer enforces:
+  fraud / conflicting-claims flags escalate immediately,
+  `confidence < threshold` escalates, fund-moving / dispute-closing
+  outputs are suppressed and escalated as `authority_boundary_attempt`.
+- **Delivers cooperative summaries** (`deliver_summary`) to the
+  assigned solver (or broadcasts to all configured solvers if none is
+  assigned), then closes the session.
+- **Escalates** (`notify_solvers_escalation`) on any of 12 triggers
+  (`conflicting_claims`, `fraud_indicator`, `low_confidence`,
+  `party_unresponsive`, `round_limit`, `reasoning_unavailable`,
+  `authorization_lost`, `authority_boundary_attempt`,
+  `mediation_timeout`, `policy_bundle_missing`, `invalid_model_output`,
+  `notification_failed`) and writes a Phase 4 handoff package to
+  `mediation_events`.
+- **Resumes after restart**: `startup_resume_pass` rebuilds the
+  per-session ECDH key cache from the `mediation_sessions` table so
+  inbound dedup and outbound key-derivation survive process restarts
+  (FR-117).
+- **Revalidates solver auth** in a bounded background loop when the
+  initial check fails — Phase 1/2 keeps running unaffected
+  throughout.
 
-What ships today on `main`:
-
-- **US1 session-open** (`mediation::open_dispute_session`): the
-  dispute-chat take-flow + first clarifying message + transactional
-  persistence, with the prompt bundle pinned per session. Ported
-  against the Mostrix reference (`chat_utils.rs`,
-  `execute_take_dispute.rs`); the `R-101` verification is closed.
-- **US1 reasoning-reachability gate** (T044): session opens refuse
-  deterministically when `ReasoningProvider::health_check` fails,
-  without touching the relay or the `mediation_*` tables.
-- **US2 inbound ingest helpers** (T045 / T048 / T049 / T050):
-  `fetch_inbound` + `ingest_inbound` authenticate the inner event's
-  author against the expected trade pubkey, pin the inner kind to
-  `TextNote`, dedup by `(session_id, inner_event_id)`, recompute
-  `round_count` from the transcript, and update per-party last-seen
-  markers.
-
-What is **not** yet on `main`:
-
-- The periodic engine loop that drives `open_dispute_session` /
-  `ingest_inbound` per tick (T019 / T040 / T051).
-- Restart-resume for open sessions (T052 / T053).
-- The auth-retry loop and its gate (T042 / T043).
-- Rationale + `mediation_events` audit persistence (T032 / T033).
-- Policy-layer classification / drafting extraction (T038 / T039).
-- US3 (summary), US4 (escalation), US5 (additional provider adapters).
-
-Phase 1/2 behavior is completely unaffected whether the Phase 3
-bring-up succeeds or fails. The helpers above are callable from
-tests today but are **not** invoked from any running daemon task,
-so deploying `main` will not produce live mediation traffic.
+Phase 1/2 behavior remains fully isolated: any Phase 3 bring-up
+failure (missing prompt bundle, unreachable reasoning provider,
+revoked solver auth) leaves Phase 1/2 detection + notification
+untouched.
 
 ### Specifications
 
@@ -245,6 +249,58 @@ Shut down with `Ctrl-C` (SIGINT). On Unix hosts Serbero also catches SIGTERM (so
 3. Serbero transitions the dispute to `taken`, records the `assigned_solver` from the event's `p` tag if present, and sends an **assignment** notification to all solvers.
 4. No further re-notifications are sent for that dispute.
 
+### Enable Phase 3 (guided mediation)
+
+Phase 3 layers on top of Phases 1 and 2. To enable it:
+
+1. **Register Serbero as a solver** on the target Mostro instance (operator action — at least `read` permission). Serbero never holds fund-moving credentials.
+2. **Provision a reasoning endpoint** (any OpenAI-compatible HTTPS endpoint: hosted OpenAI, self-hosted vLLM / llama.cpp / Ollama, LiteLLM, or any router proxy exposing `/chat/completions`).
+3. **Export the API key** under the env-var name configured in `[reasoning].api_key_env` (default: `SERBERO_REASONING_API_KEY`):
+
+   ```bash
+   export SERBERO_REASONING_API_KEY="<your key>"
+   ```
+
+4. **Add the Phase 3 sections** to `config.toml` (see [Phase 3 configuration surface](#phase-3-configuration-surface)) and ensure the `prompts/phase3-*.md` files exist and contain real mediation content (the repo ships a working bundle — see [Prompt bundle](#prompt-bundle)).
+5. **Restart**:
+
+   ```bash
+   ./target/release/serbero
+   ```
+
+   At startup you should see (alongside the Phase 1/2 lines):
+
+   ```text
+   loaded config                    mostro_pubkey=<hex> db_path=serbero.db relay_count=N solver_count=M ...
+   Phase 3 prompt bundle loaded     prompt_bundle_id=phase3-default policy_hash=<hex>
+   reasoning provider health check ok
+   Phase 3 mediation is fully configured; engine task will be spawned
+   ```
+
+If the reasoning health check fails, Phase 3 stays disabled for the run (SC-105) and Phase 1/2 continues unaffected:
+
+```text
+Phase 3 reasoning health check failed; mediation disabled for this run
+(Phase 1/2 detection and notification continue unaffected)
+```
+
+If the initial solver-auth check fails, Phase 3 refuses to open new sessions and a bounded retry loop runs in the background; warnings log per attempt.
+
+### Verify Phase 3
+
+1. **Cooperative path (US3)** — publish a buyer-initiated dispute that the policy layer can classify as `coordination_failure_resolvable` (e.g., a payment-timing case). Expected:
+   - A `mediation_sessions` row with `state='awaiting_response'` and the policy hash pinned.
+   - The buyer's and seller's **shared (per-trade) pubkeys** receive the first clarifying gift wrap (NOT their primary pubkeys — SC-107).
+   - After both parties reply, a `mediation_summaries` row is written and the assigned solver receives a `mediation_summary` notification. The session transitions `summary_pending → summary_delivered → closed`.
+2. **Escalation path (US4)** — drive any of the 12 triggers (let `party_response_timeout_seconds` elapse without replies, exceed `max_rounds`, or take the reasoning provider offline). Expected:
+   - Session transitions to `escalation_recommended`.
+   - A `mediation_events` row records the trigger and a `handoff_prepared` row carries the Phase 4 package.
+   - The configured solvers receive a `mediation_escalation_recommended` notification ("Needs human judgment").
+3. **Provider swap (US5)** — stop the daemon, change `[reasoning].provider` / `model` / `api_base` / `api_key_env` to point at a different OpenAI-compatible endpoint, export the new key, and restart. New sessions call the new endpoint; no rebuild needed.
+4. **Restart resume (FR-117)** — kill the daemon mid-session and restart. The startup-resume pass rebuilds the per-session key cache from the database, so inbound replies are deduped correctly and outbound responses go to the right shared keys.
+
+For the full operator walkthrough see [`specs/003-guided-mediation/quickstart.md`](specs/003-guided-mediation/quickstart.md).
+
 ---
 
 ## Configuration Reference
@@ -280,7 +336,7 @@ Phases 1 and 2 intentionally do not commit to a CLI flag surface. The entire con
 
 ### Phase 3 configuration surface
 
-Phase 3 adds four new functional sections. They are all `#[serde(default)]` — if you omit them, the daemon behaves as a Phase 1/2 daemon. With them set, the daemon runs the Phase 3 bring-up (prompt-bundle load, reasoning health check) but does **not** yet spawn the engine loop — see the Phase 3 caveat above.
+Phase 3 adds four new functional sections. They are all `#[serde(default)]` — if you omit them, the daemon behaves as a Phase 1/2 daemon. With both `[mediation].enabled = true` and `[reasoning].enabled = true`, the daemon runs the Phase 3 bring-up (prompt-bundle load, reasoning health check) and spawns the mediation engine task.
 
 ```toml
 [mediation]
@@ -318,18 +374,19 @@ Per-field notes:
 
 | Section        | Key                                       | Notes                                                                                                    |
 |----------------|-------------------------------------------|----------------------------------------------------------------------------------------------------------|
-| `[mediation]`  | `enabled`                                 | Today: triggers the Phase 3 *bring-up* only. Does NOT start live mediation — see the caveat above.       |
-| `[mediation]`  | `max_rounds`                              | Number of outbound+inbound pairs per session before escalation. Defaults to `2`.                         |
-| `[mediation]`  | `party_response_timeout_seconds`          | Escalation trigger for unresponsive parties. Defaults to `1800` (30 min).                                |
+| `[mediation]`  | `enabled`                                 | Master switch for Phase 3. `false` → daemon behaves as a pure Phase 1/2 daemon.                          |
+| `[mediation]`  | `max_rounds`                              | Number of outbound+inbound pairs per session before `round_limit` escalation. Defaults to `2`.           |
+| `[mediation]`  | `party_response_timeout_seconds`          | Triggers `party_unresponsive` escalation. Defaults to `1800` (30 min). Set to `0` to disable the timer.  |
 | `[mediation]`  | `solver_auth_retry_*`                     | Bounded revalidation loop for Serbero's solver registration in Mostro. Defaults: 60s→3600s, 24h/24 caps. |
-| `[reasoning]`  | `enabled`                                 | Must be `true` for Phase 3 bring-up to run the health check.                                             |
-| `[reasoning]`  | `provider`                                | `openai` (also covers OpenAI-compatible endpoints). `anthropic` / `ppqai` / `openclaw` fail loudly at startup today. |
+| `[reasoning]`  | `enabled`                                 | Must be `true` (alongside `[mediation].enabled`) for the engine task to spawn.                           |
+| `[reasoning]`  | `provider`                                | `openai` (also covers OpenAI-compatible endpoints — vLLM, llama.cpp, Ollama, LiteLLM, any router proxy). `anthropic` / `ppqai` / `openclaw` are placeholders that fail loudly at startup. |
+| `[reasoning]`  | `model`                                   | Whatever model the configured endpoint accepts (e.g., `gpt-5`, `gpt-4o-mini`, a self-hosted model name). |
 | `[reasoning]`  | `api_base`                                | Where the HTTP client points. Change this to swap to any OpenAI-compatible endpoint without a rebuild.   |
-| `[reasoning]`  | `api_key_env`                             | **Environment variable name** whose value holds the credential. Defaults to `SERBERO_REASONING_API_KEY`. |
-| `[reasoning]`  | `request_timeout_seconds`                 | Per-HTTP-call timeout.                                                                                   |
-| `[reasoning]`  | `followup_retry_count`                    | Additional attempts after the initial request on retryable errors (408, 429, 5xx). `0` = no retry.       |
+| `[reasoning]`  | `api_key_env`                             | **Environment variable name** whose value holds the credential. Defaults to `SERBERO_REASONING_API_KEY`. The variable name is just configuration — point it at any var your secrets pipeline already sets. |
+| `[reasoning]`  | `request_timeout_seconds`                 | Per-HTTP-call timeout. Floored to ≥ 1 s.                                                                 |
+| `[reasoning]`  | `followup_retry_count`                    | Adapter-owned bounded retry budget (FR-104). Additional attempts after the initial request on retryable errors. `0` = no retry. |
 | `[prompts]`    | `*_path`                                  | Paths to the versioned prompt bundle files. The default paths match the `prompts/` tree in this repo.    |
-| `[chat]`       | `inbound_fetch_interval_seconds`          | Mostro-chat inbound polling cadence (used by the future US2 ingest loop).                                |
+| `[chat]`       | `inbound_fetch_interval_seconds`          | Mostro-chat inbound polling cadence used by the engine ingest loop.                                      |
 
 ### Secrets and environment variable resolution
 
@@ -344,14 +401,16 @@ The default layout — matched by `[prompts].*` defaults — is:
 
 ```text
 prompts/
-├── phase3-system.md
-├── phase3-classification.md
-├── phase3-escalation-policy.md
-├── phase3-mediation-style.md
-└── phase3-message-templates.md
+├── phase3-system.md             # mediation identity + authority limits + honesty discipline
+├── phase3-classification.md     # 5 labels (snake_case canonical), 5 flags, confidence semantics
+├── phase3-escalation-policy.md  # 12 triggers + handoff package shape
+├── phase3-mediation-style.md    # tone, prohibited / preferred phrasings
+└── phase3-message-templates.md  # first / follow-up / summary / escalation / timeout templates
 ```
 
-The files shipped in this branch are **structural stubs** (they exist so the `policy_hash` pipeline has deterministic bytes to hash). They are clearly marked as not-live content and MUST be filled in before running Phase 3 against real disputes. The bundle is hashed deterministically at startup; every mediation session pins the exact bundle hash and id, so behavior is reproducible from git history.
+The shipped bundle is real, working content matching `spec.md` §AI Agent Behavior Boundaries — assistance-only identity, no fund-moving authority, explicit honesty / uncertainty rules, allowed vs. disallowed outputs. Operators can amend it (e.g., to localize message templates) without code changes; the `policy_hash` regenerates deterministically at startup.
+
+Every mediation session pins the bundle's `policy_hash` and `prompt_bundle_id` (SC-103). Every audit row in `mediation_sessions`, `mediation_messages`, `mediation_summaries`, `mediation_events`, and `reasoning_rationales` carries the same pair, so behavior is reproducible from git history and the audit trail can be replayed against the exact bundle bytes that produced it.
 
 Missing files → `Error::PromptBundleLoad`; Phase 3 stays off, Phase 1/2 keeps running.
 
@@ -396,6 +455,20 @@ Every `renotification_check_interval_seconds`, the background task:
 
 Disputes that are already `taken`, `waiting`, `escalated`, or `resolved` never trigger re-notifications — the SQL filter enforces this.
 
+### Phase 3 mediation engine
+
+When `[mediation].enabled = true` and the bring-up succeeds, an engine task runs alongside the Phase 1/2 loop. Each tick:
+
+1. **Open** — for any new dispute that passes the eligibility gate, run the dispute-chat take-flow against Mostro, derive per-trade ECDH shared keys for both parties, persist a `mediation_sessions` row with the bundle pinned, and dispatch the first clarifying message to each party's **shared pubkey** (SC-107). Outbound rows land in `mediation_messages` with provenance.
+2. **Ingest** — `fetch_inbound` polls Mostro's chat surface every `inbound_fetch_interval_seconds`. `ingest_inbound` authenticates the inner event's author against the expected trade pubkey, pins the inner kind to `TextNote`, dedups by `(session_id, inner_event_id)` (so a relay replay or daemon restart never double-counts), recomputes `round_count` from the transcript, and updates per-party last-seen timestamps.
+3. **Classify** — once both parties have replied for the round, the engine calls the reasoning provider's `classify` method with the full prompt bundle (so the `policy_hash` pin is honest) and the transcript. The response is parsed into a snake_case-keyed JSON shape (`coordination_failure_resolvable`, `conflicting_claims`, `suspected_fraud`, `unclear`, `not_suitable_for_mediation`) plus a confidence score and flags.
+4. **Apply policy** — fraud / conflicting-claims flags escalate immediately; `confidence < 0.5` escalates with `low_confidence`; `Summarize` paired with a non-cooperative label escalates with `invalid_model_output`; any output containing fund-moving / dispute-closing phrases is suppressed and escalated with `authority_boundary_attempt`. Otherwise the policy decides between `AskClarification`, `Summarize`, or `Escalate(reason)`.
+5. **Summarize or escalate** — the cooperative path calls `summarize`, persists `mediation_summaries`, and routes a `mediation_summary` notification to the assigned solver (or broadcasts to all configured solvers if none is assigned). The session transitions `summary_pending → summary_delivered → closed`. The escalation path writes a `handoff_prepared` row with the Phase 4 package and sends a `mediation_escalation_recommended` notification.
+6. **Resume after restart** — `startup_resume_pass` rebuilds the per-session ECDH key cache from `mediation_sessions` so a daemon restart never breaks dedup or outbound key derivation (FR-117). Sessions whose `policy_hash` no longer matches the loaded bundle are escalated with `policy_bundle_missing`.
+7. **Auth retry** — if the initial solver-auth check fails, a bounded background loop revalidates with exponential backoff (knobs under `[mediation].solver_auth_retry_*`). Until it recovers, new session opens are deterministically refused; Phase 1/2 continues unaffected.
+
+All rationale text is written only to the audit store (`reasoning_rationales`) and referenced by `rationale_id` (SHA-256 content hash) in general logs and `mediation_events.payload_json` (FR-120). The `RationaleText::Debug` impl redacts the body to `<N bytes redacted>`.
+
 ---
 
 ## Notification Format
@@ -430,7 +503,30 @@ assigned_solver: <pubkey|unknown>
 lifecycle_state: taken
 ```
 
-Notifications **never include** the initiator's public key — only their trade role (buyer / seller). This matches the privacy clarification in `spec.md` Session 2026-04-16.
+### Mediation summary (Phase 3, cooperative path)
+
+`notif_type='mediation_summary'`, gift-wrapped to the assigned solver (targeted) or every configured solver (broadcast):
+
+```text
+<summary text from the reasoning provider>
+
+Suggested next step: <single-line recommendation>
+```
+
+The summary text describes what each party reported and proposes a cooperative resolution. The "Suggested next step" line is advisory only — no fund-moving instructions are ever drafted (the policy layer suppresses them). The full rationale is preserved in `reasoning_rationales` and referenced by `rationale_id` in `mediation_events`.
+
+### Mediation escalation (Phase 3, US4)
+
+`notif_type='mediation_escalation_recommended'`, gift-wrapped to the assigned solver or all configured solvers:
+
+```text
+Mediation session <session_id> (dispute <dispute_id>) escalated —
+trigger: <snake_case_trigger>. Needs human judgment.
+```
+
+The compact body keeps DMs readable across Nostr clients; the full handoff package (evidence refs, rationale refs, prompt bundle id, policy hash, assembled-at timestamp) lives alongside in `mediation_events` as a `handoff_prepared` row for Phase 4 to consume.
+
+Notifications **never include** the initiator's primary pubkey — only their trade role (buyer / seller). Outbound mediation gift wraps address parties' **shared (per-trade) pubkeys**, never their primary pubkeys (SC-107). This matches the privacy clarification in `spec.md` Session 2026-04-16.
 
 ---
 
@@ -453,16 +549,27 @@ SERBERO_LOG="serbero=debug,nostr_sdk=warn" ./target/release/serbero
 
 ### SQLite tables
 
-Every audit-relevant fact is also in the database, so you can reconstruct the history of a dispute without grepping logs:
+Every audit-relevant fact is also in the database, so you can reconstruct the history of a dispute without grepping logs.
+
+**Phase 1/2 tables:**
 
 - `disputes` — one row per detected dispute, including `lifecycle_state`, `assigned_solver`, `last_notified_at`, `last_state_change`.
-- `notifications` — one row per notification attempt (initial, re-notification, assignment), with `status` (`sent` / `failed`) and `error_message`.
-- `dispute_state_transitions` — every state change with `from_state`, `to_state`, `transitioned_at`, `trigger` (event id or internal tag).
+- `notifications` — one row per notification attempt (`initial`, `re-notification`, `assignment`, `mediation_summary`, `mediation_escalation_recommended`), with `status` (`sent` / `failed`) and `error_message`.
+- `dispute_state_transitions` — every state change with `from_state`, `to_state`, `transitioned_at`, `trigger`.
 - `schema_version` — tracks applied migrations; migrations are idempotent and wrapped in per-version transactions.
+
+**Phase 3 tables (migration v3):**
+
+- `mediation_sessions` — one row per opened session: `state`, `round_count`, the pinned `prompt_bundle_id` + `policy_hash`, `buyer_shared_pubkey` / `seller_shared_pubkey`, per-party last-seen timestamps.
+- `mediation_messages` — every outbound and inbound message, dedup-keyed by `(session_id, inner_event_id)`, with the bundle pinned on outbound rows.
+- `reasoning_rationales` — content-addressed (SHA-256) rationale text from every classify / summarize call, with provider, model, and bundle pinned. Operator-only audit store; FR-120 ensures the body never leaks into general logs or `mediation_events.payload_json`.
+- `mediation_summaries` — one row per cooperative summary delivered, with classification, confidence, summary text, suggested next step, and the rationale reference id.
+- `mediation_events` — every lifecycle / audit event (session-open, classification, summary-generated, escalation-triggered, handoff-prepared, auth-retry-{attempt,recovered,terminated}, etc.) with the bundle and (where applicable) rationale referenced by id.
 
 Inspect with the usual `sqlite3` CLI:
 
 ```bash
+# Phase 1/2 — recent disputes + notifications
 sqlite3 serbero.db "SELECT dispute_id, lifecycle_state, assigned_solver, last_state_change \
                     FROM disputes ORDER BY detected_at DESC LIMIT 20;"
 
@@ -471,22 +578,63 @@ sqlite3 serbero.db "SELECT dispute_id, notif_type, status, sent_at, error_messag
 
 sqlite3 serbero.db "SELECT dispute_id, from_state, to_state, trigger, transitioned_at \
                     FROM dispute_state_transitions ORDER BY id DESC LIMIT 50;"
+
+# Phase 3 — mediation sessions and their state
+sqlite3 serbero.db "SELECT session_id, dispute_id, state, round_count, policy_hash \
+                    FROM mediation_sessions ORDER BY started_at DESC LIMIT 20;"
+
+# Phase 3 — full transcript for a session
+sqlite3 serbero.db "SELECT direction, party, inner_event_created_at, substr(content,1,80) \
+                    FROM mediation_messages WHERE session_id='<sid>' \
+                    ORDER BY inner_event_created_at ASC;"
+
+# Phase 3 — lifecycle / escalation events
+sqlite3 serbero.db "SELECT kind, substr(payload_json,1,120), occurred_at \
+                    FROM mediation_events WHERE session_id='<sid>' \
+                    ORDER BY id ASC;"
+
+# Phase 3 — rationale audit store (operator-only; gate behind filesystem permissions)
+sqlite3 serbero.db "SELECT rationale_id, provider, model, policy_hash, generated_at \
+                    FROM reasoning_rationales ORDER BY generated_at DESC LIMIT 20;"
 ```
+
+### SC-102 audit (Phase 3 never executed a fund-moving action)
+
+Re-confirm at any time that no Mostro admin action ever flowed through Serbero:
+
+```bash
+sqlite3 serbero.db "SELECT COUNT(*) FROM notifications \
+                    WHERE notif_type IN ('admin_settle','admin_cancel');"
+# Expected: 0
+```
+
+Combined with the constitutional invariant that Serbero holds no credentials for those actions, Phase 3 satisfies *I. Fund Isolation First*.
 
 ---
 
 ## Degraded-Mode Behavior
 
-| Failure                         | Behavior                                                                                                                                                                                                        |
-|---------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| Single relay drops              | nostr-sdk auto-reconnects with backoff. Other relays continue serving events.                                                                                                                                   |
-| All relays drop                 | Reconnection keeps retrying. Notifications halt until a relay comes back. The daemon keeps running.                                                                                                            |
-| SQLite read failure             | Notifications halt. The daemon logs the error, keeps retrying DB access, and resumes notifications when persistence recovers. Deduplication integrity is prioritized over delivery.                            |
-| SQLite write failure on INSERT  | No Phase 1 queue exists. The dispute may not be notified at all unless the same event is observed again after persistence recovers (e.g., a relay retransmission or operator replay).                          |
-| Notification send failure       | Logged as a `failed` row in `notifications` with the error message. Phase 1 does not retry individual sends. Phase 2's re-notification timer covers disputes that stay unattended.                            |
-| Invalid solver pubkey in config | Logged as a `failed` notification row; other solvers still receive the notification. The daemon keeps running.                                                                                                 |
-| No solvers configured           | Logged as a WARN at startup. Serbero still detects and persists disputes, but the notification loop is skipped — the audit trail is preserved.                                                                 |
-| Serbero fully offline           | Mostro operates normally. Solvers resolve disputes manually. When Serbero comes back and reconnects, it resumes detecting **new** events. Historic events delivered while offline are the relay's to replay.   |
+| Failure                                        | Behavior                                                                                                                                                                                                        |
+|------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Single relay drops                             | nostr-sdk auto-reconnects with backoff. Other relays continue serving events.                                                                                                                                   |
+| All relays drop                                | Reconnection keeps retrying. Notifications halt until a relay comes back. The daemon keeps running.                                                                                                            |
+| SQLite read failure                            | Notifications halt. The daemon logs the error, keeps retrying DB access, and resumes notifications when persistence recovers. Deduplication integrity is prioritized over delivery.                            |
+| SQLite write failure on INSERT                 | No Phase 1 queue exists. The dispute may not be notified at all unless the same event is observed again after persistence recovers (e.g., a relay retransmission or operator replay).                          |
+| Notification send failure                      | Logged as a `failed` row in `notifications` with the error message. Phase 1 does not retry individual sends. Phase 2's re-notification timer covers disputes that stay unattended.                            |
+| Invalid solver pubkey in config                | Logged as a `failed` notification row; other solvers still receive the notification. The daemon keeps running.                                                                                                 |
+| No solvers configured                          | Logged as a WARN at startup. Serbero still detects and persists disputes, but the notification loop is skipped — the audit trail is preserved.                                                                 |
+| Serbero fully offline                          | Mostro operates normally. Solvers resolve disputes manually. When Serbero comes back and reconnects, it resumes detecting **new** events. Historic events delivered while offline are the relay's to replay.   |
+| Phase 3 — prompt bundle missing / unloadable   | `Error::PromptBundleLoad` at startup; Phase 3 stays disabled for the run. Phase 1/2 detection + notification continue unaffected. Resumed sessions whose pinned `policy_hash` no longer matches the loaded bundle are escalated with `policy_bundle_missing`. |
+| Phase 3 — reasoning provider health-check fails| SC-105: Phase 3 stays disabled for the run; engine task is not spawned; Phase 1/2 continues unaffected. Operator-actionable error logs `provider`, `model`, `api_base`, and the underlying error.              |
+| Phase 3 — reasoning provider unreachable mid-session | The classify / summarize call surfaces `ReasoningError`; the session escalates with `reasoning_unavailable`. Adapter-owned bounded retry budget (`followup_retry_count`) covers transient errors first. |
+| Phase 3 — reasoning provider returns garbage   | `MalformedResponse` → escalates with `reasoning_unavailable`. Structurally inconsistent shape (e.g. `Summarize` + non-cooperative label) escalates with `invalid_model_output`.                                |
+| Phase 3 — reasoning output crosses authority boundary | Suppressed by `AUTHORITY_BOUNDARY_PHRASES` detection; session escalates with `authority_boundary_attempt`. The full output is preserved in the rationale store; general logs reference it by id only.        |
+| Phase 3 — solver auth lost at startup          | Initial check fails → bounded auth-retry loop runs in the background with exponential backoff; session opens are deterministically refused until recovery. Phase 1/2 unaffected.                              |
+| Phase 3 — solver auth revoked mid-session      | Outbound auth failure surfaces as `AuthorizationLost`; affected session escalates with `authorization_lost`. Auth-retry loop resumes.                                                                          |
+| Phase 3 — party stops responding               | After `party_response_timeout_seconds`, session escalates with `party_unresponsive`. Set the timeout to `0` to disable the check (test / staging only).                                                       |
+| Phase 3 — round limit reached                  | After `max_rounds` outbound+inbound pairs without convergence, session escalates with `round_limit`.                                                                                                          |
+| Phase 3 — daemon restart mid-session           | `startup_resume_pass` rebuilds the per-session ECDH key cache from `mediation_sessions`; inbound dedup and outbound key derivation survive intact (FR-117). The restart-dedup integration test pins this. |
+| Phase 3 — mediation summary undeliverable      | If the summary persists but every solver send fails (or no recipients are configured), session escalates with `notification_failed` so the audit trail surfaces it instead of stranding it at `summary_pending`. |
 
 ---
 
@@ -497,54 +645,81 @@ sqlite3 serbero.db "SELECT dispute_id, from_state, to_state, trigger, transition
 ├── Cargo.toml, Cargo.lock
 ├── clippy.toml, rustfmt.toml
 ├── config.toml                          (you create this; gitignored)
+├── prompts/                             # Phase 3 versioned prompt bundle
+│   ├── phase3-system.md
+│   ├── phase3-classification.md
+│   ├── phase3-escalation-policy.md
+│   ├── phase3-mediation-style.md
+│   └── phase3-message-templates.md
 ├── src/
 │   ├── main.rs                          # binary entry point
 │   ├── lib.rs                           # re-exports modules for tests
 │   ├── error.rs                         # Error + Result types
 │   ├── config.rs                        # TOML + env loader
-│   ├── daemon.rs                        # main loop + re-notification timer
+│   ├── daemon.rs                        # main loop + re-notification + Phase 3 bring-up
 │   ├── dispatcher.rs                    # event routing by `s` tag
-│   ├── nostr/
-│   │   ├── client.rs                    # Client + relay wiring
-│   │   ├── subscriptions.rs             # kind 38386 filter builders
-│   │   └── notifier.rs                  # gift-wrap send helper
-│   ├── handlers/
-│   │   ├── dispute_detected.rs          # s=initiated handler
-│   │   └── dispute_updated.rs           # s=in-progress handler
+│   ├── nostr/                           # Client, subscriptions, gift-wrap notifier
+│   ├── handlers/                        # s=initiated / s=in-progress handlers
+│   ├── chat/                            # Phase 3 dispute-chat surface
+│   │   ├── dispute_chat_flow.rs         # take-flow against Mostro
+│   │   ├── inbound.rs                   # fetch + ingest with author auth + dedup
+│   │   ├── outbound.rs                  # build wraps for shared pubkeys
+│   │   └── shared_key.rs                # ECDH per-trade key derivation
+│   ├── reasoning/                       # Phase 3 provider abstraction
+│   │   ├── mod.rs                       # ReasoningProvider trait + factory
+│   │   ├── openai.rs                    # OpenAI-compatible adapter
+│   │   ├── not_yet_implemented.rs       # NYI guard for unshipped vendor names
+│   │   └── health.rs                    # startup health check (SC-105)
+│   ├── prompts/                         # Phase 3 prompt bundle loader + hash
+│   │   ├── mod.rs                       # PromptBundle + load_bundle
+│   │   └── hash.rs                      # deterministic SHA-256 of bundle bytes
+│   ├── mediation/                       # Phase 3 engine
+│   │   ├── mod.rs                       # run_engine, draft_and_send_initial_message,
+│   │   │                                # deliver_summary, notify_solvers_escalation,
+│   │   │                                # startup_resume_pass
+│   │   ├── session.rs                   # open_dispute_session + auth gate
+│   │   ├── auth_retry.rs                # bounded solver-auth revalidation
+│   │   ├── policy.rs                    # classification → action decision
+│   │   ├── summarizer.rs                # summarize + AUTHORITY_BOUNDARY_PHRASES
+│   │   ├── router.rs                    # targeted vs broadcast solver routing
+│   │   └── escalation.rs                # 12 triggers + handoff package
 │   ├── db/
 │   │   ├── mod.rs                       # connection + pragmas
-│   │   ├── migrations.rs                # schema_version + per-version txns
+│   │   ├── migrations.rs                # schema_version (v1, v2, v3) + per-version txns
 │   │   ├── disputes.rs                  # insert, get, lifecycle state helpers
 │   │   ├── notifications.rs             # record_notification{,_logged}
-│   │   └── state_transitions.rs         # unattended dispute query
+│   │   ├── state_transitions.rs         # unattended dispute query
+│   │   ├── mediation.rs                 # mediation_sessions + mediation_messages
+│   │   ├── mediation_events.rs          # lifecycle / audit events
+│   │   └── rationales.rs                # content-addressed rationale audit store
 │   └── models/
-│       ├── config.rs                    # typed config structs
+│       ├── config.rs                    # typed config structs (incl. Phase 3 sections)
 │       ├── dispute.rs                   # Dispute + LifecycleState state machine
-│       └── notification.rs              # NotificationStatus / NotificationType
+│       ├── notification.rs              # NotificationStatus / NotificationType
+│       ├── mediation.rs                 # ClassificationLabel, Flag, EscalationTrigger, …
+│       └── reasoning.rs                 # ReasoningRequest / Response + RationaleText
 ├── tests/
 │   ├── common/mod.rs                    # MockRelay harness + SolverListener
-│   ├── phase1_detection.rs
-│   ├── phase1_dedup.rs
-│   ├── phase1_failure.rs
-│   ├── phase2_lifecycle.rs
-│   ├── phase2_assignment.rs
-│   └── phase2_renotification.rs
-└── specs/002-phased-dispute-coordination/
-    ├── spec.md                          # feature spec + clarifications
-    ├── plan.md                          # implementation plan + flow diagrams
-    ├── research.md                      # pinned SDK / crate decisions
-    ├── data-model.md                    # SQLite schema + state machine
-    ├── quickstart.md                    # verification steps
-    ├── tasks.md                         # 50-task breakdown (all complete)
-    ├── checklists/requirements.md
-    └── contracts/reasoning-backend.md   # Phase 5 planning contract (no code yet)
+│   ├── phase1_detection.rs              ├── phase2_lifecycle.rs
+│   ├── phase1_dedup.rs                  ├── phase2_assignment.rs
+│   ├── phase1_failure.rs                ├── phase2_renotification.rs
+│   ├── phase3_session_open.rs           ├── phase3_summary_escalation.rs
+│   ├── phase3_session_open_gating.rs    ├── phase3_authority_boundary.rs
+│   ├── phase3_response_ingest.rs        ├── phase3_escalation_triggers.rs
+│   ├── phase3_response_dedup_restart.rs ├── phase3_provider_swap.rs
+│   ├── phase3_stale_message.rs          ├── phase3_provider_not_yet_implemented.rs
+│   ├── phase3_routing_model.rs          └── phase3_cooperative_summary.rs
+│   └── fixtures/prompts/                # stable bundle for tests (untouched)
+└── specs/
+    ├── 002-phased-dispute-coordination/ # Phase 1/2 spec + plan + tasks
+    └── 003-guided-mediation/            # Phase 3 spec + plan + tasks + contracts + quickstart
 ```
 
 ---
 
 ## Running the Test Suite
 
-The crate ships with **30 tests**: 22 unit tests (inline `#[cfg(test)]` modules across the lib) and 8 integration tests that spin up an in-process `nostr-relay-builder::MockRelay` and exercise the daemon end-to-end.
+The crate ships **155 tests**: 123 inline `#[cfg(test)]` lib unit tests (covering parsers, policy decisions, audit-store invariants, migrations, prompt loading, …) plus 32 integration tests that spin up an in-process `nostr-relay-builder::MockRelay` (and, where relevant, an `httpmock` reasoning endpoint) and exercise the daemon end-to-end.
 
 ```bash
 # Unit tests only (fast)
@@ -554,14 +729,14 @@ cargo test --lib
 cargo test --all-targets
 
 # Lint + format checks
-cargo clippy --all-targets -- -D warnings
+cargo clippy --all-targets --all-features -- -D warnings
 cargo fmt --all -- --check
 
 # Release build
 cargo build --release
 ```
 
-Integration tests cover the scenarios from `quickstart.md`:
+**Phase 1/2 integration tests** cover the scenarios from `specs/002-phased-dispute-coordination/quickstart.md`:
 
 | Test file                        | What it verifies                                                                 |
 |----------------------------------|----------------------------------------------------------------------------------|
@@ -571,6 +746,23 @@ Integration tests cover the scenarios from `quickstart.md`:
 | `phase2_lifecycle.rs`            | `new → notified → taken` transition chain recorded in correct order              |
 | `phase2_assignment.rs`           | `s=in-progress` → lifecycle_state `taken`, assigned_solver set, assignment notification delivered, no further re-notifications |
 | `phase2_renotification.rs`       | Unattended disputes re-notified past timeout; taken disputes are not             |
+
+**Phase 3 integration tests** cover the scenarios from `specs/003-guided-mediation/quickstart.md`:
+
+| Test file                                       | What it verifies                                                                                                   |
+|-------------------------------------------------|--------------------------------------------------------------------------------------------------------------------|
+| `phase3_session_open.rs`                        | Open session → take-flow → first clarifying message dispatched to both parties' shared pubkeys                      |
+| `phase3_session_open_gating.rs`                 | Reasoning health-check failure → session open refused; Phase 1/2 still notifies (SC-105)                            |
+| `phase3_response_ingest.rs`                     | Inbound replies authenticated, dedup-keyed by inner event id, transcript + last-seen updated                        |
+| `phase3_response_dedup_restart.rs`              | Inbound dedup survives daemon restart (FR-117 — `startup_resume_pass` rebuilds the session-key cache)              |
+| `phase3_stale_message.rs`                       | Stale inbound is persisted but does not advance the session                                                        |
+| `phase3_routing_model.rs`                       | Targeted (assigned solver) vs broadcast routing; fallback when assigned solver is unknown                          |
+| `phase3_cooperative_summary.rs`                 | US3 happy path: summary persisted, session closes, assigned solver notified, FR-120 redaction + SC-103 audit consistency pinned |
+| `phase3_summary_escalation.rs`                  | Empty recipient list → `notification_failed` escalation (no stranded summaries)                                    |
+| `phase3_authority_boundary.rs`                  | Fund-moving / dispute-closing output suppressed; session escalates with `authority_boundary_attempt`               |
+| `phase3_escalation_triggers.rs`                 | All applicable triggers fire correctly: `conflicting_claims`, `fraud_indicator`, `low_confidence`, `party_unresponsive`, `round_limit`, `reasoning_unavailable`, `authorization_lost` |
+| `phase3_provider_swap.rs`                       | Two `OpenAiProvider`s pointing at distinct httpmock endpoints both work; `openai-compatible` routes to the same adapter (US5) |
+| `phase3_provider_not_yet_implemented.rs`        | Unshipped vendor names (`anthropic`, `ppqai`, `openclaw`) fail loudly at startup with an actionable error          |
 
 ---
 
@@ -607,13 +799,11 @@ Serbero is governed by a [constitution](.specify/memory/constitution.md) that de
 
 ## Roadmap
 
-Upcoming phases will be planned through their own specification amendments. The outline:
-
-- **Phase 3 — Guided Mediation** (low-risk coordination failures): contact dispute parties via gift wraps, ask clarifying questions, surface uncertainty, and either suggest a cooperative resolution to the assigned solver or escalate.
-- **Phase 4 — Escalation Support**: structured escalation summaries (dispute timeline, party claims, mediation actions, confidence assessment) routed to write-permission solvers, with re-escalation on no-acknowledge.
-- **Phase 5 — Reasoning Backend**: implement the `ReasoningBackend` trait currently documented in [`contracts/reasoning-backend.md`](specs/002-phased-dispute-coordination/contracts/reasoning-backend.md). Direct-API default, optional OpenClaw, strict policy-layer validation of all advisory outputs.
-
-No code for Phases 3–5 is present today — the forward-looking sketches in `data-model.md` and the trait contract are explicitly marked as provisional.
+- **Phase 1 — Detection + notification**: shipped.
+- **Phase 2 — Lifecycle + re-notification + assignment visibility**: shipped.
+- **Phase 3 — Guided Mediation** (low-risk coordination failures): shipped on `main`. Contacts dispute parties via gift wraps to their shared pubkeys, runs bounded clarifying rounds, classifies through a versioned prompt bundle + reasoning provider, and either delivers a cooperative summary to the assigned solver or escalates with a Phase 4 handoff package. Strict policy-layer validation suppresses any output that would cross Serbero's authority boundary.
+- **Phase 4 — Escalation Execution**: planned. Phase 3 already prepares the `handoff_prepared` package (evidence refs, rationale refs, prompt bundle id, policy hash); Phase 4 will consume it — routing to write-permission solvers, re-escalation on no-acknowledge, and the operator UI surface.
+- **Phase 5 — Additional Reasoning Adapters**: the OpenAI-compatible adapter shipped in Phase 3 already covers hosted OpenAI, vLLM, llama.cpp, Ollama, LiteLLM, and any router proxy exposing `/chat/completions`. Vendor-specific adapters (Anthropic, PPQai, OpenClaw) are tracked as future work behind a `not_yet_implemented` guard that fails loudly at startup so operators get an actionable message rather than silent coercion.
 
 ---
 
