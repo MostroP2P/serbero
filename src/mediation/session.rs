@@ -42,7 +42,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use nostr_sdk::prelude::*;
-use rusqlite::params;
 use tokio::sync::Mutex as AsyncMutex;
 use tracing::{debug, info, instrument, warn};
 use uuid::Uuid;
@@ -313,12 +312,11 @@ pub async fn open_session(params: OpenSessionParams<'_>) -> Result<OpenOutcome> 
                 // reconciliation of this transition alongside the
                 // `escalation_recommended` + `handoff_prepared`
                 // audit rows.
-                guard.execute(
-                    "UPDATE mediation_sessions
-                     SET state = 'escalation_recommended',
-                         last_transition_at = ?1
-                     WHERE session_id = ?2",
-                    params![escalation_now, &session_id],
+                db::mediation::set_session_state(
+                    &guard,
+                    &session_id,
+                    crate::models::mediation::MediationSessionState::EscalationRecommended,
+                    escalation_now,
                 )?;
             }
             debug!(

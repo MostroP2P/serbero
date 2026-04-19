@@ -274,20 +274,45 @@ pub fn list_live_sessions(conn: &Connection) -> Result<Vec<LiveSession>> {
     Ok(out)
 }
 
-/// Write a new lifecycle state onto a session row. Caller is
-/// responsible for having verified the transition is legal via
-/// [`MediationSessionState::can_transition_to`]; this helper only
-/// performs the update + bumps `last_transition_at`.
+/// Write a new lifecycle state onto a session row.
+///
+/// In debug builds this helper asserts that the current → next
+/// transition is legal per
+/// [`MediationSessionState::can_transition_to`], surfacing
+/// callers that forget the state-machine check before writing.
+/// Release builds skip the assert and just issue the UPDATE, so
+/// the check adds zero cost on the hot path.
 ///
 /// Used by the T052 restart-resume pass to flip a session to
 /// `escalation_recommended` when its pinned prompt bundle is no
-/// longer loadable (trigger `policy_bundle_missing`).
+/// longer loadable (trigger `policy_bundle_missing`), and by the
+/// session-open path to mark non-AskClarification opens escalated.
 pub fn set_session_state(
     conn: &Connection,
     session_id: &str,
     new_state: MediationSessionState,
     at: i64,
 ) -> Result<()> {
+    #[cfg(debug_assertions)]
+    {
+        use std::str::FromStr;
+        let current: Option<String> = conn
+            .query_row(
+                "SELECT state FROM mediation_sessions WHERE session_id = ?1",
+                params![session_id],
+                |r| r.get(0),
+            )
+            .ok();
+        if let Some(current) = current {
+            let current = MediationSessionState::from_str(&current)
+                .expect("set_session_state: persisted state must parse");
+            debug_assert!(
+                current.can_transition_to(new_state),
+                "set_session_state: illegal transition {current} -> {new_state} \
+                 for session_id={session_id}"
+            );
+        }
+    }
     conn.execute(
         "UPDATE mediation_sessions
          SET state = ?1, last_transition_at = ?2

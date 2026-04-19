@@ -368,11 +368,17 @@ pub async fn run_engine(
             // per-dispute failures are swallowed inside the tick.
             error!(error = %e, "mediation engine tick failed");
         }
-        // Ingest tick follows the session-open tick so any session
-        // opened this cycle is eligible for inbound fetch next cycle
-        // (not the same cycle — which would require re-reading the
-        // cache map after a DB write; the 30s cadence makes the
-        // delay immaterial).
+        // Ingest tick follows the session-open tick. Both `run_engine_tick`'s
+        // `session::open_session` commit (which inserts the
+        // `mediation_sessions` row before returning Opened) and the
+        // cache registration inside `open_session` happen BEFORE we
+        // reach this line, so a session opened in the current cycle
+        // is visible to `list_live_sessions` AND has its
+        // `DisputeChatMaterial` in the cache on this same tick. In
+        // practice the party has not had time to publish a reply yet,
+        // so `fetch_inbound` for that freshly-opened session is a
+        // cheap no-op — but the session is not hidden for an extra
+        // 30 s cycle.
         if let Err(e) = run_ingest_tick(&conn, &client, &session_key_cache).await {
             error!(error = %e, "mediation ingest tick failed");
         }
@@ -482,9 +488,25 @@ async fn handle_policy_bundle_missing(
     })
     .to_string();
 
-    let guard = conn.lock().await;
+    // Wrap the state flip + audit insert in a single transaction so
+    // the two writes cannot get out of sync. If either fails the
+    // whole thing rolls back and the session stays at its previous
+    // state — a retry on a subsequent startup / tick will see the
+    // same mismatch and retry atomically.
+    let mut guard = conn.lock().await;
+    let tx = match guard.transaction() {
+        Ok(tx) => tx,
+        Err(e) => {
+            error!(
+                session_id = %session_id,
+                error = %e,
+                "startup resume: failed to open escalation transaction"
+            );
+            return;
+        }
+    };
     if let Err(e) = db::mediation::set_session_state(
-        &guard,
+        &tx,
         session_id,
         MediationSessionState::EscalationRecommended,
         now,
@@ -492,12 +514,12 @@ async fn handle_policy_bundle_missing(
         error!(
             session_id = %session_id,
             error = %e,
-            "startup resume: failed to flip session state to escalation_recommended"
+            "startup resume: set_session_state failed (transaction will roll back)"
         );
         return;
     }
     if let Err(e) = db::mediation_events::record_event(
-        &guard,
+        &tx,
         MediationEventKind::EscalationRecommended,
         Some(session_id),
         &payload,
@@ -506,14 +528,20 @@ async fn handle_policy_bundle_missing(
         Some(pinned_hash),
         now,
     ) {
-        // State already flipped; a failed audit write is reported
-        // but does not roll back — the operator-visible state
-        // change is the more important part of the invariant.
-        warn!(
+        error!(
             session_id = %session_id,
             error = %e,
-            "startup resume: failed to record escalation_recommended event (state change committed)"
+            "startup resume: record_event failed (transaction will roll back)"
         );
+        return;
+    }
+    if let Err(e) = tx.commit() {
+        error!(
+            session_id = %session_id,
+            error = %e,
+            "startup resume: escalation transaction commit failed"
+        );
+        return;
     }
     error!(
         session_id = %session_id,
@@ -726,6 +754,7 @@ fn current_ts_secs() -> Result<i64> {
         envelopes_fetched = tracing::field::Empty,
         rows_ingested = tracing::field::Empty,
         rows_duplicate = tracing::field::Empty,
+        rows_stale = tracing::field::Empty,
     )
 )]
 async fn run_ingest_tick(
@@ -744,6 +773,17 @@ async fn run_ingest_tick(
     let mut envelopes_fetched: u64 = 0;
     let mut rows_ingested: u64 = 0;
     let mut rows_duplicate: u64 = 0;
+    let mut rows_stale: u64 = 0;
+
+    // Fan out the relay fetches. Each spawned task owns its own
+    // clone of the client + the session's chat material, and
+    // returns `(session_id, Result<Vec<InboundEnvelope>>)` so the
+    // DB side of the tick can stay single-threaded (the shared
+    // `AsyncMutex<Connection>` serialises ingest anyway). One slow
+    // or misbehaving relay therefore cannot stall the rest of the
+    // tick — fetches run concurrently and results are drained as
+    // they arrive.
+    let mut fetchers: tokio::task::JoinSet<IngestFetchResult> = tokio::task::JoinSet::new();
 
     for s in sessions {
         sessions_checked += 1;
@@ -780,44 +820,74 @@ async fn run_ingest_tick(
             }
         }
 
-        let parties = [
-            PartyChatMaterial {
-                party: TranscriptParty::Buyer,
-                shared_keys: &material.buyer_shared_keys,
-                expected_author: match PublicKey::parse(&material.buyer_pubkey) {
-                    Ok(pk) => pk,
-                    Err(e) => {
-                        warn!(
-                            session_id = %s.session_id,
-                            error = %e,
-                            "ingest tick: invalid buyer trade pubkey in cache; skipping session"
-                        );
-                        continue;
-                    }
-                },
-            },
-            PartyChatMaterial {
-                party: TranscriptParty::Seller,
-                shared_keys: &material.seller_shared_keys,
-                expected_author: match PublicKey::parse(&material.seller_pubkey) {
-                    Ok(pk) => pk,
-                    Err(e) => {
-                        warn!(
-                            session_id = %s.session_id,
-                            error = %e,
-                            "ingest tick: invalid seller trade pubkey in cache; skipping session"
-                        );
-                        continue;
-                    }
-                },
-            },
-        ];
-
-        let envelopes = match inbound::fetch_inbound(client, &parties, INGEST_FETCH_TIMEOUT).await {
-            Ok(v) => v,
+        // Hoist the `PublicKey::parse` calls out of the array
+        // literal: if either trade pubkey is malformed we want a
+        // single early `continue` rather than two nested match
+        // arms inside a struct-initialiser expression, and the
+        // `continue` must skip the whole session (not just skip
+        // one party).
+        let buyer_pk = match PublicKey::parse(&material.buyer_pubkey) {
+            Ok(pk) => pk,
             Err(e) => {
                 warn!(
                     session_id = %s.session_id,
+                    error = %e,
+                    "ingest tick: invalid buyer trade pubkey in cache; skipping session"
+                );
+                continue;
+            }
+        };
+        let seller_pk = match PublicKey::parse(&material.seller_pubkey) {
+            Ok(pk) => pk,
+            Err(e) => {
+                warn!(
+                    session_id = %s.session_id,
+                    error = %e,
+                    "ingest tick: invalid seller trade pubkey in cache; skipping session"
+                );
+                continue;
+            }
+        };
+
+        let client = client.clone();
+        let session_id = s.session_id.clone();
+        fetchers.spawn(async move {
+            let parties = [
+                PartyChatMaterial {
+                    party: TranscriptParty::Buyer,
+                    shared_keys: &material.buyer_shared_keys,
+                    expected_author: buyer_pk,
+                },
+                PartyChatMaterial {
+                    party: TranscriptParty::Seller,
+                    shared_keys: &material.seller_shared_keys,
+                    expected_author: seller_pk,
+                },
+            ];
+            let result = inbound::fetch_inbound(&client, &parties, INGEST_FETCH_TIMEOUT).await;
+            (session_id, result)
+        });
+    }
+
+    // Drain the fetch results. Ingest runs against the shared DB
+    // lock so it is naturally single-writer; the concurrency win
+    // is purely in the fetch phase, which is I/O-bound.
+    while let Some(res) = fetchers.join_next().await {
+        let (session_id, fetch_result) = match res {
+            Ok(pair) => pair,
+            Err(e) => {
+                warn!(
+                    error = %e,
+                    "ingest tick: a fetch task panicked or was cancelled; continuing"
+                );
+                continue;
+            }
+        };
+        let envelopes = match fetch_result {
+            Ok(v) => v,
+            Err(e) => {
+                warn!(
+                    session_id = %session_id,
                     error = %e,
                     "ingest tick: fetch_inbound failed; continuing with next session"
                 );
@@ -827,13 +897,13 @@ async fn run_ingest_tick(
         envelopes_fetched += envelopes.len() as u64;
 
         for env in &envelopes {
-            match session::ingest_inbound(conn, &s.session_id, env).await {
+            match session::ingest_inbound(conn, &session_id, env).await {
                 Ok(session::IngestOutcome::Fresh { .. }) => rows_ingested += 1,
                 Ok(session::IngestOutcome::Duplicate) => rows_duplicate += 1,
-                Ok(session::IngestOutcome::Stale) => { /* counted via dedicated debug! event */ }
+                Ok(session::IngestOutcome::Stale) => rows_stale += 1,
                 Err(e) => {
                     warn!(
-                        session_id = %s.session_id,
+                        session_id = %session_id,
                         error = %e,
                         inner_event_id = %env.inner_event_id,
                         "ingest tick: ingest_inbound failed for envelope"
@@ -848,10 +918,15 @@ async fn run_ingest_tick(
     span.record("envelopes_fetched", envelopes_fetched);
     span.record("rows_ingested", rows_ingested);
     span.record("rows_duplicate", rows_duplicate);
+    span.record("rows_stale", rows_stale);
 
     debug!(
         sessions_checked,
-        envelopes_fetched, rows_ingested, rows_duplicate, "ingest tick finished"
+        envelopes_fetched, rows_ingested, rows_duplicate, rows_stale, "ingest tick finished"
     );
     Ok(())
 }
+
+/// Per-session result emitted by the ingest tick's fetch fan-out.
+/// Named so the `JoinSet` type parameter stays readable.
+type IngestFetchResult = (String, Result<Vec<inbound::InboundEnvelope>>);
