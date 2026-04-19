@@ -1053,16 +1053,42 @@ pub(crate) async fn notify_solvers_escalation(
     session_id: &str,
     trigger: EscalationTrigger,
 ) {
+    // Separate three distinct outcomes of the assigned-solver lookup.
+    // The old `.ok().flatten()` collapsed DB errors and missing rows
+    // into `None`, which then silently broadcast to every configured
+    // solver — wrong: a DB error must not change routing, and a
+    // missing dispute row is a FK-invariant bug we refuse to paper
+    // over. This mirrors the pattern already used in `deliver_summary`.
     let assigned_solver: Option<String> = {
         let guard = conn.lock().await;
-        guard
-            .query_row(
-                "SELECT assigned_solver FROM disputes WHERE dispute_id = ?1",
-                rusqlite::params![dispute_id],
-                |r| r.get::<_, Option<String>>(0),
-            )
-            .ok()
-            .flatten()
+        match guard.query_row(
+            "SELECT assigned_solver FROM disputes WHERE dispute_id = ?1",
+            rusqlite::params![dispute_id],
+            |r| r.get::<_, Option<String>>(0),
+        ) {
+            Ok(opt) => opt,
+            Err(rusqlite::Error::QueryReturnedNoRows) => {
+                warn!(
+                    dispute_id = %dispute_id,
+                    session_id = %session_id,
+                    trigger = %trigger,
+                    "notify_solvers_escalation: dispute row missing; \
+                     refusing to broadcast without a valid parent row"
+                );
+                return;
+            }
+            Err(e) => {
+                warn!(
+                    dispute_id = %dispute_id,
+                    session_id = %session_id,
+                    trigger = %trigger,
+                    error = %e,
+                    "notify_solvers_escalation: assigned_solver lookup failed; \
+                     skipping notification to avoid unsafe broadcast"
+                );
+                return;
+            }
+        }
     };
     let recipients = router::resolve_recipients(solvers, assigned_solver.as_deref());
     let recipient_list: Vec<String> = match recipients {
@@ -1088,7 +1114,23 @@ pub(crate) async fn notify_solvers_escalation(
     );
 
     for pk_hex in &recipient_list {
-        let sent_at = current_ts_secs().unwrap_or(0);
+        // Surface the clock-before-UNIX-EPOCH guard instead of silently
+        // recording `sent_at = 0`. We still best-effort the fallback
+        // so one bad clock does not block every notification in the
+        // loop, but the warn! makes the issue visible.
+        let sent_at = match current_ts_secs() {
+            Ok(t) => t,
+            Err(e) => {
+                warn!(
+                    session_id = %session_id,
+                    solver_pubkey = %pk_hex,
+                    error = %e,
+                    "notify_solvers_escalation: clock guard returned Err; \
+                     recording sent_at = 0 as a best-effort marker"
+                );
+                0
+            }
+        };
         let (status, error_message) = match PublicKey::parse(pk_hex) {
             Ok(pk) => match send_gift_wrap_notification(client, &pk, &dm_body).await {
                 Ok(()) => {
@@ -1430,21 +1472,17 @@ async fn run_ingest_tick(
         };
         envelopes_fetched += envelopes.len() as u64;
 
-        for env in &envelopes {
+        'envelope_loop: for env in &envelopes {
             match session::ingest_inbound(conn, &session_id, env).await {
                 Ok(session::IngestOutcome::Fresh { round_count_after }) => {
                     rows_ingested += 1;
                     // T068 — after each Fresh ingest, check whether
                     // the session has hit the configured round cap.
-                    // If so, escalate with `RoundLimit`. The
-                    // `check_round_limit` helper is pure; the state
-                    // flip + audit rows happen inside
-                    // `escalation::recommend`. If `recommend` fails
-                    // (e.g., the session was already escalated by
-                    // the timeout sweep on the same tick), the
-                    // conditional UPDATE inside `recommend` returns
-                    // an error which we log and continue — never
-                    // abort the remaining ingest.
+                    // If so, escalate with `RoundLimit` and STOP
+                    // processing more envelopes for this session on
+                    // this tick — once the session is at
+                    // `escalation_recommended`, further inbound rows
+                    // would just add noise to an escalated transcript.
                     let rc_after: u32 = round_count_after.max(0) as u32;
                     if session::check_round_limit(rc_after, mediation_cfg.max_rounds) {
                         warn!(
@@ -1493,13 +1531,21 @@ async fn run_ingest_tick(
                                 }
                             }
                             Err(e) => {
+                                // Typically the session was already
+                                // escalated by a concurrent path
+                                // (e.g., the timeout sweep). Log and
+                                // still break so we stop writing
+                                // more inbound rows against an
+                                // escalated session on this tick.
                                 warn!(
                                     session_id = %session_id,
                                     error = %e,
-                                    "ingest tick: round_limit escalation failed"
+                                    "ingest tick: round_limit escalation failed; \
+                                     breaking out of envelope loop for this session"
                                 );
                             }
                         }
+                        break 'envelope_loop;
                     }
                 }
                 Ok(session::IngestOutcome::Duplicate) => rows_duplicate += 1,
@@ -1570,6 +1616,16 @@ pub async fn check_party_unresponsive_timeout(
     prompt_bundle: &Arc<PromptBundle>,
     mediation_cfg: &MediationConfig,
 ) -> Result<()> {
+    // Timeout disabled → do not scan. A zero timeout combined with
+    // the `deadline = reference + timeout` rule below would escalate
+    // every live session on the first tick (since `started_at` is
+    // always in the past), so we treat 0 as the documented
+    // "timeout disabled" sentinel instead of a 0-second deadline.
+    if mediation_cfg.party_response_timeout_seconds == 0 {
+        debug!("party-response timeout sweep disabled (timeout = 0)");
+        return Ok(());
+    }
+
     let now = current_ts_secs()?;
     let timeout = mediation_cfg.party_response_timeout_seconds as i64;
 

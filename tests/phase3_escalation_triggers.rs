@@ -291,6 +291,33 @@ async fn party_unresponsive_timeout_triggers_escalation() {
 }
 
 #[tokio::test]
+async fn party_unresponsive_timeout_disabled_when_zero() {
+    // Config-safety guard: `party_response_timeout_seconds = 0`
+    // MUST NOT escalate every live session on the first tick.
+    // The sweep treats 0 as the "timeout disabled" sentinel and
+    // returns Ok(()) without touching any session row.
+    let conn = seed_session("dispute-pu0", "sess-pu0", 100).await;
+    let bundle = test_bundle();
+    let cfg = MediationConfig {
+        party_response_timeout_seconds: 0,
+        ..MediationConfig::default()
+    };
+    let client = nostr_sdk::Client::new(nostr_sdk::Keys::generate());
+
+    serbero::mediation::check_party_unresponsive_timeout(&conn, &client, &[], &bundle, &cfg)
+        .await
+        .unwrap();
+
+    // Session state unchanged, no escalation events.
+    assert_eq!(session_state(&conn, "sess-pu0").await, "awaiting_response");
+    assert_eq!(
+        count_event(&conn, "sess-pu0", "escalation_recommended").await,
+        0
+    );
+    assert_eq!(count_event(&conn, "sess-pu0", "handoff_prepared").await, 0);
+}
+
+#[tokio::test]
 async fn round_limit_triggers_escalation() {
     const MAX_ROUNDS: u32 = 3;
     assert!(session::check_round_limit(MAX_ROUNDS, MAX_ROUNDS));
