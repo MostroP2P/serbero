@@ -7,17 +7,25 @@ classification drives the policy layer's decision.
 
 ## Labels
 
-- **CoordinationFailureResolvable**: Both parties appear to be acting
-  in good faith but have a coordination problem (payment timing,
-  communication gap, process misunderstanding). Cooperative path.
-- **ConflictingClaims**: Mutually exclusive factual claims with no
-  resolution path visible. Escalate immediately.
-- **SuspectedFraud**: Evidence of deliberate bad faith (fake proofs,
-  social engineering, known scam patterns). Escalate immediately.
-- **Unclear**: Insufficient information to classify confidently. Ask
-  a targeted clarifying question if rounds remain.
-- **NotSuitableForMediation**: Dispute type or circumstances fall
-  outside guided mediation scope. Escalate immediately.
+The model MUST emit the canonical snake_case token (left of the
+parenthesis) — these are the only strings the OpenAI parser accepts.
+The PascalCase name is the Rust enum variant, kept here for
+cross-reference with the audit code paths.
+
+- **`coordination_failure_resolvable`** (`CoordinationFailureResolvable`):
+  Both parties appear to be acting in good faith but have a
+  coordination problem (payment timing, communication gap, process
+  misunderstanding). Cooperative path.
+- **`conflicting_claims`** (`ConflictingClaims`): Mutually exclusive
+  factual claims with no resolution path visible. Escalate immediately.
+- **`suspected_fraud`** (`SuspectedFraud`): Evidence of deliberate bad
+  faith (fake proofs, social engineering, known scam patterns).
+  Escalate immediately.
+- **`unclear`** (`Unclear`): Insufficient information to classify
+  confidently. Ask a targeted clarifying question if rounds remain.
+- **`not_suitable_for_mediation`** (`NotSuitableForMediation`): Dispute
+  type or circumstances fall outside guided mediation scope. Escalate
+  immediately.
 
 ## Confidence Score
 
@@ -29,15 +37,19 @@ classification drives the policy layer's decision.
 
 ## Flags
 
-- **FraudRisk**: Indicator of deliberate bad faith. Triggers
-  immediate escalation with FraudIndicator.
-- **ConflictingClaims**: Mutually exclusive assertions. Triggers
+Same convention as Labels: emit the canonical snake_case token; the
+PascalCase name is the Rust enum variant.
+
+- **`fraud_risk`** (`FraudRisk`): Indicator of deliberate bad faith.
+  Triggers immediate escalation with `fraud_indicator`.
+- **`conflicting_claims`** (`ConflictingClaims`): Mutually exclusive
+  assertions. Triggers immediate escalation.
+- **`low_info`** (`LowInfo`): Insufficient data. Informational only.
+- **`unresponsive_party`** (`UnresponsiveParty`): One party has not
+  replied. Informational; the timeout trigger handles escalation.
+- **`authority_boundary_attempt`** (`AuthorityBoundaryAttempt`): Model
+  output attempted to cross the authority boundary. Triggers
   immediate escalation.
-- **LowInfo**: Insufficient data. Informational only.
-- **UnresponsiveParty**: One party has not replied. Informational;
-  the timeout trigger handles escalation.
-- **AuthorityBoundaryAttempt**: Model output attempted to cross the
-  authority boundary. Triggers immediate escalation.
 
 ## Rationale
 
