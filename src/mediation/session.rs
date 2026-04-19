@@ -58,16 +58,27 @@ use crate::prompts::PromptBundle;
 use crate::reasoning::ReasoningProvider;
 
 /// Outcome of a session-open attempt.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum OpenOutcome {
     /// A new session was opened and its outbound messages dispatched.
     Opened { session_id: String },
     /// The dispute already has an open session; no-op.
     AlreadyOpen { session_id: String },
-    /// The reasoning provider returned a non-clarification action
-    /// (Summarize / Escalate) on the opening call. US3/US4 will
-    /// handle these; for now the session is not opened and the
-    /// caller is told to skip.
+    /// The initial classification returned `Summarize` — the session
+    /// is open at state `classified` and the engine should call the
+    /// summarizer immediately. No outbound clarifying message was
+    /// drafted (the cooperative path skips that round). The
+    /// classification label + confidence flow with the outcome so
+    /// the engine can build the `SummaryRequest` without re-reading
+    /// the classification_produced audit event.
+    ReadyForSummary {
+        session_id: String,
+        classification: crate::models::mediation::ClassificationLabel,
+        confidence: f64,
+    },
+    /// The reasoning provider returned an escalation / non-actionable
+    /// action on the opening call. The session row is flipped to
+    /// `escalation_recommended`; US4 will own the structured handoff.
     DeferredToLaterPhase,
     /// The reasoning provider's `health_check` failed; we refuse
     /// to open a session and leave Phase 1/2 behavior untouched
@@ -289,16 +300,54 @@ pub async fn open_session(params: OpenSessionParams<'_>) -> Result<OpenOutcome> 
             );
             Ok(OpenOutcome::Opened { session_id })
         }
-        PolicyDecision::Summarize | PolicyDecision::Escalate(_) => {
-            // Non-AskClarification on the opening call means the
-            // policy layer has already decided this dispute does
-            // not belong in guided mediation (or cannot be handled
-            // without a transcript). Transition to
+        PolicyDecision::Summarize {
+            classification,
+            confidence,
+        } => {
+            // Cooperative-summary path (US3 / T060). The session is
+            // already persisted at `awaiting_response`; transition
+            // it to `classified` so the engine's
+            // `ClassifiedPending → SummaryPending` chain in
+            // `deliver_summary` has a legal starting state.
+            // We do NOT call `draft_and_send_initial_message` —
+            // the cooperative path skips the clarifying-question
+            // round entirely and moves straight to the summary.
+            let now = current_ts_secs()?;
+            {
+                let guard = params.conn.lock().await;
+                db::mediation::set_session_state(
+                    &guard,
+                    &session_id,
+                    crate::models::mediation::MediationSessionState::Classified,
+                    now,
+                )?;
+            }
+            // Register the derived chat material in the cache even
+            // on the cooperative path — US2 / future slices may
+            // still want to observe party replies against this
+            // session after the summary is delivered.
+            if let Some(cache) = params.session_key_cache {
+                register_session_material(cache, &session_id, material.clone()).await;
+            }
+            info!(
+                session_id = %session_id,
+                classification = %classification,
+                confidence = confidence,
+                "mediation session opened; ready for cooperative summary"
+            );
+            Ok(OpenOutcome::ReadyForSummary {
+                session_id,
+                classification,
+                confidence,
+            })
+        }
+        PolicyDecision::Escalate(_) => {
+            // US4 territory: a non-cooperative classification on
+            // the opening call. Flip the session to
             // `escalation_recommended` so the engine's eligibility
             // query does not re-pick this dispute on the next tick.
-            // Cooperative-summary handling on a non-empty transcript
-            // and the per-trigger escalation audit rows land with
-            // US3 / US4 respectively.
+            // The per-trigger escalation audit rows land with US4's
+            // `escalation::recommend` path.
             let escalation_now = current_ts_secs()?;
             {
                 let guard = params.conn.lock().await;
@@ -322,8 +371,8 @@ pub async fn open_session(params: OpenSessionParams<'_>) -> Result<OpenOutcome> 
             debug!(
                 session_id = %session_id,
                 ?decision,
-                "policy decision on opening call is not AskClarification; \
-                 session marked escalation_recommended for a later phase"
+                "policy decision on opening call is Escalate; \
+                 session marked escalation_recommended for US4"
             );
             Ok(OpenOutcome::DeferredToLaterPhase)
         }

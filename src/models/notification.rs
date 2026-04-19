@@ -49,6 +49,11 @@ pub enum NotificationType {
     ReNotification,
     Assignment,
     Escalation,
+    /// Phase 3 (US3): cooperative mediation summary delivered to the
+    /// assigned (or broadcast) solver(s). Recorded in the existing
+    /// `notifications` table — `notif_type` is TEXT, no schema
+    /// migration needed.
+    MediationSummary,
 }
 
 impl fmt::Display for NotificationType {
@@ -58,6 +63,7 @@ impl fmt::Display for NotificationType {
             Self::ReNotification => f.write_str("re-notification"),
             Self::Assignment => f.write_str("assignment"),
             Self::Escalation => f.write_str("escalation"),
+            Self::MediationSummary => f.write_str("mediation_summary"),
         }
     }
 }
@@ -71,6 +77,7 @@ impl FromStr for NotificationType {
             "re-notification" => Ok(Self::ReNotification),
             "assignment" => Ok(Self::Assignment),
             "escalation" => Ok(Self::Escalation),
+            "mediation_summary" => Ok(Self::MediationSummary),
             other => Err(Error::InvalidEvent(format!(
                 "unknown notification type: {other}"
             ))),

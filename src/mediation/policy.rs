@@ -50,16 +50,19 @@ const LOW_CONFIDENCE_THRESHOLD: f64 = 0.5;
 /// The three branches the engine dispatches on after policy
 /// validation. Raw [`ClassificationResponse`] never leaves this
 /// module — the engine only ever sees a validated decision.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum PolicyDecision {
     /// Ask both parties a clarifying question. The inner string is
     /// the validated clarification text the draft path will wrap in
     /// the per-party outbound messages.
     AskClarification(String),
-    /// Cooperative resolution path. US3 scope — US1 never ships this
-    /// variant on the opening call because the opening transcript
-    /// is empty; kept here so the enum is exhaustive for callers.
-    Summarize,
+    /// Cooperative resolution path (US3). Carries the classification
+    /// label and confidence so the engine can call the summarizer
+    /// without having to re-read the classification_produced event.
+    Summarize {
+        classification: crate::models::mediation::ClassificationLabel,
+        confidence: f64,
+    },
     /// Escalate to a human solver with the given trigger. The
     /// mediation engine translates this into a Phase 4 handoff.
     Escalate(EscalationTrigger),
@@ -233,7 +236,10 @@ fn classify_to_decision(classification: &ClassificationResponse) -> PolicyDecisi
             }
             PolicyDecision::AskClarification(text.clone())
         }
-        SuggestedAction::Summarize => PolicyDecision::Summarize,
+        SuggestedAction::Summarize => PolicyDecision::Summarize {
+            classification: classification.classification,
+            confidence: classification.confidence,
+        },
         // Unreachable because the rule above already handled this
         // case; kept defensive so an accidental enum widening does
         // not silently bypass the escalation path.

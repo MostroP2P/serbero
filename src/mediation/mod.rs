@@ -43,7 +43,12 @@ use crate::db;
 use crate::db::mediation_events::MediationEventKind;
 use crate::error::{Error, Result};
 use crate::models::dispute::InitiatorRole;
-use crate::models::mediation::{MediationSessionState, TranscriptParty};
+use crate::models::mediation::{
+    ClassificationLabel, EscalationTrigger, MediationSessionState, TranscriptParty,
+};
+use crate::models::reasoning::TranscriptEntry;
+use crate::models::{NotificationStatus, NotificationType, SolverConfig};
+use crate::nostr::notifier::send_gift_wrap_notification;
 use crate::prompts::PromptBundle;
 use crate::reasoning::ReasoningProvider;
 
@@ -321,6 +326,7 @@ pub async fn run_engine(
     provider_name: String,
     model_name: String,
     auth_handle: auth_retry::AuthRetryHandle,
+    solvers: Vec<SolverConfig>,
 ) {
     info!(
         tick_seconds = ENGINE_TICK_INTERVAL.as_secs(),
@@ -360,6 +366,7 @@ pub async fn run_engine(
             &model_name,
             &auth_handle,
             &session_key_cache,
+            &solvers,
         )
         .await
         {
@@ -563,6 +570,7 @@ async fn run_engine_tick(
     model_name: &str,
     auth_handle: &auth_retry::AuthRetryHandle,
     session_key_cache: &SessionKeyCache,
+    solvers: &[SolverConfig],
 ) -> Result<()> {
     let eligible = list_eligible_disputes(conn).await?;
     if eligible.is_empty() {
@@ -613,6 +621,47 @@ async fn run_engine_tick(
                     "engine opened new mediation session"
                 );
             }
+            Ok(session::OpenOutcome::ReadyForSummary {
+                session_id,
+                classification,
+                confidence,
+            }) => {
+                info!(
+                    dispute_id = %dispute_id,
+                    session_id = %session_id,
+                    classification = %classification,
+                    confidence,
+                    "engine: session opened in cooperative-summary mode; delivering summary"
+                );
+                // Transcript is empty on the opening call — that is
+                // the documented US3 shape when the classifier
+                // returns `Summarize` on an empty history (see PR
+                // description: cooperative summary on open-time has
+                // no prior transcript).
+                if let Err(e) = deliver_summary(
+                    conn,
+                    client,
+                    serbero_keys,
+                    &session_id,
+                    dispute_id,
+                    classification,
+                    confidence,
+                    Vec::new(),
+                    prompt_bundle,
+                    reasoning,
+                    solvers,
+                    provider_name,
+                    model_name,
+                )
+                .await
+                {
+                    error!(
+                        session_id = %session_id,
+                        error = %e,
+                        "engine: deliver_summary failed; session left mid-pipeline"
+                    );
+                }
+            }
             Ok(session::OpenOutcome::AlreadyOpen { session_id }) => {
                 debug!(
                     dispute_id = %dispute_id,
@@ -656,6 +705,246 @@ async fn run_engine_tick(
             }
         }
     }
+    Ok(())
+}
+
+/// Deliver a cooperative summary for a just-opened session (T060).
+///
+/// State machine: `classified → summary_pending → summary_delivered
+/// → closed`. Each transition is written with
+/// [`db::mediation::set_session_state`] (which `debug_assert!`s
+/// legality in debug builds).
+///
+/// Failure handling:
+/// - `summarizer::summarize` returning `Error::PolicyViolation(_)` →
+///   flip the session to `escalation_recommended` and record an
+///   `EscalationRecommended` audit row carrying trigger
+///   `authority_boundary_attempt`. Return `Ok(())` so the engine
+///   loop continues — the escalation *is* the intended outcome.
+/// - Any other error → escalate with trigger `reasoning_unavailable`.
+///   Same semantics: `Ok(())` return to keep the engine running.
+/// - A failure to flip state to `escalation_recommended` itself is
+///   logged at `error!` and bubbles up as an `Err` so the tick
+///   surfaces the DB-level problem.
+///
+/// Recipient routing goes through [`router::resolve_recipients`] so
+/// the rule stays in one place. Per-recipient send failures do NOT
+/// abort the tick: the `notifications` row is written with status
+/// `Failed` and delivery continues for the other recipients.
+#[instrument(
+    skip_all,
+    fields(session_id = %session_id, dispute_id = %dispute_id)
+)]
+#[allow(clippy::too_many_arguments)]
+pub async fn deliver_summary(
+    conn: &Arc<AsyncMutex<rusqlite::Connection>>,
+    client: &Client,
+    _serbero_keys: &Keys,
+    session_id: &str,
+    dispute_id: &str,
+    classification: ClassificationLabel,
+    confidence: f64,
+    transcript: Vec<TranscriptEntry>,
+    prompt_bundle: &Arc<PromptBundle>,
+    reasoning: &dyn ReasoningProvider,
+    solvers: &[SolverConfig],
+    provider_name: &str,
+    model_name: &str,
+) -> Result<()> {
+    // (1) Transition `classified → summary_pending`.
+    transition_session(
+        conn,
+        session_id,
+        MediationSessionState::SummaryPending,
+        current_ts_secs()?,
+    )
+    .await?;
+
+    // (2) Call the summarizer. Two short-circuit error paths map to
+    //     escalation; everything else returns `Ok(())` to keep the
+    //     engine running.
+    let summary = match summarizer::summarize(summarizer::SummarizeParams {
+        conn,
+        session_id,
+        dispute_id,
+        classification,
+        confidence,
+        transcript,
+        prompt_bundle,
+        reasoning,
+        provider_name,
+        model_name,
+    })
+    .await
+    {
+        Ok(s) => s,
+        Err(Error::PolicyViolation(msg)) => {
+            warn!(
+                session_id = %session_id,
+                reason = %msg,
+                "deliver_summary: authority-boundary attempt in summary; escalating"
+            );
+            escalate_from_summary_path(
+                conn,
+                session_id,
+                prompt_bundle,
+                EscalationTrigger::AuthorityBoundaryAttempt,
+                &msg,
+            )
+            .await?;
+            return Ok(());
+        }
+        Err(e) => {
+            warn!(
+                session_id = %session_id,
+                error = %e,
+                "deliver_summary: summarizer failed; escalating as reasoning_unavailable"
+            );
+            escalate_from_summary_path(
+                conn,
+                session_id,
+                prompt_bundle,
+                EscalationTrigger::ReasoningUnavailable,
+                &e.to_string(),
+            )
+            .await?;
+            return Ok(());
+        }
+    };
+
+    // (3) Read `disputes.assigned_solver` fresh — the value can have
+    //     changed since the session was opened (a human solver may
+    //     have taken the dispute mid-mediation).
+    let assigned_solver: Option<String> = {
+        let guard = conn.lock().await;
+        guard
+            .query_row(
+                "SELECT assigned_solver FROM disputes WHERE dispute_id = ?1",
+                params![dispute_id],
+                |r| r.get::<_, Option<String>>(0),
+            )
+            .unwrap_or(None)
+    };
+
+    // (4) Route.
+    let recipients = router::resolve_recipients(solvers, assigned_solver.as_deref());
+    let recipient_list: Vec<String> = match recipients {
+        router::Recipients::Targeted(pk) => vec![pk],
+        router::Recipients::Broadcast(v) => v,
+    };
+    if recipient_list.is_empty() {
+        warn!(
+            session_id = %session_id,
+            "deliver_summary: no solver recipients configured; summary persisted but not delivered"
+        );
+    }
+
+    // (5) Per-recipient send + notification row + tracing.
+    for pk_hex in &recipient_list {
+        let sent_at = current_ts_secs()?;
+        let (status, error_message) = match PublicKey::parse(pk_hex) {
+            Ok(pk) => match send_gift_wrap_notification(client, &pk, &summary.summary_text).await {
+                Ok(()) => {
+                    info!(
+                        session_id = %session_id,
+                        solver_pubkey = %pk_hex,
+                        rationale_id = %summary.rationale_id,
+                        "solver_summary_delivered"
+                    );
+                    (NotificationStatus::Sent, None)
+                }
+                Err(e) => {
+                    warn!(
+                        session_id = %session_id,
+                        solver_pubkey = %pk_hex,
+                        error = %e,
+                        "deliver_summary: notifier send failed; recording Failed notification row"
+                    );
+                    (NotificationStatus::Failed, Some(e.to_string()))
+                }
+            },
+            Err(e) => {
+                warn!(
+                    session_id = %session_id,
+                    solver_pubkey = %pk_hex,
+                    error = %e,
+                    "deliver_summary: recipient pubkey parse failed; recording Failed notification row"
+                );
+                (
+                    NotificationStatus::Failed,
+                    Some(format!("invalid pubkey: {e}")),
+                )
+            }
+        };
+        let guard = conn.lock().await;
+        db::notifications::record_notification_logged(
+            &guard,
+            dispute_id,
+            pk_hex,
+            sent_at,
+            status,
+            error_message.as_deref(),
+            NotificationType::MediationSummary,
+        );
+    }
+
+    // (6) `summary_pending → summary_delivered → closed`.
+    let now = current_ts_secs()?;
+    transition_session(
+        conn,
+        session_id,
+        MediationSessionState::SummaryDelivered,
+        now,
+    )
+    .await?;
+    transition_session(conn, session_id, MediationSessionState::Closed, now).await?;
+
+    Ok(())
+}
+
+async fn transition_session(
+    conn: &Arc<AsyncMutex<rusqlite::Connection>>,
+    session_id: &str,
+    new_state: MediationSessionState,
+    at: i64,
+) -> Result<()> {
+    let guard = conn.lock().await;
+    db::mediation::set_session_state(&guard, session_id, new_state, at)
+}
+
+async fn escalate_from_summary_path(
+    conn: &Arc<AsyncMutex<rusqlite::Connection>>,
+    session_id: &str,
+    prompt_bundle: &Arc<PromptBundle>,
+    trigger: EscalationTrigger,
+    reason: &str,
+) -> Result<()> {
+    let now = current_ts_secs()?;
+    let payload = json!({
+        "trigger": trigger.to_string(),
+        "session_id": session_id,
+        "reason": reason,
+    })
+    .to_string();
+    let mut guard = conn.lock().await;
+    let tx = guard.transaction()?;
+    db::mediation::set_session_state(
+        &tx,
+        session_id,
+        MediationSessionState::EscalationRecommended,
+        now,
+    )?;
+    db::mediation_events::record_event(
+        &tx,
+        MediationEventKind::EscalationRecommended,
+        Some(session_id),
+        &payload,
+        None,
+        Some(&prompt_bundle.id),
+        Some(&prompt_bundle.policy_hash),
+        now,
+    )?;
+    tx.commit()?;
     Ok(())
 }
 

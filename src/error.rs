@@ -58,6 +58,15 @@ pub enum Error {
     /// second prevents silent drift in the audit store.
     #[error("rationale provenance conflict: {0}")]
     RationaleProvenanceConflict(String),
+
+    /// A reasoning response was suppressed because its text
+    /// instructed an action outside Serbero's authority boundary
+    /// (fund movement, dispute closure, admin-settle/admin-cancel,
+    /// …). The caller MUST escalate with trigger
+    /// `AuthorityBoundaryAttempt`; see
+    /// `contracts/reasoning-provider.md` §Policy-Layer Validation.
+    #[error("policy violation: {0}")]
+    PolicyViolation(String),
     // --- end Phase 3 additions ---
     #[error(transparent)]
     Other(#[from] anyhow::Error),
