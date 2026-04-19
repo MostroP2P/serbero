@@ -24,9 +24,10 @@ impl NotYetImplementedProvider {
 
     fn err<T>(&self) -> std::result::Result<T, ReasoningError> {
         Err(ReasoningError::Unreachable(format!(
-            "reasoning provider '{}' is declared at the Phase 3 boundary but not yet \
-             implemented; currently shipped providers: openai, openai-compatible",
-            self.provider_name
+            "reasoning provider '{name}' is declared at the Phase 3 boundary but not yet \
+             implemented; currently shipped providers: openai, openai-compatible. \
+             Landing {name} adapter support is tracked as future work beyond Phase 3.",
+            name = self.provider_name
         )))
     }
 }
