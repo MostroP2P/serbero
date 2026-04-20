@@ -12,11 +12,14 @@
 //!   this helper is the entry point for follow-up / async flows
 //!   where the session row already exists.
 //! - [`run_engine`]: periodic background task the daemon spawns on
-//!   startup (see [`crate::daemon`]). Scans Phase 2 `notified`
-//!   disputes without an open mediation session and calls
-//!   `session::open_session` for each. No per-error panic: the loop
-//!   logs and continues so Phase 1/2 detection is never disturbed
-//!   (SC-105).
+//!   startup (see [`crate::daemon`]). Scans disputes in `notified` or
+//!   `taken` lifecycle state without an open mediation session and
+//!   calls `session::open_session` for each. No per-error panic:
+//!   the loop logs and continues so Phase 1/2 detection is never
+//!   disturbed (SC-105). The polling loop is a belt-and-suspenders
+//!   fallback for the event-driven trigger in `dispute_detected.rs`;
+//!   it also re-evaluates disputes picked up by the polling loop
+//!   that failed on the first event-driven attempt.
 
 pub mod auth_retry;
 pub mod escalation;
@@ -1307,6 +1310,16 @@ struct Eligible {
 ///   terminal. The separate `NOT EXISTS` makes this invariant
 ///   explicit and resistant to future state-set tweaks.
 ///
+/// Eligibility query for the engine polling loop.
+///
+/// Retrieves disputes that:
+/// 1. Are in `notified` or `taken` lifecycle state — covering both
+///    the event-driven trigger's immediate pick-up (`notified`)
+///    and disputes the trigger may have failed to process (`taken`,
+///    the planned intermediate state per plan.md).
+/// 2. Have no open (non-terminal) mediation session.
+/// 3. Have not already been escalated to a human solver.
+///
 /// Ordering is ascending by `event_timestamp` so the oldest
 /// disputes get worked first.
 async fn list_eligible_disputes(
@@ -1318,7 +1331,7 @@ async fn list_eligible_disputes(
     let mut stmt = guard.prepare(
         "SELECT dispute_id, initiator_role
          FROM disputes d
-         WHERE d.lifecycle_state = 'notified'
+         WHERE d.lifecycle_state IN ('notified', 'taken')
            AND NOT EXISTS (
                SELECT 1 FROM mediation_sessions s
                WHERE s.dispute_id = d.dispute_id

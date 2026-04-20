@@ -84,6 +84,7 @@ fn ctx(
         conn,
         client,
         solvers,
+        phase3_runtime: Arc::new(None),
     }
 }
 

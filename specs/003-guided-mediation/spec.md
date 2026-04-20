@@ -79,6 +79,15 @@ behavior.
 - **TC-105**: Reasoning provider access MUST be configurable by
   provider, model, API base URL, and credential source. The codebase
   MUST NOT hard-code a specific vendor in the mediation call sites.
+- **TC-106**: Mediation eligibility covers disputes in `notified` or
+  `taken` lifecycle state that have no open (non-terminal) mediation
+  session and have not already been escalated to a human solver.
+  Serbero attempts to open a mediation session immediately when the
+  dispute transitions to `notified`; the polling loop covers disputes
+  that may have been missed or that failed the event-driven attempt.
+  Taking the dispute is strictly coupled to the reasoning provider
+  being reachable — Serbero does not fall back to a non-reasoning
+  or manual mediation mode.
 
 ## Reference Implementations
 
@@ -105,6 +114,13 @@ depend on Mostrix at build time.
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Serbero opens a mediation session for a low-risk dispute (Priority: P1)
+
+> **Implementation note (Issue #20):** Serbero opens the mediation
+> session immediately upon the dispute entering the `notified`
+> lifecycle state — not only on the periodic engine tick. The
+> polling loop remains active as a belt-and-suspenders fallback and
+> for re-evaluating open sessions; the immediate event-driven path
+> does not replace it.
 
 A buyer opens a dispute on a peer-to-peer trade because the seller has
 not yet confirmed fiat receipt. Phases 1 and 2 have already detected
@@ -367,6 +383,22 @@ provider.
 
 ### Edge Cases
 
+- **Dispute resolved externally (outside Serbero's mediation channel)**:
+  if the parties resolve the dispute through normal Mostro chat while
+  a mediation session is open, Mostro transitions the dispute to a
+  resolved status (`seller-refunded`, `settled`, or `released`).
+  Serbero detects this via the `dispute_resolved` event handler and
+  produces a final solver-facing report covering: dispute identifier,
+  known classification, whether Serbero exchanged messages with each
+  party (derived from `mediation_messages` row counts), final observed
+  dispute status, and an explanation that the dispute resolved without
+  further escalation. Serbero does NOT need visibility into the direct
+  buyer/seller chat to produce this report — the lifecycle status,
+  session state, and message count are sufficient. See Issue #20.
+- **Dispute transitions to `taken` before Serbero opens a session**:
+  the eligibility query covers both `notified` and `taken` states,
+  so the polling loop can pick up disputes that transitioned before
+  the event-driven trigger ran.
 - **Mostro chat protocol changes shape**: if Mostro updates the chat
   transport in a backwards-incompatible way, Phase 3 mediation MUST
   halt new sessions and log an actionable error. It MUST NOT fall

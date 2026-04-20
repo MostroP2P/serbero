@@ -136,7 +136,48 @@ where
         };
     // ----------------------------------------------------------------
 
+    // Build the Nostr client early so it can be threaded into the
+    // event-driven Phase 3 runtime before we build the engine task.
     let client = build_client(&config).await?;
+
+    // Build the extended Phase 3 runtime for the event-driven
+    // mediation trigger in `dispute_detected.rs` (Issue #20 / spec fix A).
+    // Built after `phase3_bring_up` so we can access the bundle + reasoning
+    // artifacts it already constructed. When Phase 3 bring-up failed,
+    // `phase3_runtime` is `None` and this also becomes `None` (SC-105:
+    // Phase 1/2 detection and notification continue unaffected).
+    let phase3_runtime_for_ctx: Arc<Option<crate::handlers::dispute_detected::Phase3Runtime>> =
+        if let Some(ref rt) = phase3_runtime {
+            let serbero_keys = match nostr_sdk::Keys::parse(&config.serbero.private_key) {
+                Ok(k) => k,
+                Err(e) => {
+                    error!(error = %e, "failed to parse serbero private key");
+                    return Err(Error::InvalidKey(format!(
+                        "failed to parse serbero private key: {e}"
+                    )));
+                }
+            };
+            // Auth handle: the engine task creates its own via
+            // `ensure_authorized_or_enter_loop`. For the event-driven
+            // trigger we seed a pre-authorized handle (Phase 3 bring-up
+            // already passed the startup health check, which implies
+            // reasoning is reachable). The trigger's `open_dispute_session`
+            // still runs the full auth gate inside, so this is safe.
+            let auth_handle = crate::mediation::auth_retry::AuthRetryHandle::new_authorized();
+            Arc::new(Some(crate::handlers::dispute_detected::Phase3Runtime {
+                client: Arc::new(client.clone()),
+                serbero_keys: Arc::new(serbero_keys),
+                mostro_pubkey: Arc::new(mostro_pubkey),
+                reasoning: Arc::clone(&rt.reasoning),
+                prompt_bundle: Arc::clone(&rt.bundle),
+                auth_handle,
+                solvers: config.solvers.clone(),
+                provider_name: config.reasoning.provider.clone(),
+                model_name: config.reasoning.model.clone(),
+            }))
+        } else {
+            Arc::new(None)
+        };
 
     let filter = dispute_filter(&mostro_pubkey, since);
     info!(
@@ -156,10 +197,17 @@ where
         "subscription delivered to relay pool"
     );
 
+    // Thread the event-driven Phase 3 runtime into the handler
+    // context. Cloned as `Arc<Option<...>>` so each background task
+    // spawned by `dispute_detected::try_immediate_mediation` gets a
+    // cheap clone. When Phase 3 is disabled `phase3_runtime_for_ctx`
+    // holds `None` and the trigger silently no-ops (SC-105: Phase 1/2
+    // detection and notification continue unaffected).
     let ctx = Arc::new(HandlerContext {
         conn: conn.clone(),
         client: client.clone(),
         solvers: config.solvers.clone(),
+        phase3_runtime: phase3_runtime_for_ctx,
     });
 
     let renotif_handle = spawn_renotification_timer(
@@ -177,12 +225,16 @@ where
     // direct `&Keys` handle (it signs inner events with the
     // sender's keys, not via the client signer).
     let engine_handle: Option<JoinHandle<()>> = if let Some(rt) = phase3_runtime {
+        // Reuse the same serbero_keys we already parsed above for the
+        // event-driven trigger. Both paths need the same key material
+        // (the daemon's signing key); parsing once is cleaner than
+        // duplicating the parse call.
         let engine_keys = match nostr_sdk::Keys::parse(&config.serbero.private_key) {
             Ok(k) => k,
             Err(e) => {
                 return Err(Error::InvalidKey(format!(
                     "failed to parse serbero private key for engine task: {e}"
-                )))
+                )));
             }
         };
         // T043: run the initial authorization check and get a
