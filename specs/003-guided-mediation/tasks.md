@@ -11,15 +11,18 @@ tests (inline `#[cfg(test)]`) and integration tests per user story
 flow Phase 3 exercises (verified against current Mostro / Mostrix
 behavior at test-fixture time).
 
-**Organization**: Tasks are grouped by user story. All five user
-stories (US1 P1, US2 P1, US3 P2, US4 P2, US5 P3) are in scope for
-this phase. Phases 4 and 5 remain out of scope; the Phase 4 handoff
-package is *prepared* but not consumed here.
+**Organization**: Tasks are grouped by user story. All six user
+stories (US1 P1, US2 P1, US3 P2, US4 P2, US5 P3, US6 P2) are in scope
+for this phase. The task ids remain globally monotonic by authoring
+time, so the US6 test task (`T095`) intentionally appears after the
+US6 implementation ids (`T089`–`T094`). Phases 4 and 5 remain out of
+scope; the Phase 4 handoff package is *prepared* but not consumed
+here.
 
 ## Format: `[ID] [P?] [Story] Description`
 
 - **[P]**: Can run in parallel (different files, no dependencies on incomplete tasks)
-- **[Story]**: Which user story this task belongs to (e.g., US1, US2, US3, US4, US5)
+- **[Story]**: Which user story this task belongs to (e.g., US1, US2, US3, US4, US5, US6)
 - Include exact file paths in descriptions
 
 ## Path Conventions

@@ -29,7 +29,7 @@ use tracing::{debug, error, info, instrument};
 
 use crate::db;
 use crate::db::mediation_events::MediationEventKind;
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::handlers::dispute_detected::{current_timestamp, HandlerContext};
 use crate::mediation::notify_solvers_resolution_report;
 use crate::models::mediation::MediationSessionState;
@@ -37,17 +37,30 @@ use crate::models::LifecycleState;
 
 #[instrument(skip(ctx, event), fields(dispute_id, event_id, resolution_status))]
 pub async fn handle(ctx: &HandlerContext, event: &Event) -> Result<()> {
-    let dispute_id = event
-        .tags
-        .identifier()
-        .ok_or_else(|| Error::InvalidEvent("missing `d` tag".into()))?
-        .to_string();
+    let event_id_hex = event.id.to_string();
+    let Some(dispute_id) = event.tags.identifier().map(|v| v.to_string()) else {
+        error!(
+            event_id = %event_id_hex,
+            event_kind = ?event.kind,
+            tags = ?event.tags,
+            "dispute_resolved: missing `d` tag on resolved dispute event"
+        );
+        return Ok(());
+    };
 
-    let resolution_status = status_tag(event)
-        .ok_or_else(|| Error::InvalidEvent("missing `s` tag on resolved dispute event".into()))?;
+    let Some(resolution_status) = status_tag(event) else {
+        error!(
+            dispute_id = %dispute_id,
+            event_id = %event_id_hex,
+            event_kind = ?event.kind,
+            tags = ?event.tags,
+            "dispute_resolved: missing `s` tag on resolved dispute event"
+        );
+        return Ok(());
+    };
 
     tracing::Span::current().record("dispute_id", dispute_id.as_str());
-    tracing::Span::current().record("event_id", event.id.to_string().as_str());
+    tracing::Span::current().record("event_id", event_id_hex.as_str());
     tracing::Span::current().record("resolution_status", resolution_status.as_str());
 
     info!(
@@ -56,9 +69,34 @@ pub async fn handle(ctx: &HandlerContext, event: &Event) -> Result<()> {
         "dispute_resolved_externally"
     );
 
-    let event_id_hex = event.id.to_string();
     let now = current_timestamp();
     let mut closed_session_id: Option<String> = None;
+
+    let existing = {
+        let guard = ctx.conn.lock().await;
+        match db::disputes::get_dispute(&guard, &dispute_id) {
+            Ok(opt) => opt,
+            Err(e) => {
+                error!(
+                    dispute_id = %dispute_id,
+                    event_id = %event_id_hex,
+                    error = %e,
+                    "dispute_resolved: dispute lookup failed"
+                );
+                return Ok(());
+            }
+        }
+    };
+    let Some(existing) = existing else {
+        debug!("resolution event for unknown dispute; ignoring");
+        return Ok(());
+    };
+
+    if existing.lifecycle_state == LifecycleState::Resolved {
+        debug!(state = %existing.lifecycle_state, "dispute already resolved; idempotent no-op");
+        return Ok(());
+    }
+
     {
         let mut guard = ctx.conn.lock().await;
         let tx = match guard.transaction() {
@@ -66,6 +104,7 @@ pub async fn handle(ctx: &HandlerContext, event: &Event) -> Result<()> {
             Err(e) => {
                 error!(
                     dispute_id = %dispute_id,
+                    event_id = %event_id_hex,
                     error = %e,
                     "dispute_resolved: failed to open transaction"
                 );
@@ -73,38 +112,22 @@ pub async fn handle(ctx: &HandlerContext, event: &Event) -> Result<()> {
             }
         };
 
-        let existing = match db::disputes::get_dispute(&tx, &dispute_id) {
-            Ok(opt) => opt,
-            Err(e) => {
-                error!(
-                    dispute_id = %dispute_id,
-                    error = %e,
-                    "dispute_resolved: dispute lookup failed"
-                );
-                return Ok(());
-            }
-        };
-        let Some(existing) = existing else {
-            debug!("resolution event for unknown dispute; ignoring");
-            return Ok(());
-        };
-
-        // Idempotency: a second resolution event for the same dispute is
-        // a no-op. Because the lifecycle flip and any active-session
-        // closure below are in the SAME transaction, we cannot end up
-        // with `lifecycle_state = resolved` but a still-open session.
-        if existing.lifecycle_state == LifecycleState::Resolved {
-            debug!(state = %existing.lifecycle_state, "dispute already resolved; idempotent no-op");
-            return Ok(());
-        }
-
-        tx.execute(
+        if let Err(e) = tx.execute(
             "UPDATE disputes
              SET lifecycle_state = ?1, last_state_change = ?2
              WHERE dispute_id = ?3",
             rusqlite::params![LifecycleState::Resolved.to_string(), now, dispute_id],
-        )?;
-        tx.execute(
+        ) {
+            error!(
+                dispute_id = %dispute_id,
+                event_id = %event_id_hex,
+                sql = "UPDATE disputes SET lifecycle_state = ?1, last_state_change = ?2 WHERE dispute_id = ?3",
+                error = %e,
+                "dispute_resolved: failed to update dispute lifecycle_state"
+            );
+            return Ok(());
+        }
+        if let Err(e) = tx.execute(
             "INSERT INTO dispute_state_transitions
                 (dispute_id, from_state, to_state, transitioned_at, trigger)
              VALUES (?1, ?2, ?3, ?4, ?5)",
@@ -115,7 +138,16 @@ pub async fn handle(ctx: &HandlerContext, event: &Event) -> Result<()> {
                 now,
                 "dispute_resolved_externally",
             ],
-        )?;
+        ) {
+            error!(
+                dispute_id = %dispute_id,
+                event_id = %event_id_hex,
+                sql = "INSERT INTO dispute_state_transitions (dispute_id, from_state, to_state, transitioned_at, trigger) VALUES (?1, ?2, ?3, ?4, ?5)",
+                error = %e,
+                "dispute_resolved: failed to insert dispute_state_transitions row"
+            );
+            return Ok(());
+        }
 
         // Look up any live (non-terminal, non-handed-off) session. The
         // helper excludes `escalation_recommended`, so an already
@@ -126,6 +158,7 @@ pub async fn handle(ctx: &HandlerContext, event: &Event) -> Result<()> {
             Err(e) => {
                 error!(
                     dispute_id = %dispute_id,
+                    event_id = %event_id_hex,
                     error = %e,
                     "dispute_resolved: latest_open_session_for lookup failed"
                 );
@@ -149,6 +182,7 @@ pub async fn handle(ctx: &HandlerContext, event: &Event) -> Result<()> {
                     error!(
                         dispute_id = %dispute_id,
                         session_id = %session_id,
+                        event_id = %event_id_hex,
                         error = %e,
                         "dispute_resolved: failed to read pinned bundle for session"
                     );
@@ -177,6 +211,7 @@ pub async fn handle(ctx: &HandlerContext, event: &Event) -> Result<()> {
             ) {
                 error!(
                     session_id = %session_id,
+                    event_id = %event_id_hex,
                     error = %e,
                     "dispute_resolved: set_session_state(SupersededByHuman) failed"
                 );
@@ -194,6 +229,7 @@ pub async fn handle(ctx: &HandlerContext, event: &Event) -> Result<()> {
             ) {
                 error!(
                     session_id = %session_id,
+                    event_id = %event_id_hex,
                     error = %e,
                     "dispute_resolved: record_event(SupersededByHuman) failed"
                 );
@@ -207,6 +243,7 @@ pub async fn handle(ctx: &HandlerContext, event: &Event) -> Result<()> {
             ) {
                 error!(
                     session_id = %session_id,
+                    event_id = %event_id_hex,
                     error = %e,
                     "dispute_resolved: set_session_state(Closed) failed"
                 );
@@ -224,6 +261,7 @@ pub async fn handle(ctx: &HandlerContext, event: &Event) -> Result<()> {
             ) {
                 error!(
                     session_id = %session_id,
+                    event_id = %event_id_hex,
                     error = %e,
                     "dispute_resolved: record_event(SessionClosed) failed"
                 );
@@ -235,6 +273,7 @@ pub async fn handle(ctx: &HandlerContext, event: &Event) -> Result<()> {
         if let Err(e) = tx.commit() {
             error!(
                 dispute_id = %dispute_id,
+                event_id = %event_id_hex,
                 error = %e,
                 "dispute_resolved: transaction commit failed"
             );
