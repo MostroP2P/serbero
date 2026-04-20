@@ -1191,6 +1191,141 @@ pub(crate) async fn notify_solvers_escalation(
     }
 }
 
+/// US6 (T092) — informational "dispute resolved externally" DM to the
+/// configured solver(s).
+///
+/// Mirrors the shape of [`notify_solvers_escalation`] so the routing,
+/// clock guard, and per-recipient failure handling stay consistent,
+/// but the DM is a RESOLUTION REPORT — not an escalation. The dispute
+/// is already resolved via Mostro; this is a "for your records"
+/// notification so the solver knows the session closed cleanly and no
+/// further mediation action is needed. Per FR-120 the body contains
+/// no rationale text.
+pub(crate) async fn notify_solvers_resolution_report(
+    conn: &Arc<AsyncMutex<rusqlite::Connection>>,
+    client: &Client,
+    solvers: &[SolverConfig],
+    dispute_id: &str,
+    session_id: &str,
+    resolution_status: &str,
+) {
+    // Same three-way split as `notify_solvers_escalation`: distinguish
+    // `Ok(Some)` / `Ok(None)` / `Err(QueryReturnedNoRows)` / `Err(other)`
+    // so a DB error never silently broadcasts and a missing-row bug
+    // fails loudly instead of papering over a FK violation.
+    let assigned_solver: Option<String> = {
+        let guard = conn.lock().await;
+        match guard.query_row(
+            "SELECT assigned_solver FROM disputes WHERE dispute_id = ?1",
+            rusqlite::params![dispute_id],
+            |r| r.get::<_, Option<String>>(0),
+        ) {
+            Ok(opt) => opt,
+            Err(rusqlite::Error::QueryReturnedNoRows) => {
+                warn!(
+                    dispute_id = %dispute_id,
+                    session_id = %session_id,
+                    resolution_status = %resolution_status,
+                    "notify_solvers_resolution_report: dispute row missing; \
+                     refusing to broadcast without a valid parent row"
+                );
+                return;
+            }
+            Err(e) => {
+                warn!(
+                    dispute_id = %dispute_id,
+                    session_id = %session_id,
+                    resolution_status = %resolution_status,
+                    error = %e,
+                    "notify_solvers_resolution_report: assigned_solver lookup failed; \
+                     skipping notification to avoid unsafe broadcast"
+                );
+                return;
+            }
+        }
+    };
+    let recipients = router::resolve_recipients(solvers, assigned_solver.as_deref());
+    let recipient_list: Vec<String> = match recipients {
+        router::Recipients::Targeted(pk) => vec![pk],
+        router::Recipients::Broadcast(v) => v,
+    };
+    if recipient_list.is_empty() {
+        warn!(
+            dispute_id = %dispute_id,
+            session_id = %session_id,
+            resolution_status = %resolution_status,
+            "notify_solvers_resolution_report: no solver recipients configured"
+        );
+        return;
+    }
+
+    let dm_body = format!(
+        "Mediation session {session_id} (dispute {dispute_id}) closed — \
+         the dispute was resolved externally ({resolution_status}). \
+         No further mediation action needed."
+    );
+
+    for pk_hex in &recipient_list {
+        let sent_at = match current_ts_secs() {
+            Ok(t) => t,
+            Err(e) => {
+                warn!(
+                    session_id = %session_id,
+                    solver_pubkey = %pk_hex,
+                    error = %e,
+                    "notify_solvers_resolution_report: clock guard returned Err; \
+                     recording sent_at = 0 as a best-effort marker"
+                );
+                0
+            }
+        };
+        let (status, error_message) = match PublicKey::parse(pk_hex) {
+            Ok(pk) => match send_gift_wrap_notification(client, &pk, &dm_body).await {
+                Ok(()) => {
+                    info!(
+                        session_id = %session_id,
+                        solver_pubkey = %pk_hex,
+                        resolution_status = %resolution_status,
+                        "solver_resolution_report_sent"
+                    );
+                    (NotificationStatus::Sent, None)
+                }
+                Err(e) => {
+                    warn!(
+                        session_id = %session_id,
+                        solver_pubkey = %pk_hex,
+                        error = %e,
+                        "notify_solvers_resolution_report: notifier send failed; recording Failed row"
+                    );
+                    (NotificationStatus::Failed, Some(e.to_string()))
+                }
+            },
+            Err(e) => {
+                warn!(
+                    session_id = %session_id,
+                    solver_pubkey = %pk_hex,
+                    error = %e,
+                    "notify_solvers_resolution_report: recipient pubkey parse failed"
+                );
+                (
+                    NotificationStatus::Failed,
+                    Some(format!("invalid pubkey: {e}")),
+                )
+            }
+        };
+        let guard = conn.lock().await;
+        db::notifications::record_notification_logged(
+            &guard,
+            dispute_id,
+            pk_hex,
+            sent_at,
+            status,
+            error_message.as_deref(),
+            NotificationType::MediationResolutionReport,
+        );
+    }
+}
+
 async fn transition_session(
     conn: &Arc<AsyncMutex<rusqlite::Connection>>,
     session_id: &str,

@@ -3,9 +3,18 @@ use tracing::{info, warn};
 
 use crate::error::Result;
 use crate::handlers::dispute_detected::HandlerContext;
-use crate::handlers::{dispute_detected, dispute_updated};
+use crate::handlers::{dispute_detected, dispute_resolved, dispute_updated};
 
 const DISPUTE_EVENT_KIND: u16 = 38386;
+
+// TODO: verify these status values against the Mostro source code.
+// The kind-38386 replaceable event's `s` tag carries the dispute
+// lifecycle status. These are the expected resolution statuses;
+// update if Mostro uses different values.
+/// Resolution statuses from `mostro-core::dispute::Status` that
+/// indicate the dispute has been resolved externally. Verify serialized
+/// form against Mostro source if it changes.
+const RESOLUTION_STATUSES: &[&str] = &["seller-refunded", "settled", "released"];
 
 pub async fn dispatch(ctx: &HandlerContext, event: &Event) -> Result<()> {
     if event.kind != Kind::Custom(DISPUTE_EVENT_KIND) {
@@ -26,6 +35,14 @@ pub async fn dispatch(ctx: &HandlerContext, event: &Event) -> Result<()> {
         Some("in-progress") => {
             info!(event_id = %event.id, "dispatcher: routing to dispute_updated (s=in-progress)");
             dispute_updated::handle(ctx, event).await
+        }
+        Some(other) if RESOLUTION_STATUSES.contains(&other) => {
+            info!(
+                event_id = %event.id,
+                status = other,
+                "dispatcher: routing to dispute_resolved"
+            );
+            dispute_resolved::handle(ctx, event).await
         }
         Some(other) => {
             warn!(

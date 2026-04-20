@@ -351,6 +351,34 @@ ready to review.
 
 ---
 
+## Phase 9: User Story 6 — External dispute resolution detection (Priority: P2)
+
+**Goal**: When a dispute resolves externally while Serbero is mediating
+(cooperative release or solver action via Mostro), Serbero detects the
+resolution, cleanly closes any active mediation session, and sends an
+informational resolution report to the solver(s). No escalation, no
+handoff — the dispute is already resolved.
+
+### Tests for User Story 6
+
+- [X] T095 [P] [US6] Integration test `tests/phase3_superseded_by_human.rs`
+
+### Implementation for User Story 6
+
+- [X] T089 [US6] Extend `src/models/dispute.rs::DisputeStatus` with `SellerRefunded`, `Settled`, and `Released`
+- [X] T090 [US6] Extend `src/dispatcher.rs` to route `s=seller-refunded` / `s=settled` / `s=released` to `src/handlers/dispute_resolved.rs` via `RESOLUTION_STATUSES`
+- [X] T091 [US6] Implement `src/handlers/dispute_resolved.rs`
+- [X] T092 [US6] Resolution report notification helper in `src/mediation/mod.rs`
+- [X] T093 [US6] `NotificationType::MediationResolutionReport`
+- [X] T094 [US6] Reuse `HandlerContext` and read `prompt_bundle_id` / `policy_hash` from the pinned `mediation_sessions` row
+- [X] T096 [US6] Update `specs/003-guided-mediation/tasks.md` with the US6 section
+
+**Checkpoint**: US6 complete — externally resolved disputes close cleanly
+with an informational report. No mediation activity continues after
+resolution.
+
+---
+
 ## Dependencies & Execution Order
 
 ### Phase Dependencies

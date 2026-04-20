@@ -51,6 +51,14 @@ impl FromStr for InitiatorRole {
 pub enum DisputeStatus {
     Initiated,
     InProgress,
+    // Phase 3 (US6) resolution states. Mirror the
+    // mostro-core::dispute::Status variants carried on the kind-38386
+    // replaceable event's `s` tag when a dispute resolves externally.
+    // Serialized form must track the Mostro `Display` impl — verified
+    // against `RESOLUTION_STATUSES` in `src/dispatcher.rs`.
+    SellerRefunded,
+    Settled,
+    Released,
 }
 
 impl fmt::Display for DisputeStatus {
@@ -58,6 +66,9 @@ impl fmt::Display for DisputeStatus {
         match self {
             Self::Initiated => f.write_str("initiated"),
             Self::InProgress => f.write_str("in-progress"),
+            Self::SellerRefunded => f.write_str("seller-refunded"),
+            Self::Settled => f.write_str("settled"),
+            Self::Released => f.write_str("released"),
         }
     }
 }
@@ -69,6 +80,9 @@ impl FromStr for DisputeStatus {
         match s {
             "initiated" => Ok(Self::Initiated),
             "in-progress" => Ok(Self::InProgress),
+            "seller-refunded" => Ok(Self::SellerRefunded),
+            "settled" => Ok(Self::Settled),
+            "released" => Ok(Self::Released),
             other => Err(Error::InvalidEvent(format!(
                 "unknown dispute status: {other}"
             ))),
@@ -184,6 +198,20 @@ mod tests {
             "resolved",
         ] {
             let parsed: LifecycleState = s.parse().unwrap();
+            assert_eq!(parsed.to_string(), s);
+        }
+    }
+
+    #[test]
+    fn dispute_status_roundtrip_includes_resolution_states() {
+        for s in [
+            "initiated",
+            "in-progress",
+            "seller-refunded",
+            "settled",
+            "released",
+        ] {
+            let parsed: DisputeStatus = s.parse().unwrap();
             assert_eq!(parsed.to_string(), s);
         }
     }
