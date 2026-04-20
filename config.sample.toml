@@ -1,0 +1,102 @@
+# Serbero sample configuration.
+#
+# Usage:
+# 1. Copy this file to `config.toml`
+# 2. Replace the placeholder hex keys / relay URLs / solver pubkeys
+# 3. Export secrets through environment variables instead of committing them
+#
+# The daemon loads `./config.toml` by default, or the path set in
+# `SERBERO_CONFIG`.
+
+[serbero]
+# Hex-encoded Nostr private key for the Serbero daemon identity.
+# Production deployments should prefer `SERBERO_PRIVATE_KEY`.
+private_key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+# SQLite database path. Can be overridden with `SERBERO_DB_PATH`.
+db_path = "serbero.db"
+
+# Tracing log level / filter. Can be overridden with `SERBERO_LOG`.
+log_level = "info"
+
+[mostro]
+# Hex-encoded public key of the Mostro instance to monitor.
+pubkey = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+
+[[relays]]
+url = "wss://relay.example.com"
+
+# Add as many relays as needed.
+[[relays]]
+url = "wss://relay.backup.example.com"
+
+# Solvers notified for dispute events.
+# `permission` is parsed today and becomes more relevant in later phases.
+[[solvers]]
+pubkey = "1111111111111111111111111111111111111111111111111111111111111111"
+permission = "read"
+
+[[solvers]]
+pubkey = "2222222222222222222222222222222222222222222222222222222222222222"
+permission = "write"
+
+[timeouts]
+# Re-notify disputes left in `notified` state for this long.
+renotification_seconds = 300
+
+# How often to scan for unattended disputes.
+renotification_check_interval_seconds = 60
+
+# ---------------------------------------------------------------------------
+# Phase 3: guided mediation
+# Omit or keep disabled to run only Phase 1 / 2 behavior.
+# ---------------------------------------------------------------------------
+
+[mediation]
+enabled = false
+
+# Maximum mediation rounds before `round_limit` escalation.
+max_rounds = 2
+
+# Escalate if a party does not respond within this many seconds.
+# Set to 0 to disable the timeout sweep.
+party_response_timeout_seconds = 1800
+
+# Solver-auth revalidation loop.
+solver_auth_retry_initial_seconds = 60
+solver_auth_retry_max_interval_seconds = 3600
+solver_auth_retry_max_total_seconds = 86400
+solver_auth_retry_max_attempts = 24
+
+[reasoning]
+enabled = false
+
+# Phase 3 currently ships the OpenAI-compatible adapter.
+provider = "openai"
+
+# Any model accepted by the configured OpenAI-compatible endpoint.
+model = "gpt-5"
+
+# Hosted OpenAI example. Replace with any OpenAI-compatible endpoint if needed.
+api_base = "https://api.openai.com/v1"
+
+# Name of the environment variable holding the reasoning API credential.
+# Example:
+#   export SERBERO_REASONING_API_KEY="your-real-key"
+api_key_env = "SERBERO_REASONING_API_KEY"
+
+# Per-request timeout and bounded retry budget.
+request_timeout_seconds = 30
+followup_retry_count = 1
+
+[prompts]
+# Default prompt bundle paths shipped in this repository.
+system_instructions_path = "./prompts/phase3-system.md"
+classification_policy_path = "./prompts/phase3-classification.md"
+escalation_policy_path = "./prompts/phase3-escalation-policy.md"
+mediation_style_path = "./prompts/phase3-mediation-style.md"
+message_templates_path = "./prompts/phase3-message-templates.md"
+
+[chat]
+# Inbound Mostro chat polling interval used by the mediation engine.
+inbound_fetch_interval_seconds = 10
