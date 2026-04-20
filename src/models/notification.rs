@@ -60,6 +60,11 @@ pub enum NotificationType {
     /// package lives alongside in `mediation_events` as a
     /// `handoff_prepared` row, not in `notifications`.
     MediationEscalationRecommended,
+    /// Phase 3 (US6): informational report delivered to solver(s) when
+    /// a dispute resolves externally while mediation was active. NOT
+    /// an escalation — the dispute is already resolved; this is a
+    /// "for your records" notification.
+    MediationResolutionReport,
 }
 
 impl fmt::Display for NotificationType {
@@ -71,6 +76,7 @@ impl fmt::Display for NotificationType {
             Self::Escalation => f.write_str("escalation"),
             Self::MediationSummary => f.write_str("mediation_summary"),
             Self::MediationEscalationRecommended => f.write_str("mediation_escalation_recommended"),
+            Self::MediationResolutionReport => f.write_str("mediation_resolution_report"),
         }
     }
 }
@@ -86,6 +92,7 @@ impl FromStr for NotificationType {
             "escalation" => Ok(Self::Escalation),
             "mediation_summary" => Ok(Self::MediationSummary),
             "mediation_escalation_recommended" => Ok(Self::MediationEscalationRecommended),
+            "mediation_resolution_report" => Ok(Self::MediationResolutionReport),
             other => Err(Error::InvalidEvent(format!(
                 "unknown notification type: {other}"
             ))),

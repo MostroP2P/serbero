@@ -1062,38 +1062,104 @@ pub(crate) async fn notify_solvers_escalation(
     session_id: &str,
     trigger: EscalationTrigger,
 ) {
-    // Separate three distinct outcomes of the assigned-solver lookup.
-    // The old `.ok().flatten()` collapsed DB errors and missing rows
-    // into `None`, which then silently broadcast to every configured
-    // solver — wrong: a DB error must not change routing, and a
-    // missing dispute row is a FK-invariant bug we refuse to paper
-    // over. This mirrors the pattern already used in `deliver_summary`.
+    let dm_body = format!(
+        "Mediation session {session_id} (dispute {dispute_id}) escalated — \
+         trigger: {trigger}. Needs human judgment."
+    );
+    notify_solvers_dm(
+        conn,
+        client,
+        solvers,
+        SolverDmParams {
+            dispute_id,
+            session_id,
+            body: &dm_body,
+            notif_type: NotificationType::MediationEscalationRecommended,
+            tracing_label: "solver_escalation_notified",
+            lookup_log_prefix: "notify_solvers_escalation",
+        },
+    )
+    .await;
+}
+
+/// US6 (T092) — informational "dispute resolved externally" DM to the
+/// configured solver(s).
+///
+/// Mirrors the shape of [`notify_solvers_escalation`] so the routing,
+/// clock guard, and per-recipient failure handling stay consistent,
+/// but the DM is a RESOLUTION REPORT — not an escalation. The dispute
+/// is already resolved via Mostro; this is a "for your records"
+/// notification so the solver knows the session closed cleanly and no
+/// further mediation action is needed. Per FR-120 the body contains
+/// no rationale text.
+pub(crate) async fn notify_solvers_resolution_report(
+    conn: &Arc<AsyncMutex<rusqlite::Connection>>,
+    client: &Client,
+    solvers: &[SolverConfig],
+    dispute_id: &str,
+    session_id: &str,
+    resolution_status: &str,
+) {
+    let dm_body = format!(
+        "Mediation session {session_id} (dispute {dispute_id}) closed — \
+         the dispute was resolved externally ({resolution_status}). \
+         No further mediation action needed."
+    );
+    notify_solvers_dm(
+        conn,
+        client,
+        solvers,
+        SolverDmParams {
+            dispute_id,
+            session_id,
+            body: &dm_body,
+            notif_type: NotificationType::MediationResolutionReport,
+            tracing_label: "solver_resolution_report_sent",
+            lookup_log_prefix: "notify_solvers_resolution_report",
+        },
+    )
+    .await;
+}
+
+struct SolverDmParams<'a> {
+    dispute_id: &'a str,
+    session_id: &'a str,
+    body: &'a str,
+    notif_type: NotificationType,
+    tracing_label: &'static str,
+    lookup_log_prefix: &'static str,
+}
+
+async fn notify_solvers_dm(
+    conn: &Arc<AsyncMutex<rusqlite::Connection>>,
+    client: &Client,
+    solvers: &[SolverConfig],
+    params: SolverDmParams<'_>,
+) {
     let assigned_solver: Option<String> = {
         let guard = conn.lock().await;
         match guard.query_row(
             "SELECT assigned_solver FROM disputes WHERE dispute_id = ?1",
-            rusqlite::params![dispute_id],
+            rusqlite::params![params.dispute_id],
             |r| r.get::<_, Option<String>>(0),
         ) {
             Ok(opt) => opt,
             Err(rusqlite::Error::QueryReturnedNoRows) => {
                 warn!(
-                    dispute_id = %dispute_id,
-                    session_id = %session_id,
-                    trigger = %trigger,
-                    "notify_solvers_escalation: dispute row missing; \
-                     refusing to broadcast without a valid parent row"
+                    dispute_id = %params.dispute_id,
+                    session_id = %params.session_id,
+                    log_prefix = params.lookup_log_prefix,
+                    "solver_dm: dispute row missing; refusing to broadcast without a valid parent row"
                 );
                 return;
             }
             Err(e) => {
                 warn!(
-                    dispute_id = %dispute_id,
-                    session_id = %session_id,
-                    trigger = %trigger,
+                    dispute_id = %params.dispute_id,
+                    session_id = %params.session_id,
+                    log_prefix = params.lookup_log_prefix,
                     error = %e,
-                    "notify_solvers_escalation: assigned_solver lookup failed; \
-                     skipping notification to avoid unsafe broadcast"
+                    "solver_dm: assigned_solver lookup failed; skipping notification to avoid unsafe broadcast"
                 );
                 return;
             }
@@ -1106,71 +1172,57 @@ pub(crate) async fn notify_solvers_escalation(
     };
     if recipient_list.is_empty() {
         warn!(
-            dispute_id = %dispute_id,
-            session_id = %session_id,
-            trigger = %trigger,
-            "notify_solvers_escalation: no solver recipients configured"
+            dispute_id = %params.dispute_id,
+            session_id = %params.session_id,
+            log_prefix = params.lookup_log_prefix,
+            "solver_dm: no solver recipients configured"
         );
         return;
     }
 
-    // Operator-facing body. Kept compact so it renders cleanly in
-    // typical Nostr clients; the full handoff package lives in the
-    // `handoff_prepared` mediation_events row for Phase 4.
-    let dm_body = format!(
-        "Mediation session {session_id} (dispute {dispute_id}) escalated — \
-         trigger: {trigger}. Needs human judgment."
-    );
-
-    // SC-107: addresses solver pubkey, not party pubkey — recipients
-    // resolve from `[solvers]` config (broadcast) or from
-    // `disputes.assigned_solver` (targeted); party primary / shared
-    // pubkeys are never used as escalation recipients.
     for pk_hex in &recipient_list {
-        // Surface the clock-before-UNIX-EPOCH guard instead of silently
-        // recording `sent_at = 0`. We still best-effort the fallback
-        // so one bad clock does not block every notification in the
-        // loop, but the warn! makes the issue visible.
         let sent_at = match current_ts_secs() {
             Ok(t) => t,
             Err(e) => {
                 warn!(
-                    session_id = %session_id,
+                    session_id = %params.session_id,
                     solver_pubkey = %pk_hex,
+                    log_prefix = params.lookup_log_prefix,
                     error = %e,
-                    "notify_solvers_escalation: clock guard returned Err; \
-                     recording sent_at = 0 as a best-effort marker"
+                    "solver_dm: clock guard returned Err; recording sent_at = 0 as a best-effort marker"
                 );
                 0
             }
         };
         let (status, error_message) = match PublicKey::parse(pk_hex) {
-            Ok(pk) => match send_gift_wrap_notification(client, &pk, &dm_body).await {
+            Ok(pk) => match send_gift_wrap_notification(client, &pk, params.body).await {
                 Ok(()) => {
                     info!(
-                        session_id = %session_id,
+                        session_id = %params.session_id,
                         solver_pubkey = %pk_hex,
-                        trigger = %trigger,
-                        "solver_escalation_notified"
+                        event = params.tracing_label,
+                        "solver_dm_sent"
                     );
                     (NotificationStatus::Sent, None)
                 }
                 Err(e) => {
                     warn!(
-                        session_id = %session_id,
+                        session_id = %params.session_id,
                         solver_pubkey = %pk_hex,
+                        log_prefix = params.lookup_log_prefix,
                         error = %e,
-                        "notify_solvers_escalation: notifier send failed; recording Failed row"
+                        "solver_dm: notifier send failed; recording Failed row"
                     );
                     (NotificationStatus::Failed, Some(e.to_string()))
                 }
             },
             Err(e) => {
                 warn!(
-                    session_id = %session_id,
+                    session_id = %params.session_id,
                     solver_pubkey = %pk_hex,
+                    log_prefix = params.lookup_log_prefix,
                     error = %e,
-                    "notify_solvers_escalation: recipient pubkey parse failed"
+                    "solver_dm: recipient pubkey parse failed"
                 );
                 (
                     NotificationStatus::Failed,
@@ -1181,12 +1233,12 @@ pub(crate) async fn notify_solvers_escalation(
         let guard = conn.lock().await;
         db::notifications::record_notification_logged(
             &guard,
-            dispute_id,
+            params.dispute_id,
             pk_hex,
             sent_at,
             status,
             error_message.as_deref(),
-            NotificationType::MediationEscalationRecommended,
+            params.notif_type,
         );
     }
 }

@@ -11,15 +11,18 @@ tests (inline `#[cfg(test)]`) and integration tests per user story
 flow Phase 3 exercises (verified against current Mostro / Mostrix
 behavior at test-fixture time).
 
-**Organization**: Tasks are grouped by user story. All five user
-stories (US1 P1, US2 P1, US3 P2, US4 P2, US5 P3) are in scope for
-this phase. Phases 4 and 5 remain out of scope; the Phase 4 handoff
-package is *prepared* but not consumed here.
+**Organization**: Tasks are grouped by user story. All six user
+stories (US1 P1, US2 P1, US3 P2, US4 P2, US5 P3, US6 P2) are in scope
+for this phase. The task ids remain globally monotonic by authoring
+time, so the US6 test task (`T095`) intentionally appears after the
+US6 implementation ids (`T089`–`T094`). Phases 4 and 5 remain out of
+scope; the Phase 4 handoff package is *prepared* but not consumed
+here.
 
 ## Format: `[ID] [P?] [Story] Description`
 
 - **[P]**: Can run in parallel (different files, no dependencies on incomplete tasks)
-- **[Story]**: Which user story this task belongs to (e.g., US1, US2, US3, US4, US5)
+- **[Story]**: Which user story this task belongs to (e.g., US1, US2, US3, US4, US5, US6)
 - Include exact file paths in descriptions
 
 ## Path Conventions
@@ -348,6 +351,34 @@ ready to review.
 - [X] T086 Verify `spec.md` SC-103 (auditability): run the quickstart cooperative fixture, then confirm that every row in `mediation_sessions`, `mediation_events`, `mediation_summaries`, and `reasoning_rationales` produced during the fixture carries a non-null, consistent `policy_hash` and `prompt_bundle_id`
 - [X] T087 Verify `spec.md` SC-107 (transport): using the integration test harness, grep the outbound event stream for any `kind 4` / `kind 1059` gift-wrap whose `p` tag equals a party's primary pubkey. Expected count: zero
 - [X] T088 Manual observability pass: walk a full cooperative session, a full escalation session, a reasoning-unavailable session, and an auth-retry termination through `tracing` logs + the SQLite audit tables. Confirm FR-120 (rationales only as reference ids in general logs) and FR-117 (restart resume) visually. Capture any drift back into the relevant story tasks
+
+---
+
+## Phase 9: User Story 6 — External dispute resolution detection (Priority: P2)
+
+**Goal**: When a dispute resolves externally while Serbero is mediating
+(cooperative release or solver action via Mostro), Serbero detects the
+resolution, cleanly closes any active mediation session, and sends an
+informational resolution report to the solver(s). No escalation, no
+handoff — the dispute is already resolved.
+
+### Tests for User Story 6
+
+- [X] T095 [P] [US6] Integration test `tests/phase3_superseded_by_human.rs`
+
+### Implementation for User Story 6
+
+- [X] T089 [US6] Extend `src/models/dispute.rs::DisputeStatus` with `SellerRefunded`, `Settled`, and `Released`
+- [X] T090 [US6] Extend `src/dispatcher.rs` to route `s=seller-refunded` / `s=settled` / `s=released` to `src/handlers/dispute_resolved.rs` via `RESOLUTION_STATUSES`
+- [X] T091 [US6] Implement `src/handlers/dispute_resolved.rs`
+- [X] T092 [US6] Resolution report notification helper in `src/mediation/mod.rs`
+- [X] T093 [US6] `NotificationType::MediationResolutionReport`
+- [X] T094 [US6] Reuse `HandlerContext` and read `prompt_bundle_id` / `policy_hash` from the pinned `mediation_sessions` row
+- [X] T096 [US6] Update `specs/003-guided-mediation/tasks.md` with the US6 section
+
+**Checkpoint**: US6 complete — externally resolved disputes close cleanly
+with an informational report. No mediation activity continues after
+resolution.
 
 ---
 
