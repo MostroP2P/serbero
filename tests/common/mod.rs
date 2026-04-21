@@ -324,7 +324,18 @@ impl MostroChatSim {
                         let Ok(unwrapped) = client.unwrap_gift_wrap(&event).await else {
                             return Ok(false);
                         };
-                        let Ok(msg) = Message::from_json(&unwrapped.rumor.content) else {
+                        // Match the real Mostro wire format: the rumor
+                        // content is a JSON 2-tuple `[<Message>, <sig?>]`.
+                        // The production `run_take_flow` signs; this
+                        // sim accepts either the signed or the unsigned
+                        // variant (the signature bytes are not verified
+                        // here — the test trusts the gift-wrap sender).
+                        let Ok((msg, _sig)) = serde_json::from_str::<(
+                            Message,
+                            Option<nostr_sdk::secp256k1::schnorr::Signature>,
+                        )>(
+                            &unwrapped.rumor.content
+                        ) else {
                             return Ok(false);
                         };
                         let kind = msg.get_inner_message_kind();
@@ -366,8 +377,17 @@ impl MostroChatSim {
                             Action::AdminTookDispute,
                             Some(Payload::Dispute(dispute_id, Some(info))),
                         );
-                        let json = reply.as_json().unwrap();
-                        let _ = client.send_private_msg(unwrapped.sender, json, []).await;
+                        // Reply wire format matches production: the
+                        // Mostro side may omit its own signature, so
+                        // we send `[<Message>, null]` here. Serbero's
+                        // take-flow deserializes with
+                        // `Option<Signature>` and does not verify.
+                        let content = serde_json::to_string(&(
+                            &reply,
+                            Option::<nostr_sdk::secp256k1::schnorr::Signature>::None,
+                        ))
+                        .unwrap();
+                        let _ = client.send_private_msg(unwrapped.sender, content, []).await;
                         Ok(false)
                     }
                 })

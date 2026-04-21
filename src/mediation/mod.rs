@@ -19,10 +19,12 @@
 //!   (SC-105).
 
 pub mod auth_retry;
+pub mod eligibility;
 pub mod escalation;
 pub mod policy;
 pub mod router;
 pub mod session;
+pub mod start;
 pub mod summarizer;
 
 use std::collections::HashMap;
@@ -70,6 +72,53 @@ const INGEST_FETCH_TIMEOUT: Duration = Duration::from_secs(5);
 /// Engine tick cadence (US1). Hardcoded to 30 seconds per tasks.md
 /// T040 — configurable knob is US2+ scope.
 const ENGINE_TICK_INTERVAL: Duration = Duration::from_secs(30);
+
+/// Wall-clock budget for the take-dispute DM exchange. Mirrors
+/// Mostrix's `FETCH_EVENTS_TIMEOUT`. Shared between the engine tick
+/// and the event-driven start path so both paths apply the same
+/// limit.
+pub(crate) const DEFAULT_TAKE_FLOW_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// Poll cadence inside the take-flow while waiting for the
+/// `AdminTookDispute` response.
+pub(crate) const DEFAULT_TAKE_FLOW_POLL_INTERVAL: Duration = Duration::from_millis(250);
+
+/// Phase 3 runtime the event-driven start path needs (FR-121).
+///
+/// The daemon constructs one of these during bring-up and shares it
+/// with both `handlers::dispute_detected` (via
+/// [`crate::handlers::dispute_detected::HandlerContext::phase3`]) and
+/// the engine tick. Sharing the same `session_key_cache` between the
+/// two paths is load-bearing: a session opened by the handler must
+/// be visible to the engine's ingest tick on the next cycle.
+pub struct Phase3HandlerCtx {
+    /// Serbero's solver identity — used by the chat layer to sign
+    /// inner events for party-facing DMs and by `run_take_flow` to
+    /// build the `AdminTakeDispute` gift wrap.
+    pub serbero_keys: Keys,
+    /// Mostro's public key — the `AdminTakeDispute` recipient.
+    pub mostro_pubkey: PublicKey,
+    /// Reasoning provider — shared `Arc` so the engine task and the
+    /// handler both dispatch to the same underlying client.
+    pub reasoning: Arc<dyn ReasoningProvider>,
+    /// Pinned prompt bundle (with its computed `policy_hash`).
+    pub prompt_bundle: Arc<PromptBundle>,
+    /// Provider identifier (`"openai"` etc.) — persisted on the
+    /// `reasoning_rationales` rows for SC-103 provenance.
+    pub provider_name: String,
+    /// Model identifier — same provenance rationale.
+    pub model_name: String,
+    /// Auth-retry state machine handle. Read inside `open_session`'s
+    /// gate; also the point the US3 retry task attaches to.
+    pub auth_handle: auth_retry::AuthRetryHandle,
+    /// Shared in-memory session-key cache. MUST be the same `Arc`
+    /// the engine task uses so sessions opened by the handler land
+    /// in the cache the ingest tick reads on its next cycle.
+    pub session_key_cache: SessionKeyCache,
+    /// Configured solver pubkeys for the escalation-fanout paths
+    /// surfaced by `open_session`.
+    pub solvers: Vec<SolverConfig>,
+}
 
 /// Open a mediation session for one dispute. Thin wrapper over
 /// `session::open_session` that fills in the timeouts the engine
@@ -336,6 +385,14 @@ pub async fn run_engine(
     auth_handle: auth_retry::AuthRetryHandle,
     solvers: Vec<SolverConfig>,
     mediation_cfg: MediationConfig,
+    // Process-local session-key cache shared with the event-driven
+    // start path (`handlers::dispute_detected`). Populated on
+    // session-open success by `session::open_session` and (best-
+    // effort) by the T052 startup-resume pass below. MUST be the
+    // same `Arc` the handler's [`Phase3HandlerCtx::session_key_cache`]
+    // carries so sessions opened by either path are visible to the
+    // ingest tick on the next cycle.
+    session_key_cache: SessionKeyCache,
 ) {
     info!(
         tick_seconds = ENGINE_TICK_INTERVAL.as_secs(),
@@ -343,11 +400,6 @@ pub async fn run_engine(
         model = %model_name,
         "mediation engine loop starting"
     );
-
-    // Process-local session-key cache. Populated on session-open
-    // success by `session::open_session` and (best-effort) by the
-    // T052 startup-resume pass below.
-    let session_key_cache: SessionKeyCache = Arc::new(AsyncMutex::new(HashMap::new()));
 
     // T052 — restart-resume. On engine startup, walk every
     // non-terminal session and attempt to rebuild the in-memory
@@ -598,7 +650,7 @@ async fn run_engine_tick(
     debug!(count = eligible.len(), "engine tick: eligible disputes");
 
     for eligible in eligible {
-        let Eligible {
+        let eligibility::EligibleDispute {
             dispute_id,
             initiator_role,
         } = &eligible;
@@ -1289,70 +1341,24 @@ async fn escalate_from_summary_path(
     Ok(())
 }
 
-struct Eligible {
-    dispute_id: String,
-    initiator_role: InitiatorRole,
-}
-
-/// Disputes in `lifecycle_state = 'notified'` that are eligible for
-/// a fresh mediation open:
+/// Disputes currently eligible for a fresh mediation open under the
+/// FR-123 composed predicate.
 ///
-/// - No existing session is in a live (non-terminal) state.
-///   "Live" here means anything other than `closed` — a dispute
-///   that already has an `opening` / `awaiting_response` / …
-///   session is being handled right now and MUST NOT be restarted.
-/// - No existing session is in `escalation_recommended`. Once a
-///   dispute has been handed off to a human solver the engine must
-///   not silently pull it back into mediation — the handoff is
-///   terminal. The separate `NOT EXISTS` makes this invariant
-///   explicit and resistant to future state-set tweaks.
+/// Previously (pre-2026-04-20) this function pinned eligibility to
+/// `lifecycle_state = 'notified'` via an inline SQL literal. That
+/// formulation was explicitly rejected by the gap analysis — a
+/// dispute that transitioned out of `notified` between two engine
+/// ticks would never be picked up again. The authoritative predicate
+/// now lives in [`eligibility`] and is shared with the event-driven
+/// start path (FR-121) so the two sites cannot disagree.
 ///
-/// Ordering is ascending by `event_timestamp` so the oldest
-/// disputes get worked first.
+/// Ordering is ascending by `event_timestamp` so the oldest disputes
+/// get worked first.
 async fn list_eligible_disputes(
     conn: &Arc<AsyncMutex<rusqlite::Connection>>,
-) -> Result<Vec<Eligible>> {
-    use std::str::FromStr;
-
+) -> Result<Vec<eligibility::EligibleDispute>> {
     let guard = conn.lock().await;
-    let mut stmt = guard.prepare(
-        "SELECT dispute_id, initiator_role
-         FROM disputes d
-         WHERE d.lifecycle_state = 'notified'
-           AND NOT EXISTS (
-               SELECT 1 FROM mediation_sessions s
-               WHERE s.dispute_id = d.dispute_id
-                 AND s.state NOT IN ('closed')
-           )
-           AND NOT EXISTS (
-               SELECT 1 FROM mediation_sessions s
-               WHERE s.dispute_id = d.dispute_id
-                 AND s.state = 'escalation_recommended'
-           )
-         ORDER BY d.event_timestamp ASC",
-    )?;
-    let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
-    let mut out = Vec::new();
-    for row in rows {
-        let (dispute_id, initiator_role_s) = row?;
-        let initiator_role = match InitiatorRole::from_str(&initiator_role_s) {
-            Ok(r) => r,
-            Err(e) => {
-                warn!(
-                    dispute_id = %dispute_id,
-                    role = %initiator_role_s,
-                    error = %e,
-                    "engine tick: skipping dispute with unrecognised initiator_role"
-                );
-                continue;
-            }
-        };
-        out.push(Eligible {
-            dispute_id,
-            initiator_role,
-        });
-    }
-    Ok(out)
+    eligibility::list_mediation_eligible(&guard)
 }
 
 /// Seconds since the UNIX epoch. Shared by `session.rs`,

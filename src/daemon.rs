@@ -156,11 +156,9 @@ where
         "subscription delivered to relay pool"
     );
 
-    let ctx = Arc::new(HandlerContext {
-        conn: conn.clone(),
-        client: client.clone(),
-        solvers: config.solvers.clone(),
-    });
+    // `HandlerContext` is constructed below, after Phase 3 bring-up,
+    // so the event-driven start path can receive the fully-populated
+    // `Phase3HandlerCtx` when mediation is configured.
 
     let renotif_handle = spawn_renotification_timer(
         Arc::clone(&conn),
@@ -176,6 +174,13 @@ where
     // does not expose them, and the mediation chat path needs a
     // direct `&Keys` handle (it signs inner events with the
     // sender's keys, not via the client signer).
+    //
+    // The Phase 3 bring-up block is also where we build the
+    // `Phase3HandlerCtx` used by the event-driven start path
+    // (FR-121). The engine task and the handler share the same
+    // `session_key_cache` so sessions opened by either path are
+    // visible to the ingest tick on the next cycle.
+    let mut handler_phase3: Option<Arc<crate::mediation::Phase3HandlerCtx>> = None;
     let engine_handle: Option<JoinHandle<()>> = if let Some(rt) = phase3_runtime {
         let engine_keys = match nostr_sdk::Keys::parse(&config.serbero.private_key) {
             Ok(k) => k,
@@ -198,6 +203,25 @@ where
             mostro_pubkey,
         )
         .await;
+
+        // Shared session-key cache: one `Arc` used by both the
+        // handler (event-driven start) and the engine task (tick
+        // retry + ingest).
+        let session_key_cache: crate::mediation::SessionKeyCache =
+            Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
+
+        handler_phase3 = Some(Arc::new(crate::mediation::Phase3HandlerCtx {
+            serbero_keys: engine_keys.clone(),
+            mostro_pubkey,
+            reasoning: Arc::clone(&rt.reasoning),
+            prompt_bundle: Arc::clone(&rt.bundle),
+            provider_name: config.reasoning.provider.clone(),
+            model_name: config.reasoning.model.clone(),
+            auth_handle: auth_handle.clone(),
+            session_key_cache: Arc::clone(&session_key_cache),
+            solvers: config.solvers.clone(),
+        }));
+
         let engine_conn = Arc::clone(&conn);
         let engine_client = client.clone();
         let engine_mostro_pk = mostro_pubkey;
@@ -208,6 +232,7 @@ where
         let engine_auth_handle = auth_handle.clone();
         let engine_solvers = config.solvers.clone();
         let engine_mediation_cfg = config.mediation.clone();
+        let engine_key_cache = session_key_cache;
         Some(tokio::spawn(async move {
             crate::mediation::run_engine(
                 engine_conn,
@@ -221,12 +246,20 @@ where
                 engine_auth_handle,
                 engine_solvers,
                 engine_mediation_cfg,
+                engine_key_cache,
             )
             .await
         }))
     } else {
         None
     };
+
+    let ctx = Arc::new(HandlerContext {
+        conn: conn.clone(),
+        client: client.clone(),
+        solvers: config.solvers.clone(),
+        phase3: handler_phase3,
+    });
 
     let notif_ctx = Arc::clone(&ctx);
     let notification_future = client.handle_notifications(move |notif| {

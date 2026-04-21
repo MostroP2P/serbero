@@ -141,7 +141,16 @@ pub async fn run_take_flow(p: TakeFlowParams<'_>) -> Result<DisputeChatMaterial>
     // REQ per session-open attempt.
     let result: Result<DisputeChatMaterial> = async {
         // (2) Build and send the AdminTakeDispute mostro-core message.
-        //     Mirrors Mostrix execute_take_dispute.rs lines 63-85.
+        //     Mostro expects the rumor content as a JSON 2-tuple
+        //     `[<Message>, "<hex_schnorr_sig>"]` (or `[<Message>, null]`
+        //     when unsigned). The signature is a Schnorr signature
+        //     over the UTF-8 bytes of `serde_json::to_string(&Message)` —
+        //     `Message::sign` hashes+signs and we assemble the wrapper
+        //     via `serde_json::to_string(&(message, sig))`. This matches
+        //     mostro-cli's `util/messaging.rs` and mostrod's
+        //     `serde_json::from_str::<(Message, Option<Signature>)>`
+        //     deserializer. Sending a bare `Message::as_json()` trips
+        //     mostrod's `invalid type: map, expected a tuple of size 2`.
         let take_msg = Message::new_dispute(
             Some(p.dispute_id),
             None,
@@ -149,12 +158,28 @@ pub async fn run_take_flow(p: TakeFlowParams<'_>) -> Result<DisputeChatMaterial>
             Action::AdminTakeDispute,
             None,
         );
-        let json = take_msg
+        let msg_json = take_msg
             .as_json()
             .map_err(|_| Error::ChatTransport("failed to serialize AdminTakeDispute".into()))?;
+        // Re-implement `Message::sign` inline to avoid the doubled
+        // `nostr::Keys` dependency: mostro-core 0.8.4 links nostr
+        // 0.43 while nostr-sdk 0.44 brings nostr 0.44; both ultimately
+        // pin `secp256k1 0.29`, so the `Signature` type is shared and
+        // the JSON wire form is identical. Algorithm matches
+        // `mostro_core::message::Message::sign`:
+        //     sha256(msg_json.as_bytes()) -> Schnorr signature.
+        use nostr_sdk::hashes::Hash as _;
+        let digest = nostr_sdk::hashes::sha256::Hash::hash(msg_json.as_bytes());
+        let secp_msg = nostr_sdk::secp256k1::Message::from_digest(digest.to_byte_array());
+        let sig: Signature = p.serbero_keys.sign_schnorr(&secp_msg);
+        let content = serde_json::to_string(&(take_msg, Some(sig))).map_err(|e| {
+            Error::ChatTransport(format!(
+                "failed to serialize signed AdminTakeDispute tuple: {e}"
+            ))
+        })?;
         let send_out = p
             .client
-            .send_private_msg(*p.mostro_pubkey, json, [])
+            .send_private_msg(*p.mostro_pubkey, content, [])
             .await
             .map_err(|e| {
                 Error::ChatTransport(format!("failed to send AdminTakeDispute DM: {e}"))
@@ -203,9 +228,17 @@ pub async fn run_take_flow(p: TakeFlowParams<'_>) -> Result<DisputeChatMaterial>
                 if unwrapped.sender != *p.mostro_pubkey {
                     continue;
                 }
-                // The rumor content is the JSON-encoded mostro-core
-                // Message. Mirrors Mostrix parse_dm_events.
-                let Ok(response) = Message::from_json(&unwrapped.rumor.content) else {
+                // The rumor content is a JSON 2-tuple
+                // `[<Message>, <Option<Signature>>]` — same shape as
+                // the outbound `AdminTakeDispute` above (see that
+                // site for the mostrod / mostro-cli references).
+                // Mostro may omit its own signature (`null`), so we
+                // accept `Option<Signature>` here and ignore the
+                // signature itself; Serbero trusts `unwrapped.sender`
+                // for authenticity.
+                let Ok((response, _sig)) =
+                    serde_json::from_str::<(Message, Option<Signature>)>(&unwrapped.rumor.content)
+                else {
                     continue;
                 };
                 let kind = response.get_inner_message_kind();

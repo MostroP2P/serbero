@@ -296,6 +296,16 @@ impl OpenAiProvider {
                 .next()
                 .and_then(|c| c.message.content)
                 .ok_or_else(|| ReasoningError::MalformedResponse("empty choices".into()))?;
+            // Log the raw model output at DEBUG so operators can see
+            // the exact JSON / text that drove the policy decision.
+            // Truncated to keep log lines reasonable; the full content
+            // is re-derivable from the OpenAI logs if needed.
+            debug!(
+                attempt,
+                model = self.model,
+                content = %truncate(&content, 1000),
+                "openai reasoning call response"
+            );
             return Ok(content);
         }
         Err(last_err.unwrap_or(ReasoningError::Unreachable("exhausted retries".into())))

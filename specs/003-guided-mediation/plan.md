@@ -120,10 +120,14 @@ src/
 ├── mediation/                       # new: core mediation orchestration
 │   ├── mod.rs                       # MediationEngine entry point
 │   ├── session.rs                   # session lifecycle + state transitions
+│   ├── start.rs                     # event-driven start flow (FR-121/122/123 ordering)
+│   ├── eligibility.rs               # composed eligibility predicate (FR-123) shared by
+│   │                                # event-driven start and engine tick
 │   ├── router.rs                    # Solver-Facing Routing rule (broadcast vs. targeted)
 │   ├── policy.rs                    # validates reasoning output against authority/escalation rules
 │   ├── summarizer.rs                # cooperative-summary pipeline → notifier
 │   ├── escalation.rs                # escalation-trigger detection + Phase 4 handoff package
+│   ├── report.rs                    # FR-124 external-resolution report builder
 │   └── auth_retry.rs                # bounded solver-auth revalidation loop (scope-controlled)
 ├── db/
 │   ├── migrations.rs                # + Phase 3 migration (v3): new tables, new columns
@@ -131,6 +135,10 @@ src/
 │   ├── mediation_events.rs          # new: mediation_events + mediation_summaries helpers
 │   └── rationales.rs                # new: controlled audit store for full rationales
 └── handlers/
+    ├── dispute_detected.rs          # existing; extended to synchronously invoke
+    │                                # mediation::start::try_start_for(dispute_id) (FR-121)
+    ├── dispute_resolved.rs          # existing; extended to emit FR-124 final report when
+    │                                # any mediation context exists for the dispute
     └── dispute_updated.rs           # existing; extended only to flip mediation sessions to superseded_by_human on Phase 2 s=in-progress from an external solver
 
 prompts/
@@ -145,10 +153,14 @@ tests/
 ├── phase1_*.rs                      # unchanged
 ├── phase2_*.rs                      # unchanged
 ├── phase3_session_open.rs           # US1 — opens session, takes flow, first message addressed to shared pubkey
+├── phase3_event_driven_start.rs     # FR-121/122 — detection handler fires reasoning→take→first message
+│                                    #   synchronously; engine tick disabled → still reaches first message
 ├── phase3_response_ingest.rs        # US2 — inbound decrypt/verify, dedup, restart resume
 ├── phase3_cooperative_summary.rs    # US3 — summary flows to solver per Solver-Facing Routing
 ├── phase3_escalation_triggers.rs    # US4 — each trigger transitions to escalation_recommended + handoff
 ├── phase3_provider_swap.rs          # US5 — provider change via config + env, no code change
+├── phase3_external_resolution.rs    # US6 / FR-124 — final report fires for all four
+│                                    #   resolution scenarios; does NOT fire when no mediation context
 ├── phase3_auth_retry.rs             # revalidation loop — success resume + terminal alert path
 └── phase3_reasoning_unavailable.rs  # halt behavior, Phase 1/2 unaffected
 ```
@@ -159,50 +171,99 @@ tests/
 
 ### Flow: Session open (US1)
 
+Entry point is the Phase 1/2 **dispute-detection event handler**, not a
+periodic sweep. This matches the spec's FR-121 (immediate,
+event-driven start) and the "Mediation Start-Flow Ordering" section.
+The background engine tick still runs, but only as a retry / resumption
+safety net — see "Flow: Resumption and retry tick" below.
+
 ```text
-Phase 2 Dispute (notified/taken)
+Phase 1/2 dispute-detected event
+  (handlers/dispute_detected.rs)
        │
-       │  mediation::engine::maybe_start(dispute_id)
+       │  mediation::start::try_start_for(dispute_id)   // synchronous, in-path
        ▼
 ┌────────────────────────────────┐
-│  mediation/engine.rs          │  Guards: [mediation].enabled, reasoning healthy, auth OK
+│  mediation/eligibility.rs      │  Gate 1: FR-123 composed eligibility
+│  (eligibility check)           │  (not a single lifecycle_state value)
 └───────────────┬────────────────┘
-                │
+                │ eligible
+                ▼
+┌────────────────────────────────┐
+│  reasoning/health.rs           │  Gate 2: reasoning provider healthy (TC-102)
+└───────────────┬────────────────┘
+                │ healthy
+                ▼
+┌────────────────────────────────┐
+│  reasoning/* (verdict)         │  Gate 3: reasoning verdict says
+│                                │  mediation-eligible (FR-122)
+│                                │  → rationale into audit store
+└───────────────┬────────────────┘
+                │ positive verdict
                 ▼
 ┌────────────────────────────────┐     ┌──────────────────────────┐
-│  chat/dispute_chat_flow.rs    │────▶│  dispute-chat interaction│  (verified against
-│  follow the flow used by      │     │  flow used by current     │   current Mostro
-│  current Mostro clients       │     │  Mostro clients; yields or│   clients + Mostrix)
-│                               │     │  allows reconstruction of │
-│                               │     │  per-party chat-key material
-└───────────────┬────────────────┘     └──────────┬───────────────┘
-                │                                 │
-                │ chat-key material (per party)   │
-                ▼                                 ▼
-┌────────────────────────────────┐     ┌──────────────────────┐
-│  chat/shared_key.rs           │────▶│  addressing keypair  │
-│  reconstruct Keys per party   │     │  for buyer / seller  │
-└───────────────┬────────────────┘     └──────────────────────┘
-                │
+│  chat/dispute_chat_flow.rs     │────▶│  TakeDispute via Mostro  │  only now is TakeDispute
+│  follow flow used by current   │     │  solver action            │  issued (FR-122)
+│  Mostro clients                │     └──────────┬───────────────┘
+│                                │                │
+│                                │◀───────────────┘ take succeeded + per-party
+│                                │                  chat-key material returned
+└───────────────┬────────────────┘
+                │ chat-key material (per party)
                 ▼
 ┌────────────────────────────────┐
-│  reasoning/* (first classify) │  classification + confidence (+ rationale → audit store)
-└───────────────┬────────────────┘
-                │
-                ▼
-┌────────────────────────────────┐     ┌──────────────────────┐
-│  chat/outbound.rs             │────▶│  gift-wrap (kind 1059│
-│  NIP-44 inner event, p tag =  │     │  p = shared pubkey)  │
-│  shared pubkey                │     └──────────────────────┘
+│  chat/shared_key.rs            │  reconstruct Keys per party
 └───────────────┬────────────────┘
                 │
                 ▼
 ┌────────────────────────────────┐
-│  db/mediation.rs              │  INSERT mediation_sessions row,
-│                               │  pin prompt_bundle_id + policy_hash,
-│                               │  INSERT outbound mediation_messages rows
+│  db/mediation.rs               │  INSERT mediation_sessions row,
+│                                │  pin prompt_bundle_id + policy_hash
+│                                │  (after TakeDispute succeeded — never before)
+└───────────────┬────────────────┘
+                │
+                ▼
+┌────────────────────────────────┐     ┌──────────────────────┐
+│  chat/outbound.rs              │────▶│  gift-wrap (kind 1059│
+│  NIP-44 inner event, p tag =   │     │  p = shared pubkey)  │
+│  shared pubkey                 │     └──────────────────────┘
+└───────────────┬────────────────┘
+                │
+                ▼
+┌────────────────────────────────┐
+│  db/mediation.rs               │  INSERT outbound mediation_messages row
 └────────────────────────────────┘
 ```
+
+Failure handling: if any gate stops the attempt, no `TakeDispute` is
+issued and no `mediation_sessions` row is committed. A
+`mediation_events` row records the stop reason. The dispute remains
+eligible under FR-123 so the retry tick (below) can try again once the
+stop condition clears.
+
+### Flow: Resumption and retry tick
+
+The background engine tick retains a narrow, explicit role:
+
+```text
+tokio::interval (ENGINE_TICK_INTERVAL)
+       │
+       ▼
+┌────────────────────────────────┐
+│  mediation/engine.rs           │  for each open session: advance state,
+│  (resumption + retry)          │  drive inbound/outbound/timeouts (unchanged
+│                                │  from prior sections)
+│                                │
+│                                │  for each dispute eligible under FR-123
+│                                │  without an active session: retry
+│                                │  start::try_start_for(dispute_id) using the
+│                                │  SAME ordering as the event-driven path
+└────────────────────────────────┘
+```
+
+The tick is a safety net, not the trigger. Tests MUST cover: disabling
+the tick does not prevent a newly detected eligible dispute from
+reaching its first party-facing message (SC-109).
 
 ### Flow: Inbound ingestion (US2)
 
@@ -280,6 +341,49 @@ mediation/policy.rs evaluator
 │                                │  (per Solver-Facing Routing)
 └────────────────────────────────┘
 ```
+
+### Flow: External resolution → final solver report (US6 / FR-124)
+
+```text
+Phase 1/2 dispute lifecycle transition
+  → resolved terminal state
+  (handlers/dispute_resolved.rs)
+       │
+       ▼
+┌────────────────────────────────┐
+│  mediation/engine.rs           │  Check: any mediation context for this dispute?
+│  (has any of: reasoning        │  (reasoning verdict? session row in any state
+│   verdict, session row,        │   including escalation_recommended? events?
+│   events, outbound messages)   │   outbound messages?)
+└───────────────┬────────────────┘
+                │ yes — context exists
+                ▼
+┌────────────────────────────────┐
+│  mediation/report.rs           │  assemble FR-124 final report:
+│  (new — external resolution    │    dispute id, session id (if any),
+│   report builder)              │    latest classification + confidence (or marker),
+│                                │    outbound_party_messages counter (0/1/2+),
+│                                │    final observed dispute status,
+│                                │    short narrative from lifecycle transitions.
+│                                │  Idempotency key = dispute_id + final status.
+└───────────────┬────────────────┘
+                │
+                ▼
+┌────────────────────────────────┐     ┌──────────────────────┐
+│  mediation/router.rs           │────▶│  phase 1/2 notifier  │
+│  Solver-Facing Routing:        │     │  targeted or         │
+│  targeted if assigned_solver,  │     │  broadcast           │
+│  broadcast otherwise           │     └──────────────────────┘
+└───────────────┬────────────────┘
+                │
+                ▼
+        outcome = resolved_externally_reported
+        mediation_events row records report emission
+```
+
+No mediation context for the dispute (a Phase 1/2-only case) → the
+handler returns without emitting the report (FR-124 "does not fire"
+clause).
 
 ### Flow: Solver auth revalidation (scope-controlled background loop)
 
@@ -394,6 +498,8 @@ apply. Reasoning credentials are supplied via `[reasoning].api_key_env`
 - `phase3_cooperative_summary.rs` (US3): cooperative two-round flow drives a summary delivered through the Phase 1/2 notifier per the Solver-Facing Routing rule; `mediation_summaries` row present with the session's `policy_hash`.
 - `phase3_escalation_triggers.rs` (US4): one sub-test per enumerated trigger (conflicting, fraud, low_conf, party_unresponsive, round_limit, reasoning_unavailable, authorization_lost); each transitions the session to `escalation_recommended` and assembles the Phase 4 handoff package.
 - `phase3_provider_swap.rs` (US5): swap provider from `openai` to an `openai-compatible` endpoint at a different `api_base` via config + env; no code change; mediation continues against the new endpoint.
+- `phase3_event_driven_start.rs` (SC-109, SC-110): detection handler synchronously drives reasoning → `TakeDispute` → first party-facing message; disabling the engine tick does not prevent a newly detected eligible dispute from reaching its first outbound message; asserts ordering via `mediation_events` rows — reasoning verdict precedes `TakeDispute`, and no `mediation_sessions` row exists before `TakeDispute` succeeded.
+- `phase3_external_resolution.rs` (US6, FR-124, SC-111): four sub-tests — (a) full session with both-parties exchange resolves externally; (b) session with outbound-only messages, no party replies, resolves externally; (c) session that reached `escalation_recommended` resolves externally; (d) reasoning verdict produced but no session ever opened (TakeDispute failed), then resolves externally. Each emits exactly one solver-facing DM whose body matches the FR-124 schema. A fifth sub-test (e) confirms NO report is emitted for a dispute with zero mediation context.
 - `phase3_auth_retry.rs`: startup verification fails → loop runs with deterministic short backoff values; success on attempt N resumes mediation without restart; termination path emits one WARN alert and stops retrying.
 - `phase3_reasoning_unavailable.rs`: reasoning-provider stub always errors; verifies mediation halts, new sessions are refused, open sessions escalate with `reasoning_unavailable`, and Phase 1/2 continues notifying solvers normally.
 
@@ -414,7 +520,7 @@ notes above.
 4. **Prompt bundle loader + hasher**: load the configured paths at startup, compute the deterministic `policy_hash`, fail loudly on missing / unreadable files.
 5. **Reasoning provider adapter boundary + `openai` adapter**: the trait surface plus the one adapter. NYI stubs for other providers. Health check at startup + config reload.
 6. **Mostro chat transport**: `chat/dispute_chat_flow.rs`, `chat/shared_key.rs`, `chat/outbound.rs`, `chat/inbound.rs`. Verify against current Mostro / Mostrix behavior (`execute_take_dispute.rs` + `chat_utils.rs`) during implementation; do not freeze mechanisms that are ultimately determined by client behavior.
-7. **Mediation engine**: session lifecycle, policy validator, router (Solver-Facing Routing), summarizer, escalation / handoff package. This is the largest task block; split per story.
+7. **Mediation engine**: session lifecycle, eligibility predicate (FR-123), event-driven start flow (`mediation/start.rs`, wired from `handlers/dispute_detected.rs`; strict ordering per FR-122: eligibility → reasoning health → reasoning verdict → `TakeDispute` → session row → first message), resumption/retry tick, policy validator, router (Solver-Facing Routing), summarizer, escalation / handoff package, external-resolution report (`mediation/report.rs`, wired from `handlers/dispute_resolved.rs`; FR-124). This is the largest task block; split per story.
 8. **Auth revalidation loop**: the scope-controlled background task.
 9. **Integration tests**: one file per user story + the two cross-cutting failure tests listed above.
 10. **Polish**: clippy / fmt / quickstart validation; cross-check `SC-102` audit claim (grep for any `admin-settle` / `admin-cancel` path — must remain zero).
