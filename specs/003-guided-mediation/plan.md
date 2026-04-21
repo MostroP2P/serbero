@@ -406,6 +406,80 @@ clause).
        → one WARN alert, stop retrying
 ```
 
+### Flow: Mid-session follow-up loop (Phase 11 / FR-125..FR-131)
+
+Added on top of the existing ingest tick. Runs once per session per
+ingest-tick cycle when a fresh inbound landed for a live session. The
+loop closes the gap between "we persisted a party reply" and "we
+dispatched the next outbound / summary / escalation" that `main` left
+open after Phase 3 US1–US6 shipped.
+
+```text
+run_ingest_tick persists a fresh inbound envelope
+       │
+       │  existing US4 round-limit check (session::check_round_limit)
+       │  → if capped: escalation::recommend(RoundLimit); return.
+       │  → otherwise: continue
+       ▼
+┌─────────────────────────────────────────────────────────┐
+│  mediation/mod.rs::advance_session_round(S)             │  (new)
+│                                                         │
+│  1. gate: round_count > round_count_last_evaluated      │
+│     else: skip (idempotency, FR-127)                    │
+│  2. load transcript from mediation_messages             │
+│     (ordered, party-tagged, ≤ 40 rows, FR-128)          │
+│  3. reasoning.classify(transcript, pinned_bundle)       │
+│     (same prompt bundle the session was opened with —   │
+│     policy_hash preserved for SC-103)                   │
+│  4. policy::evaluate → PolicyDecision                   │
+│     (existing function, previously unreachable from     │
+│     production; this loop is its first caller)          │
+│  5. transition awaiting_response → classified in the    │
+│     same transaction as the classification_produced row │
+│  6. dispatch (FR-126):                                  │
+│       AskClarification(text) → mid-session drafter,     │
+│         persist 2 outbound rows, publish, transition    │
+│         classified → awaiting_response                  │
+│       Summarize {..}          → deliver_summary (existing│
+│         open-time path; session ends closed)            │
+│       Escalate(trigger)       → escalation::recommend;  │
+│         session → escalation_recommended                │
+│  7. round_count_last_evaluated ← round_count            │
+│     consecutive_eval_failures ← 0 (commit in same txn)  │
+└─────────────────────────────────────────────────────────┘
+```
+
+Failure at step (3), (4), or any commit step:
+
+- log at `warn!`,
+- leave `round_count_last_evaluated` unchanged,
+- increment `consecutive_eval_failures`,
+- return (other sessions on the same tick are unaffected).
+
+The next ingest tick retries the same round. On the third consecutive
+failure (`consecutive_eval_failures == 3`), the session escalates
+with `ReasoningUnavailable` and the counter is reset by the escalation
+path (FR-130).
+
+The mid-session drafter for `AskClarification` mirrors the open-time
+`draft_and_send_initial_message` entry point but emits a round-number
+marker so parties can distinguish a follow-up question. No code path
+re-sends earlier Serbero outbound text; the transcript the reasoning
+provider sees is the only shared state (FR-126).
+
+### Dependency note — Phase 10 vs Phase 11
+
+Phase 10 (start-flow corrections, FR-121..FR-124) and Phase 11 (mid-
+session follow-up loop, FR-125..FR-131) are independent code slices.
+Phase 10 fixes what happens *before* the first outbound; Phase 11
+fixes what happens *after* each inbound. They touch disjoint files
+with one overlap: the engine tick in `src/mediation/mod.rs`, which
+Phase 10 retrofitted to route through `start::try_start_for` and
+Phase 11 extends with the `advance_session_round` post-ingest hook.
+Phase 11 MUST land after Phase 10 because the shared take-flow
+timeout constants (`DEFAULT_TAKE_FLOW_TIMEOUT`, etc.) and the audit-
+trail invariants Phase 11 assumes were introduced by Phase 10.
+
 ## Deduplication and State Invariants
 
 ### Phase 3 dedup

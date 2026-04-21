@@ -21,10 +21,14 @@ gap-analysis amendments added to the spec on 2026-04-20 (FR-121
 event-driven start, FR-122 take strictly coupled to reasoning, FR-123
 composed eligibility predicate, FR-124 final solver report on external
 resolution; see `spec.md` §"Mediation Start-Flow Ordering" and §"Final
-Solver Report on External Resolution"). Phase 10 is a remediation
-pass on top of the already-merged US1–US6; it is NOT a new user story.
-Phases 4 and 5 of the overall roadmap remain out of scope; the Phase
-4 handoff package is *prepared* but not consumed here.
+Solver Report on External Resolution"). A subsequent **Phase 11 —
+Mid-Session Follow-Up Loop** (T116–T126) closes the mid-session
+advancement gap confirmed by the 2026-04-21 audit (FR-125..FR-131;
+see `spec.md` §"Mid-Session Follow-Up Loop"). Both phases are
+remediation passes on top of the already-merged US1–US6; neither
+introduces a new user story. Phases 4 and 5 of the overall roadmap
+remain out of scope; the Phase 4 handoff package is *prepared* but
+not consumed here.
 
 ## Format: `[ID] [P?] [Story] Description`
 
@@ -466,6 +470,177 @@ attempts. The engine tick is a safety net, not the trigger.
 
 ---
 
+## Phase 11: Mid-Session Follow-Up Loop (FR-125 / FR-126 / FR-127 / FR-128 / FR-129 / FR-130 / FR-131)
+
+**Goal**: close the mid-session loop left stranded in `main` after
+Phase 3 US1–US6. After a party reply is ingested, Serbero MUST
+re-classify the transcript and dispatch the next side effect (another
+`AskClarification`, a cooperative `Summarize`, or an `Escalate`) —
+currently the loop only persists the inbound and increments
+`round_count`, then goes silent.
+
+**Scope**: one new helper (`advance_session_round`), one hook in
+`run_ingest_tick` post-ingest, one migration (v4) adding two columns
+to `mediation_sessions`, one mid-session drafter variant, three new
+integration tests. No prompt-bundle changes; no new states; no
+transport or key-lifecycle changes.
+
+**Exit criteria**: SC-112, SC-113, SC-114, SC-115 empirically pass.
+Alice/Bob end-to-end walkthrough against a real relay completes the
+second outbound within one ingest-tick cycle of Bob's reply.
+
+### Setup / schema
+
+- [ ] T116 Add migration v4 in `src/db/migrations.rs` behind the
+  existing `schema_version` guard. Two `ALTER TABLE mediation_sessions
+  ADD COLUMN` statements: `round_count_last_evaluated INTEGER NOT NULL
+  DEFAULT 0` and `consecutive_eval_failures INTEGER NOT NULL DEFAULT
+  0`. Backfill is the column default (all existing rows land on `0`).
+  Unit-test the migration: walk a v3 DB forward to v4, assert both
+  columns exist with default `0` on every pre-existing row. Document
+  in the migration header that backfilling `round_count_last_evaluated`
+  to `0` forces any in-flight session to be re-evaluated once on the
+  first post-migration ingest tick — acceptable because the
+  alternative (skipping pre-existing sessions) keeps them silent.
+
+### Helpers (core loop)
+
+- [ ] T117 Implement `src/mediation/transcript.rs` (new module):
+  `load_transcript_for_session(conn, session_id, max_rows: usize) ->
+  Result<Vec<TranscriptEntry>>`. Reads `mediation_messages` for the
+  session, orders by `inner_created_at ASC`, tags each row with its
+  party role by matching `shared_pubkey` against the session's
+  `buyer_shared_pubkey` / `seller_shared_pubkey`, filters out rows
+  with `ingest_status = 'stale'`, and returns at most `max_rows` most
+  recent entries. Rows that match neither shared pubkey MUST be
+  excluded and logged at `warn!`. Reuse the existing
+  `crate::models::reasoning::TranscriptEntry` type. Unit tests cover:
+  normal flow (buyer + seller rows interleaved), party-mismatch
+  row exclusion, 40-row cap, stale exclusion, empty session.
+
+- [ ] T118 Add `db::mediation::advance_evaluator_marker(tx, session_id,
+  new_round_count)` — writes `round_count_last_evaluated =
+  new_round_count` AND `consecutive_eval_failures = 0` in a single
+  UPDATE. Must accept a `&rusqlite::Transaction` so the caller can
+  commit it atomically with the dispatched side effect's row writes
+  (FR-127). Add the symmetric
+  `db::mediation::bump_consecutive_eval_failures(conn, session_id) ->
+  Result<i64>` that increments the counter and returns the new value;
+  caller uses the return value to decide whether to escalate
+  (FR-130, threshold = 3). Unit-test both.
+
+- [ ] T119 Implement the mid-session drafter in `src/chat/outbound.rs`
+  as a variant of the existing `draft_and_send_initial_message` flow.
+  Accept a `round_number: u32` parameter; emit a round-number marker
+  in the outbound body (concrete text lives in
+  `prompts/phase3-message-templates.md` — a follow-up placeholder
+  already exists under the template id `phase3-followup-ask`; if it
+  doesn't, add a minimal placeholder in the same commit and reuse the
+  existing policy_hash since no classifier-governing content changes).
+  The drafter MUST NOT quote or re-send earlier Serbero outbound text.
+  Two-row commit (buyer + seller mediation_messages rows) and the
+  state transition MUST land in the same transaction. Reuses the
+  existing per-party `shared_pubkey` addressing; no changes to
+  `session_key_cache`.
+
+- [ ] T120 Implement `src/mediation/mod.rs::advance_session_round(
+  conn, client, serbero_keys, reasoning, prompt_bundle, session_id,
+  solvers, provider_name, model_name) -> Result<()>`. Flow:
+  1. Load session row; short-circuit if state NOT in
+     {`awaiting_response`}. (The other states — `classified`,
+     `summary_pending`, `summary_delivered`, `escalation_recommended`,
+     `closed`, `superseded_by_human` — are either in-flight with
+     another handler or terminal.)
+  2. Gate on `round_count > round_count_last_evaluated`. If equal,
+     return without side effects (FR-127 idempotency).
+  3. Load transcript via T117.
+  4. Call `reasoning.classify(ClassificationRequest { .. })`. On any
+     error, call T118's failure bump; if the returned count is `>= 3`,
+     delegate to `escalation::recommend(.., ReasoningUnavailable)`
+     (the existing helper resets the counter implicitly because
+     a subsequent successful evaluation would call
+     `advance_evaluator_marker` which zeroes it; the escalation path
+     transitions the session out of `awaiting_response` so future
+     ingest ticks do not re-evaluate). Return without further action.
+  5. Call `policy::evaluate` — the first production call site of that
+     function (`src/mediation/policy.rs:221`).
+  6. Open a transaction; transition `awaiting_response → classified`
+     and write the `classification_produced` event inside it.
+  7. Dispatch on the `PolicyDecision`:
+     - `AskClarification(text)` → T119 drafter; on success, transition
+       `classified → awaiting_response` and call `advance_evaluator_marker`
+       within the same transaction; commit.
+     - `Summarize { .. }` → call the existing `deliver_summary`
+       (the function already handles the `summary_pending →
+       summary_delivered → closed` progression); call
+       `advance_evaluator_marker` in its own post-commit DB op since
+       `deliver_summary` owns its own transaction scope.
+     - `Escalate(trigger)` → call `escalation::recommend(..)` with the
+       `Some(session_id)` form (which already transitions the session
+       row); `consecutive_eval_failures` is reset by the escalation
+       path.
+  8. Any error past step 5 calls `bump_consecutive_eval_failures`
+     and returns without committing.
+
+- [ ] T121 Hook `advance_session_round` into
+  `src/mediation/mod.rs::run_ingest_tick`. After the existing
+  `check_round_limit` call for each session that ingested at least
+  one fresh envelope this cycle, call `advance_session_round`. The
+  call MUST be inside the same per-session iteration (sequential, not
+  spawned) to satisfy FR-131's concurrency guard. A failure from
+  `advance_session_round` MUST log at `warn!` and NOT abort the tick
+  for other sessions.
+
+### Integration tests
+
+- [ ] T122 [P] `tests/phase3_followup_round.rs` (SC-112 + SC-113):
+  open a session, dispatch the first outbound, script the
+  `MockReasoningProvider` to return a second `AskClarification(...)`
+  on the mid-session call. Send party replies through the relay so
+  the ingest tick picks them up. Assert: within one extra ingest-tick
+  cycle, two MORE outbound `mediation_messages` rows exist (total 4:
+  round 0 × 2 + round 1 × 2), the session is back in
+  `awaiting_response`, and `round_count_last_evaluated = 1`. Second
+  assertion for SC-113: trigger a NO-OP ingest tick (no new inbound)
+  and assert the outbound row count did NOT change.
+
+- [ ] T123 [P] `tests/phase3_followup_summary.rs` (SC-114): same
+  harness but the scripted provider returns `Summarize {
+  CoordinationFailureResolvable, 0.9 }` on the mid-session call.
+  Assert `deliver_summary` fires exactly once; session ends `closed`
+  with a `summary_delivered` event on file; the solver receives the
+  summary DM.
+
+- [ ] T124 [P] `tests/phase3_followup_reasoning_failure.rs` (SC-115):
+  script the provider to fail (`ReasoningError::Unreachable`) three
+  times in a row on the mid-session path. Drive three ingest ticks
+  with a fresh inbound each time (or with the marker artificially
+  reset). Assert on the third failure the session transitions to
+  `escalation_recommended` with trigger `ReasoningUnavailable`, and a
+  session-scoped `escalation_recommended` + `handoff_prepared` pair
+  exists in `mediation_events`.
+
+### Polish
+
+- [ ] T125 Run `cargo clippy --all-targets --all-features -- -D
+  warnings` and `cargo fmt --all -- --check` after Phase 11 edits;
+  fix findings. Expected new warnings cluster around the drafter
+  variant and the `advance_session_round` dispatch — address directly
+  rather than silencing.
+
+- [ ] T126 Update `specs/003-guided-mediation/quickstart.md` with a
+  short walkthrough of the cooperative follow-up round: after the
+  first outbound both parties reply, Serbero re-classifies and emits
+  the second outbound without operator intervention. Point readers to
+  the three new integration tests as the reference.
+
+**Checkpoint**: Phase 11 complete — mid-session mediation rounds
+progress on their own; `policy::evaluate` has a production call site;
+Alice/Bob end-to-end walkthrough against a real relay completes the
+second outbound within one ingest-tick cycle of Bob's reply.
+
+---
+
 ## Dependencies & Execution Order
 
 ### Phase Dependencies
@@ -480,6 +655,7 @@ attempts. The engine tick is a safety net, not the trigger.
 - **Polish (Phase 8)**: Depends on all shipped user stories being complete.
 - **User Story 6 (Phase 9)**: Depends on US1 (needs a session-open code path to close against). Currently marked complete on `main`.
 - **Correction Phase 10**: Depends on US1–US6 complete. T097 lands first (event kinds; T098 was merged into T097 because outcomes are encoded as event-kind + session-state, not a standalone enum). T099–T103 (A+C) and T104–T106 (B) can land in parallel after T097 — they touch disjoint files except for `session.rs` where T104's ordering change must precede T101's `try_start_for` delegation. T107–T111 (D) depend on T097 for the new event kind but are otherwise independent of A/B/C. T112–T115 depend on all preceding Phase 10 tasks.
+- **Correction Phase 11**: Depends on Phase 10 landed (shares `src/mediation/mod.rs` and the audit-trail invariants). T116 (migration v4) is the only blocker for every other task. T117–T119 are `[P]` after T116 — three disjoint files (`transcript.rs` new, `db/mediation.rs`, `chat/outbound.rs`). T120 (the `advance_session_round` helper) depends on T117/T118/T119. T121 wires T120 into the ingest tick. T122–T124 are `[P]` integration tests after T121. T125 / T126 are polish and depend on all preceding Phase 11 tasks.
 
 ### User Story Dependencies
 
