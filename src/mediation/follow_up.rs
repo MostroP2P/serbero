@@ -153,9 +153,7 @@ pub async fn advance_session_round(
         cache.get(session_id).cloned()
     };
     let Some(material) = material else {
-        debug!(
-            "advance_session_round: no chat material in cache (post-restart?); skipping"
-        );
+        debug!("advance_session_round: no chat material in cache (post-restart?); skipping");
         return Ok(());
     };
 
@@ -214,24 +212,31 @@ pub async fn advance_session_round(
 
     // (6) Policy layer — persists the rationale + the
     //     `classification_produced` audit row in its own tx.
-    let decision =
-        match policy::evaluate(conn, session_id, prompt_bundle, provider_name, model_name, classification).await
-        {
-            Ok(d) => d,
-            Err(e) => {
-                warn!(error = %e, "advance_session_round: policy::evaluate failed");
-                handle_reasoning_failure(
-                    conn,
-                    client,
-                    session_id,
-                    &info.dispute_id,
-                    solvers,
-                    prompt_bundle,
-                )
-                .await;
-                return Ok(());
-            }
-        };
+    let decision = match policy::evaluate(
+        conn,
+        session_id,
+        prompt_bundle,
+        provider_name,
+        model_name,
+        classification,
+    )
+    .await
+    {
+        Ok(d) => d,
+        Err(e) => {
+            warn!(error = %e, "advance_session_round: policy::evaluate failed");
+            handle_reasoning_failure(
+                conn,
+                client,
+                session_id,
+                &info.dispute_id,
+                solvers,
+                prompt_bundle,
+            )
+            .await;
+            return Ok(());
+        }
+    };
 
     // (7) Dispatch.
     match decision {
@@ -345,15 +350,8 @@ pub async fn advance_session_round(
                 bump_failure_best_effort(conn, session_id).await;
                 return Ok(());
             }
-            notify_solvers_escalation(
-                conn,
-                client,
-                solvers,
-                &info.dispute_id,
-                session_id,
-                trigger,
-            )
-            .await;
+            notify_solvers_escalation(conn, client, solvers, &info.dispute_id, session_id, trigger)
+                .await;
             info!(
                 trigger = %trigger,
                 "advance_session_round: Escalate dispatched"
@@ -380,21 +378,20 @@ async fn load_session_info(
 ) -> Result<Option<SessionEvalInfo>> {
     use std::str::FromStr;
     let guard = conn.lock().await;
-    let row = guard
-        .query_row(
-            "SELECT state, round_count, round_count_last_evaluated, dispute_id
+    let row = guard.query_row(
+        "SELECT state, round_count, round_count_last_evaluated, dispute_id
              FROM mediation_sessions
              WHERE session_id = ?1",
-            params![session_id],
-            |r| {
-                Ok((
-                    r.get::<_, String>(0)?,
-                    r.get::<_, i64>(1)?,
-                    r.get::<_, i64>(2)?,
-                    r.get::<_, String>(3)?,
-                ))
-            },
-        );
+        params![session_id],
+        |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, i64>(1)?,
+                r.get::<_, i64>(2)?,
+                r.get::<_, String>(3)?,
+            ))
+        },
+    );
     match row {
         Ok((state_s, round_count, rcle, dispute_id)) => {
             let state = MediationSessionState::from_str(&state_s)?;
@@ -517,10 +514,7 @@ async fn handle_reasoning_failure(
 /// `consecutive_eval_failures` counter and the warn! log; the next
 /// tick's classify phase will drive the eventual escalation through
 /// the normal path.
-async fn bump_failure_best_effort(
-    conn: &Arc<AsyncMutex<rusqlite::Connection>>,
-    session_id: &str,
-) {
+async fn bump_failure_best_effort(conn: &Arc<AsyncMutex<rusqlite::Connection>>, session_id: &str) {
     let guard = conn.lock().await;
     if let Err(e) = db::mediation::bump_consecutive_eval_failures(&guard, session_id) {
         warn!(error = %e, "advance_session_round: failed to bump failure counter on dispatch error");
@@ -674,7 +668,9 @@ mod tests {
         run_migrations(&mut conn).unwrap();
         let conn = Arc::new(AsyncMutex::new(conn));
         // Explicitly no session row for `sess-t120`.
-        let spy = SpyClassifier { calls: AtomicUsize::new(0) };
+        let spy = SpyClassifier {
+            calls: AtomicUsize::new(0),
+        };
         run_once(&conn, &spy).await;
         assert_eq!(spy.calls.load(Ordering::SeqCst), 0);
     }
@@ -683,7 +679,9 @@ mod tests {
     async fn skips_when_state_is_not_awaiting_response() {
         let conn = seeded_db().await;
         seed_session(&conn, "escalation_recommended", 3, 2).await;
-        let spy = SpyClassifier { calls: AtomicUsize::new(0) };
+        let spy = SpyClassifier {
+            calls: AtomicUsize::new(0),
+        };
         run_once(&conn, &spy).await;
         assert_eq!(
             spy.calls.load(Ordering::SeqCst),
@@ -697,7 +695,9 @@ mod tests {
         let conn = seeded_db().await;
         // round_count == round_count_last_evaluated → FR-127 idempotency gate blocks.
         seed_session(&conn, "awaiting_response", 2, 2).await;
-        let spy = SpyClassifier { calls: AtomicUsize::new(0) };
+        let spy = SpyClassifier {
+            calls: AtomicUsize::new(0),
+        };
         run_once(&conn, &spy).await;
         assert_eq!(spy.calls.load(Ordering::SeqCst), 0);
     }
@@ -708,7 +708,9 @@ mod tests {
         // one that blocks. This mirrors the post-restart case.
         let conn = seeded_db().await;
         seed_session(&conn, "awaiting_response", 3, 2).await;
-        let spy = SpyClassifier { calls: AtomicUsize::new(0) };
+        let spy = SpyClassifier {
+            calls: AtomicUsize::new(0),
+        };
         run_once(&conn, &spy).await;
         assert_eq!(
             spy.calls.load(Ordering::SeqCst),

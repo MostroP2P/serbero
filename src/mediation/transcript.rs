@@ -246,9 +246,36 @@ mod tests {
         let conn = seeded_conn("buyer-sp", "seller-sp");
         // Interleaved: outbound (Serbero) → inbound (Buyer) → outbound
         // → inbound (Seller). Timestamps strictly increasing.
-        insert_msg(&conn, "outbound", "buyer", "buyer-sp", "e-out-1", 100, "hello buyer", false);
-        insert_msg(&conn, "outbound", "seller", "seller-sp", "e-out-2", 101, "hello seller", false);
-        insert_msg(&conn, "inbound", "buyer", "buyer-sp", "e-in-1", 200, "buyer reply", false);
+        insert_msg(
+            &conn,
+            "outbound",
+            "buyer",
+            "buyer-sp",
+            "e-out-1",
+            100,
+            "hello buyer",
+            false,
+        );
+        insert_msg(
+            &conn,
+            "outbound",
+            "seller",
+            "seller-sp",
+            "e-out-2",
+            101,
+            "hello seller",
+            false,
+        );
+        insert_msg(
+            &conn,
+            "inbound",
+            "buyer",
+            "buyer-sp",
+            "e-in-1",
+            200,
+            "buyer reply",
+            false,
+        );
         insert_msg(
             &conn,
             "inbound",
@@ -277,8 +304,19 @@ mod tests {
     #[test]
     fn stale_rows_are_excluded() {
         let conn = seeded_conn("buyer-sp", "seller-sp");
-        insert_msg(&conn, "inbound", "buyer", "buyer-sp", "e-fresh", 100, "fresh", false);
-        insert_msg(&conn, "inbound", "seller", "seller-sp", "e-stale", 150, "stale", true);
+        insert_msg(
+            &conn, "inbound", "buyer", "buyer-sp", "e-fresh", 100, "fresh", false,
+        );
+        insert_msg(
+            &conn,
+            "inbound",
+            "seller",
+            "seller-sp",
+            "e-stale",
+            150,
+            "stale",
+            true,
+        );
         let got = load_transcript_for_session(&conn, "sess-t117", 40).unwrap();
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].content, "fresh");
@@ -288,7 +326,9 @@ mod tests {
     #[test]
     fn inbound_with_unknown_shared_pubkey_is_dropped() {
         let conn = seeded_conn("buyer-sp", "seller-sp");
-        insert_msg(&conn, "inbound", "buyer", "buyer-sp", "e-ok", 100, "ok", false);
+        insert_msg(
+            &conn, "inbound", "buyer", "buyer-sp", "e-ok", 100, "ok", false,
+        );
         // shared_pubkey doesn't match buyer-sp or seller-sp — a
         // pathological ingest-side bug; we drop the row.
         insert_msg(

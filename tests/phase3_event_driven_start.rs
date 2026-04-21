@@ -29,9 +29,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use nostr_sdk::{
-    Alphabet, EventBuilder, Keys, Kind, SingleLetterTag, Tag, TagKind, Timestamp,
-};
+use nostr_sdk::{Alphabet, EventBuilder, Keys, Kind, SingleLetterTag, Tag, TagKind, Timestamp};
 use tokio::sync::Mutex as AsyncMutex;
 use uuid::Uuid;
 

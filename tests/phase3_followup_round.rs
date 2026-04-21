@@ -133,7 +133,15 @@ fn seed_session_with_round_zero(
                 persisted_at, stale
              ) VALUES (?1, 'outbound', ?2, ?3, ?4, 200, 'outer-r0-buyer',
                        ?5, ?6, ?7, 200, 0)",
-            rusqlite::params![session_id, party, shared_pk, inner_id, content, bundle.id, bundle.policy_hash],
+            rusqlite::params![
+                session_id,
+                party,
+                shared_pk,
+                inner_id,
+                content,
+                bundle.id,
+                bundle.policy_hash
+            ],
         )
         .unwrap();
     }

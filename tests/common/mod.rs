@@ -333,9 +333,7 @@ impl MostroChatSim {
                         let Ok((msg, _sig)) = serde_json::from_str::<(
                             Message,
                             Option<nostr_sdk::secp256k1::schnorr::Signature>,
-                        )>(
-                            &unwrapped.rumor.content
-                        ) else {
+                        )>(&unwrapped.rumor.content) else {
                             return Ok(false);
                         };
                         let kind = msg.get_inner_message_kind();

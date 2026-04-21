@@ -278,7 +278,10 @@ async fn try_start_mediation(
                  engine tick will deliver the summary"
             );
         }
-        StartOutcome::Started(OpenOutcome::EscalatedOnOpen { session_id, trigger }) => {
+        StartOutcome::Started(OpenOutcome::EscalatedOnOpen {
+            session_id,
+            trigger,
+        }) => {
             // Escalation fanout (the session-scoped `escalation_recommended`
             // + `handoff_prepared` audit rows plus the solver DM)
             // runs on the engine tick when it observes the

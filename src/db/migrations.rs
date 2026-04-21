@@ -418,7 +418,9 @@ mod tests {
         // below.
         let mut conn = open_in_memory().unwrap();
         run_migrations(&mut conn).unwrap();
-        let mut stmt = conn.prepare("PRAGMA table_info(mediation_sessions)").unwrap();
+        let mut stmt = conn
+            .prepare("PRAGMA table_info(mediation_sessions)")
+            .unwrap();
         let cols: Vec<(String, String, String)> = stmt
             .query_map([], |row| {
                 // PRAGMA table_info columns: cid, name, type,
@@ -434,12 +436,15 @@ mod tests {
             .collect::<std::result::Result<_, _>>()
             .unwrap();
         for col_name in ["round_count_last_evaluated", "consecutive_eval_failures"] {
-            let hit = cols.iter().find(|(n, _, _)| n == col_name).unwrap_or_else(|| {
-                panic!(
-                    "mediation_sessions should have column {col_name} but only has {:?}",
-                    cols
-                )
-            });
+            let hit = cols
+                .iter()
+                .find(|(n, _, _)| n == col_name)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "mediation_sessions should have column {col_name} but only has {:?}",
+                        cols
+                    )
+                });
             assert_eq!(
                 hit.1.to_uppercase(),
                 "INTEGER",
@@ -465,8 +470,11 @@ mod tests {
         ] {
             let tx = conn.transaction().unwrap();
             apply(&tx).unwrap();
-            tx.execute("INSERT INTO schema_version (version) VALUES (?1)", params![v])
-                .unwrap();
+            tx.execute(
+                "INSERT INTO schema_version (version) VALUES (?1)",
+                params![v],
+            )
+            .unwrap();
             tx.commit().unwrap();
         }
 

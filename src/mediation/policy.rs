@@ -609,7 +609,7 @@ mod tests {
         let conn = fresh_conn();
         let mut resp = base_response();
         resp.confidence = 0.3; // below LOW_CONFIDENCE_THRESHOLD
-        // base_response already sets AskClarification("please confirm X").
+                               // base_response already sets AskClarification("please confirm X").
         let provider = ScriptedProvider::ok(resp);
         let decision = run_initial(&conn, &provider).await.unwrap();
         assert_eq!(

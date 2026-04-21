@@ -36,8 +36,8 @@ use serbero::mediation::follow_up::advance_session_round;
 use serbero::mediation::SessionKeyCache;
 use serbero::models::mediation::ClassificationLabel;
 use serbero::models::reasoning::{
-    ClassificationRequest, ClassificationResponse, RationaleText, ReasoningError,
-    SuggestedAction, SummaryRequest, SummaryResponse,
+    ClassificationRequest, ClassificationResponse, RationaleText, ReasoningError, SuggestedAction,
+    SummaryRequest, SummaryResponse,
 };
 use serbero::models::{SolverConfig, SolverPermission};
 use serbero::prompts::{self, PromptBundle};
@@ -267,7 +267,8 @@ async fn summarize_branch_delivers_summary_once_and_closes_session() {
         );
     }
 
-    let summary_text = "Both parties confirmed payment and release; recommend closing via Mostro's settle flow.";
+    let summary_text =
+        "Both parties confirmed payment and release; recommend closing via Mostro's settle flow.";
     let reasoning: Arc<dyn ReasoningProvider> = Arc::new(SummarizingProvider {
         summary_text: summary_text.into(),
         suggested_next_step: "Solver should invoke AdminSettleDispute on Mostro.".into(),
@@ -306,7 +307,10 @@ async fn summarize_branch_delivers_summary_once_and_closes_session() {
         "SC-114: deliver_summary must walk the session all the way to closed"
     );
     assert_eq!(round_count, 1);
-    assert_eq!(marker, 1, "FR-127: marker must advance after the Summarize branch commits");
+    assert_eq!(
+        marker, 1,
+        "FR-127: marker must advance after the Summarize branch commits"
+    );
 
     // (b) exactly one mediation_summaries row with the returned
     //     summary_text + suggested_next_step pinned to our session.
@@ -420,6 +424,9 @@ async fn summarize_branch_delivers_summary_once_and_closes_session() {
             .unwrap();
         (s, g)
     };
-    assert_eq!(summary_rows_after, 1, "no duplicate summary on re-invocation");
+    assert_eq!(
+        summary_rows_after, 1,
+        "no duplicate summary on re-invocation"
+    );
     assert_eq!(sg_after, 1);
 }

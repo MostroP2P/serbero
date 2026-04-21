@@ -741,7 +741,10 @@ mod tests {
 
         let (marker, failures) = read_eval_columns(&conn, "sess-1");
         assert_eq!(marker, 3, "marker must advance to the supplied round count");
-        assert_eq!(failures, 0, "any successful evaluation resets the failure streak");
+        assert_eq!(
+            failures, 0,
+            "any successful evaluation resets the failure streak"
+        );
     }
 
     #[test]
@@ -758,7 +761,10 @@ mod tests {
         drop(tx); // implicit rollback — no commit call
 
         let (marker, failures) = read_eval_columns(&conn, "sess-1");
-        assert_eq!(marker, 0, "rollback must leave the marker at its pre-tx value");
+        assert_eq!(
+            marker, 0,
+            "rollback must leave the marker at its pre-tx value"
+        );
         assert_eq!(failures, 0);
     }
 
