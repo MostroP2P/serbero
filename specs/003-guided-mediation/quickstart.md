@@ -130,11 +130,33 @@ per attempt). Phase 1/2 continues unaffected.
 4. Have the buyer and seller reply through the Mostro chat client.
    Serbero ingests the replies via the gift-wrap pipeline, dedupes
    by inner-event id, and advances `round_count`.
-5. On the configured convergence path, Serbero generates a summary
+5. **Mid-session follow-up (Phase 11 / FR-125..FR-131).** On the
+   same ingest-tick cycle that persists a fresh inbound, Serbero
+   now re-classifies the updated transcript and dispatches the
+   next step automatically. You should observe, within a few tens
+   of seconds of the parties replying:
+   - `mediation_events` gains one new `classification_produced`
+     row for this round (rationale id references
+     `reasoning_rationales`, not the general log — FR-120);
+   - if the policy decision is another clarifying question, two
+     more `mediation_messages` rows appear with
+     `direction = outbound` and a body that starts with
+     `"Round 1. Buyer: ..."` / `"Round 1. Seller: ..."`; the
+     session stays in `awaiting_response`;
+   - `mediation_sessions.round_count_last_evaluated` advances to
+     match `round_count` (FR-127 idempotency marker — re-running
+     the tick without a new inbound is a no-op by design);
+   - if the policy decision is `Summarize`, `deliver_summary`
+     fires and the session proceeds to step 6 below;
+   - if three consecutive `reasoning.classify` calls fail
+     (provider unreachable), the session auto-escalates with
+     trigger `reasoning_unavailable` via
+     `mediation_sessions.consecutive_eval_failures` (FR-130).
+6. On the cooperative convergence path, Serbero generates a summary
    and delivers it to the assigned solver (or broadcasts to all
    configured solvers if none is assigned yet) via the existing
-   Phase 1/2 notifier. The session transitions to
-   `summary_delivered → closed`.
+   Phase 1/2 notifier. The session transitions through
+   `classified → summary_pending → summary_delivered → closed`.
 
 ## Verify escalation (US4)
 

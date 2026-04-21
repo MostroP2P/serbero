@@ -698,11 +698,15 @@ second outbound within one ingest-tick cycle of Bob's reply.
   would trade readable call sites for clippy silence). `cargo fmt
   --all -- --check` clean.
 
-- [ ] T126 Update `specs/003-guided-mediation/quickstart.md` with a
-  short walkthrough of the cooperative follow-up round: after the
-  first outbound both parties reply, Serbero re-classifies and emits
-  the second outbound without operator intervention. Point readers to
-  the three new integration tests as the reference.
+- [X] T126 Updated `specs/003-guided-mediation/quickstart.md` §"Verify
+  mediation end-to-end": new step 5 describes the Phase 11
+  mid-session loop explicitly — the `classification_produced` audit
+  row, the `"Round 1. {role}: ..."` body marker on the second
+  outbound, the FR-127 idempotency semantics around
+  `round_count_last_evaluated`, the Summarize branch handoff to
+  `deliver_summary`, and the FR-130 auto-escalation on three
+  consecutive reasoning failures. Step 6 (formerly step 5)
+  re-numbered for the cooperative-summary finish.
 
 **Checkpoint**: Phase 11 complete — mid-session mediation rounds
 progress on their own; `policy::evaluate` has a production call site;
