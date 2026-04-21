@@ -15,9 +15,16 @@ behavior at test-fixture time).
 stories (US1 P1, US2 P1, US3 P2, US4 P2, US5 P3, US6 P2) are in scope
 for this phase. The task ids remain globally monotonic by authoring
 time, so the US6 test task (`T095`) intentionally appears after the
-US6 implementation ids (`T089`–`T094`). Phases 4 and 5 remain out of
-scope; the Phase 4 handoff package is *prepared* but not consumed
-here.
+US6 implementation ids (`T089`–`T094`). A later **Phase 10 —
+Mediation Start-Flow Correction** (T097–T115) addresses the
+gap-analysis amendments added to the spec on 2026-04-20 (FR-121
+event-driven start, FR-122 take strictly coupled to reasoning, FR-123
+composed eligibility predicate, FR-124 final solver report on external
+resolution; see `spec.md` §"Mediation Start-Flow Ordering" and §"Final
+Solver Report on External Resolution"). Phase 10 is a remediation
+pass on top of the already-merged US1–US6; it is NOT a new user story.
+Phases 4 and 5 of the overall roadmap remain out of scope; the Phase
+4 handoff package is *prepared* but not consumed here.
 
 ## Format: `[ID] [P?] [Story] Description`
 
@@ -382,6 +389,83 @@ resolution.
 
 ---
 
+## Phase 10: Mediation Start-Flow Correction (FR-121 / FR-122 / FR-123 / FR-124)
+
+**Purpose**: Close the gap between the merged US1–US6 implementation
+and the intended Phase 3 product behavior, as documented in the
+2026-04-20 spec amendments. In the current code, (A) mediation starts
+on a periodic engine tick rather than from the dispute-detection
+event, (B) `TakeDispute` runs before the reasoning verdict, (C)
+eligibility is pinned to `lifecycle_state = 'notified'`, and (D) the
+final solver-facing report only fires when an active session row
+exists. This phase corrects all four, without regressing the already-
+shipped user stories.
+
+**Entry criteria**: US1–US6 complete (all T001–T096 marked `[X]`).
+**Exit criteria**: SC-109, SC-110, SC-111 empirically pass; no single-
+state eligibility check remains in `src/`; the event-driven start is
+reachable with the engine tick disabled.
+
+### Setup / shared infrastructure
+
+- [X] T097 Extend `MediationEventKind` (lives in `src/db/mediation_events.rs:23`, not `src/models/mediation.rs`) with the new kinds defined in `data-model.md` §mediation_events: `StartAttemptStarted`, `StartAttemptStopped`, `ReasoningVerdict`, `TakeDisputeIssued`, `ResolvedExternallyReported`. Update `as_str()`, the `Display` impl, and the round-trip table test to cover them. Add typed constructors in the same file (`record_start_attempt_started`, `record_start_attempt_stopped`, `record_reasoning_verdict`, `record_take_dispute_issued`, `record_resolved_externally_reported`) so call sites cannot mis-spell them. Payload shapes match `data-model.md` exactly. All constructors accept `Option<&str>` for `session_id` (nullable — `mediation_events.session_id` is already nullable per `migrations.rs:220`), so they work for both dispute-scoped (pre-session) and session-scoped events.
+- [ ] ~~T098~~ **[merged into T097 — redundant]** The codebase encodes "outcomes" as event-kind + session-state, not as a standalone `MediationOutcome` enum. T097's `ResolvedExternallyReported` event kind plus the existing `SupersededByHuman → Closed` transition (when a session row exists) are sufficient. No separate outcome variant needed. The spec's "Allowed Phase 3 outcomes" list in `spec.md` is conceptual documentation; it does not map to a code enum.
+
+### A + C — composed eligibility + event-driven start (FR-121, FR-123)
+
+- [X] T099 [P] Implement `src/mediation/eligibility.rs::is_mediation_eligible(conn, dispute_id) -> Result<bool>` computing the composed predicate from FR-123: non-resolved `disputes.lifecycle_state`, no active (non-terminal) `mediation_sessions` row, no `escalation_recommended` session, not `superseded_by_human`. Inline unit tests cover every branch (one eligible case + one rejected case per branch). No SQL `lifecycle_state = 'notified'` literal anywhere in the file. **Known limitation to address in a follow-up**: `Taken` is eligible without verifying `disputes.assigned_solver`, so a dispute taken by a human solver is also eligible for Serbero's mediation attempt; the take-flow will time out on Mostro-side (wasted 15 s + reasoning cost) but no incorrect side effect is committed. Properly gating `Taken` by `assigned_solver IS NULL OR = serbero_pubkey` needs Serbero's pubkey threaded into the predicate and is tracked as a follow-up task.
+- [X] T100 Refactor `src/mediation/mod.rs::list_eligible_disputes` to call `eligibility::is_mediation_eligible` per candidate, removing the `WHERE d.lifecycle_state = 'notified'` literal. Keep the "no active session / not escalated" subquery only as a pre-filter index-friendly shortcut; the composed predicate is authoritative. Add a regression test that a dispute in a non-`notified` but non-resolved state with no active session is included in the eligible set.
+- [X] T101 Implement `src/mediation/start.rs::try_start_for(ctx, dispute_id) -> Result<StartOutcome>` — the event-driven entry point. Flow: (1) check `is_mediation_eligible`; if false, record `start_attempt_stopped{reason: "ineligible"}` and return `NotEligible`. (2) record `start_attempt_started{trigger: "detected"}`. (3) delegate to the reworked `session::open_session` (T104). (4) translate the open-session result into a `StartOutcome` (`Started(session_id)`, `StoppedBeforeTake{reason}`, `TakeFailed{reason}`, `Error`). Return synchronously; do not spawn a task. The tick path (T100) reuses the same function with `trigger: "tick_retry"`.
+- [X] T102 Wire `src/handlers/dispute_detected.rs` to call `mediation::start::try_start_for` synchronously after the existing persist + Phase 1/2 solver-notification steps. Failures of the start attempt MUST NOT abort or retry the solver-notification flow (they are independent paths). Log at `warn!` on `StartOutcome::TakeFailed` / `Error`, at `info!` on `NotEligible`, and at `info!` on `Started`. Do not introduce a tokio channel or background task here — the call is in-path.
+- [X] T103 [P] Integration test `tests/phase3_event_driven_start.rs` (SC-109): **handler-only** test — no daemon is spawned, the engine task never runs. Invokes `dispute_detected::handle(&ctx, &event)` directly with `HandlerContext.phase3 = Some(..)` fully populated. Asserts: `mediation_sessions` has exactly one row for the dispute in `awaiting_response`, `mediation_messages` has exactly two outbound rows (buyer + seller), and `mediation_events` carries one `start_attempt_started` with `trigger = "detected"` and zero rows with `trigger = "tick_retry"`. The "no tick_retry row" assertion is the empirical proof that the tick is NOT required for new-dispute handling — stronger than booting the daemon with a long `ENGINE_TICK_INTERVAL` (the original task wording) because the tick physically cannot fire here.
+
+### B — take strictly coupled to reasoning (FR-122)
+
+- [ ] T104 Rework `src/mediation/session.rs::open_session` to enforce the FR-122 ordering exactly: (0) composed eligibility — reuses `eligibility::is_mediation_eligible`; (1) reasoning-provider health gate (existing fast-path from T044); (2) reasoning verdict — call the new `policy::classify_for_start(dispute_id, ...)` BEFORE any chat-transport or take step (see T104a); persist the rationale with `session_id = NULL` (the `reasoning_rationales.session_id` column is already nullable — `migrations.rs:185`); record `reasoning_verdict` **dispute-scoped** (`session_id = NULL`, payload carries `dispute_id`); on negative verdict, record `start_attempt_stopped{reason: "reasoning_verdict_negative"}` and return early with no session row; (3) issue `TakeDispute` via `chat::dispute_chat_flow::run_take_flow`; on failure, record `take_dispute_issued{outcome: "failure", reason}` (dispute-scoped) and return early (no session row); (4) on take success, record `take_dispute_issued{outcome: "success"}`, insert the `mediation_sessions` row (with `prompt_bundle_id` / `policy_hash` pinned), and retroactively stamp the new `session_id` onto the rationale via an UPDATE (or via T104a's `record_classification_for_session` which writes the session-scoped `classification_produced` event and updates the rationale FK in one transaction); (5) record `session_opened`; (6) draft and send the first party-facing messages. Commits MUST preserve the invariant "no `mediation_sessions` row exists before a successful `take_dispute_issued`". Remove the current step-2-before-step-4 ordering and any code paths that commit a session row pre-take. **Spec-tension note**: the `PolicyDecision::Escalate(trigger)` branch (current `session.rs:392–415` returns `EscalatedOnOpen` after committing a session row) needs a separate decision — see T104b below, which is blocking on operator input before coding starts.
+- [ ] T104a Split `src/mediation/policy.rs::initial_classification` into two functions so reasoning can run without a committed session row: `classify_for_start(ctx, dispute_id, initiator_role, prompt_bundle, reasoning, provider_name, model_name) -> Result<(PolicyDecision, RationaleId)>` — persists the rationale dispute-scoped (`session_id = NULL`), runs the policy-layer validation rules, returns both the decision and the rationale id to the caller. `record_classification_for_session(conn, session_id, decision, rationale_id, prompt_bundle)` — writes the session-scoped `classification_produced` event and updates `reasoning_rationales.session_id` from NULL to the newly-minted `session_id` in a single transaction so the audit store's FK stays consistent. Callers on the opening path invoke `classify_for_start` before take; on successful take + session insert, invoke `record_classification_for_session`. The restart-resume path (T052) does not need the split — it only reads rationales, never re-writes.
+- [ ] T104b **[DECIDED 2026-04-20: option (b) — strict FR-122, dispute-scoped escalation]** `PolicyDecision::Escalate(trigger)` on the opening path means "not mediation-eligible"; Serbero MUST NOT issue `TakeDispute` and no `mediation_sessions` row is committed. Instead, the handoff is persisted dispute-scoped so Phase 4 still sees a structured record. Spec text in `spec.md` §"Mediation Start-Flow Ordering" step 3 already reads this way (no spec amendment needed). Concrete code changes land in T104c + T104d.
+- [ ] T104c Rewrite `src/mediation/escalation.rs::recommend` signature to accept `session_id: Option<&str>` instead of `&str`. When `Some(session_id)`, behavior is unchanged: transition the session row to `escalation_recommended` inside the transaction, write session-scoped `escalation_recommended` + `handoff_prepared` events, write the handoff package rows with the session_id. When `None`, no session row exists: skip the session state-transition step; write `escalation_recommended` + `handoff_prepared` events as dispute-scoped rows (`session_id = NULL`, `dispute_id` in `payload_json`); write the handoff package dispute-scoped. Update the `RecommendParams` struct accordingly. Document at the top of the module that Phase 4 must support both shapes and that `session_id = NULL` rows represent "Serbero evaluated the dispute, reasoning verdict said escalate, no mediation session was opened". Update the two existing callers (`session.rs::handle_authorization_lost` — always `Some`, and the engine-tick mid-session escalation path — always `Some`) to pass `Some(session_id)` explicitly. The dispute-scoped `None` shape is consumed only by the new opening-path escalation branch added in T104d.
+- [ ] T104d Update the `PolicyDecision::Escalate(trigger)` branch in `src/mediation/session.rs::open_session` (currently `session.rs:392–415`) so it fires **before** the session row is inserted. Flow: after the reasoning verdict at step (2) returns `Escalate(trigger)`, record `reasoning_verdict` dispute-scoped with the trigger captured, record `start_attempt_stopped{reason: "policy_escalate", trigger}` dispute-scoped, call `escalation::recommend(.., session_id: None, trigger, ..)` to write the dispute-scoped handoff, and return a new `OpenOutcome::EscalatedBeforeTake { dispute_id, trigger }` variant. Remove the old `OpenOutcome::EscalatedOnOpen { session_id, trigger }` variant entirely — no migration shim; the only consumer (engine tick) is updated in the same commit. The engine's dispatch on `OpenOutcome` learns to translate `EscalatedBeforeTake` into the same solver-facing `MediationEscalationRecommended` DM that `EscalatedOnOpen` produced today, but with `session_id = None` in the payload.
+- [ ] T104e Rewrite the relevant US4 sub-tests in `tests/phase3_escalation_triggers.rs` to match the new dispute-scoped shape. Specifically: any sub-test whose scripted classification arrives on the opening call and drives an `Escalate` verdict must now assert (i) zero `mediation_sessions` rows for the dispute, (ii) a `reasoning_verdict` event dispute-scoped with the classification, (iii) a `start_attempt_stopped{reason: "policy_escalate"}` event, (iv) `escalation_recommended` + `handoff_prepared` events with `session_id IS NULL` and `payload_json` referencing the dispute_id, (v) the solver-facing `MediationEscalationRecommended` DM still fires via the existing router. Mid-session escalation sub-tests (party_unresponsive_timeout, round_limit, authorization_lost_mid_session) stay unchanged — those DO have a session row because they fire AFTER a successful session open.
+- [ ] T105 Audit and remove any fallback that could issue `TakeDispute` without a live positive reasoning verdict for the same attempt: cached verdicts, scripted-take test hooks, manual mode flags. If a test fixture exercised a pre-reasoning take, rewrite it to go through the reasoning layer or delete it. Document in the `open_session` module header that pre-reasoning take is forbidden and cite FR-122.
+- [ ] T106 [P] Integration test `tests/phase3_take_reasoning_coupling.rs` (SC-110) with sub-tests:
+  - `reasoning_unavailable_skips_take` — `UnhealthyReasoningProvider`; detect a mediation-eligible dispute; assert no `TakeDispute` outbound event, no `mediation_sessions` row, `start_attempt_stopped{reason: "reasoning_unhealthy"}` recorded.
+  - `reasoning_negative_verdict_skips_take` — provider scripted to return a non-eligible classification; assert no take, no session row, `start_attempt_stopped{reason: "reasoning_verdict_negative"}` recorded with the classification captured.
+  - `take_fails_no_session_row` — provider returns positive verdict; `MostroChatSim` rejects the `AdminTakeDispute`; assert no session row, no outbound party message, `take_dispute_issued{outcome: "failure"}` recorded, `reasoning_verdict` still recorded.
+  - `ordering_audit_trail` — happy path; SQL query asserts event ordering strictly: `start_attempt_started` < `reasoning_verdict` < `take_dispute_issued{outcome: "success"}` < `session_opened` < first `outbound_sent`, using `mediation_events.id` (autoincrement) as the monotonic clock.
+
+### D — final solver report for externally resolved disputes (FR-124)
+
+- [ ] T107 Implement `src/mediation/report.rs` with two public functions:
+  - `has_any_mediation_context(conn, dispute_id) -> Result<bool>` — returns true if ANY of: a `mediation_sessions` row exists for `dispute_id` (any state, including `escalation_recommended` and terminal states), OR a `mediation_events` row exists whose `session_id` joins to this dispute, OR a dispute-scoped `mediation_events` row exists whose `payload_json` references this `dispute_id` (start-attempt events, reasoning-verdict events for takes that failed).
+  - `emit_final_report(ctx, dispute_id, final_dispute_status) -> Result<()>` — build the FR-124 payload (dispute id, session id if any, classification + confidence or "no classification recorded" marker, outbound-party-messages counter 0/1/2+, final observed dispute status, short narrative derived from lifecycle transitions); resolve recipients via `router::resolve_recipients`; deliver via the Phase 1/2 notifier with `NotificationType::MediationResolutionReport`; record `resolved_externally_reported` event with the full payload summary.
+  Idempotency is already provided by the top-level guard in `handlers/dispute_resolved.rs:95–98` (short-circuits when `lifecycle_state == LifecycleState::Resolved`), so subsequent replays of the resolved event never reach the report path. `emit_final_report` does NOT need its own `(dispute_id, final_status)` de-dup check; keeping the function idempotent w.r.t. accidental double-invocation within the same handler call is sufficient, and a comment in the module header should state that the outer handler owns replay-idempotency.
+- [ ] T108 Refactor `src/handlers/dispute_resolved.rs`: replace the current "no active session → early return" branch (`handlers/dispute_resolved.rs:284–290` in the 2026-04-20 gap analysis) with a call to `report::has_any_mediation_context`. If true, call `report::emit_final_report`; if false, log at `debug!` and return (Phase 1/2-only dispute, out of FR-124 scope). For sessions in `escalation_recommended`, DO NOT use `latest_open_session_for` (which excludes them) — use a broader lookup that includes escalated sessions, and include the "escalation was recommended but dispute resolved before Phase 4 acted" note in the narrative. Keep the Phase 4 handoff package in place; do not delete or mutate it.
+- [ ] T109 **Deprecate and replace** `src/mediation/mod.rs::notify_solvers_resolution_report` (currently at `mod.rs:1095`, signature `(conn, client, solvers, dispute_id, session_id: &str, resolution_status: &str)`). The `session_id: &str` positional argument is the blocker: the FR-124 "reasoning verdict but no session row" case (T111 sub-test `reasoning_verdict_no_session_resolved_externally`) requires `Option<&str>`. Replace with `report::build_report_body(payload: &FinalReportPayload) -> String` + `report::deliver_report(ctx, dispute_id, payload) -> Result<()>` where `FinalReportPayload` carries: `dispute_id`, `session_id: Option<String>`, `classification: Option<(ClassificationLabel, f64)>`, `outbound_party_messages_count: u8` (clamped 0..=2), `final_dispute_status: String`, `narrative: String`. The body MUST NOT contain the full rationale text (FR-120); include only the rationale reference id if relevant. Migrate the sole existing caller (`handlers/dispute_resolved.rs:298–306`) to the new API in the same commit; remove `notify_solvers_resolution_report` entirely (no compatibility shim) — the function is crate-private (`pub(crate)`), so no external consumer depends on it.
+- [ ] T110 Reuse `NotificationType::MediationResolutionReport` from T093. If the payload shape changes materially, bump the payload version in the DM body (a leading `"mediation_resolution_report/v2"` line or equivalent) so downstream log parsers can tell the formats apart. Do NOT introduce a new `NotificationType` variant unless required by the notifier code shape.
+- [ ] T111 [P] Integration test `tests/phase3_external_resolution_report.rs` (US6 update, SC-111) with sub-tests:
+  - `full_session_resolved_externally` — session with 2 outbound + 2 inbound messages; external resolution observed; exactly one FR-124 DM; `outbound_party_messages_count = 2`; body lists the classification.
+  - `outbound_only_session_resolved_externally` — session with outbound messages but no party replies; external resolution; FR-124 DM fires; counter reflects the number of distinct parties messaged.
+  - `escalation_recommended_resolved_externally` — session in `escalation_recommended`; external resolution fires FR-124 DM; narrative notes the escalation-was-recommended fact; Phase 4 handoff package row remains present.
+  - `reasoning_verdict_no_session_resolved_externally` — scripted: reasoning produced a positive verdict but `TakeDispute` failed, so no session row was committed (T104 invariant). External resolution fires FR-124 DM with `session_id = null`, `outbound_party_messages_count = 0`, classification captured from the dispute-scoped `reasoning_verdict` event.
+  - `no_mediation_context_no_report` — a dispute Phase 1/2 detected but for which no reasoning verdict, session, or event exists; external resolution does NOT emit a FR-124 DM. Assert zero `MediationResolutionReport` notifications for this dispute.
+  - `idempotency_no_double_send` — a second `DisputeStatus` observation for the same resolved terminal state does NOT produce a second DM; `resolved_externally_reported` event count stays at 1.
+
+### Polish for the corrections
+
+- [ ] T112 Update `specs/003-guided-mediation/quickstart.md` so the cooperative walkthrough notes the event-driven start (first outbound message appears within a few seconds of dispute detection, independent of the tick interval) and the external-resolution-report flow (add a short section demonstrating a dispute closed outside Serbero that still produces a solver DM).
+- [ ] T113 [P] Audit `src/` for any remaining single-state eligibility checks or comments describing the polling-only start flow: grep for `lifecycle_state = 'notified'`, `lifecycle_state=\"notified\"`, and narrative comments referring to "engine tick" / "periodic sweep" as the primary session-opener. Remove or correct each hit. The only tick-centric comments allowed after this pass are the ones in `mediation/mod.rs::run_engine_tick` describing the tick's reduced retry/resumption role.
+- [ ] T114 [P] Run `cargo clippy --all-targets --all-features -- -D warnings` and `cargo fmt --all -- --check` after Phase 10 edits; fix findings. Expect new warnings around the reshaped `open_session` return type and the new `StartOutcome` enum — address them directly rather than silencing with `#[allow]`.
+- [ ] T115 Verify the three new Success Criteria empirically. SC-109: via T103 (engine tick disabled; new dispute still reaches first outbound message). SC-110: via T106 `ordering_audit_trail` sub-test (event-id ordering proves reasoning-before-take and no pre-take session row). SC-111: via T111 (all five positive sub-tests fire exactly one DM; the no-context sub-test fires none). If any SC fails, treat that as a blocker on Phase 10 completion — fix the underlying code before marking T115 done.
+
+**Checkpoint**: Phase 10 complete — mediation start is event-driven and
+strictly gated on reasoning; eligibility is a composed predicate; the
+final solver-facing report fires for every externally resolved
+dispute Serbero touched, including escalated sessions and take-failed
+attempts. The engine tick is a safety net, not the trigger.
+
+---
+
 ## Dependencies & Execution Order
 
 ### Phase Dependencies
@@ -394,6 +478,8 @@ resolution.
 - **User Story 4 (Phase 6)**: Depends on US1 at minimum; several triggers need US2 (round counter, timeout) and the reasoning adapter (T066). Can be developed in parallel with US3 once US1+US2 land.
 - **User Story 5 (Phase 7)**: Depends on US1 for end-to-end testability; can be developed in parallel with US3/US4 once the OpenAI adapter (T015) exists.
 - **Polish (Phase 8)**: Depends on all shipped user stories being complete.
+- **User Story 6 (Phase 9)**: Depends on US1 (needs a session-open code path to close against). Currently marked complete on `main`.
+- **Correction Phase 10**: Depends on US1–US6 complete. T097 lands first (event kinds; T098 was merged into T097 because outcomes are encoded as event-kind + session-state, not a standalone enum). T099–T103 (A+C) and T104–T106 (B) can land in parallel after T097 — they touch disjoint files except for `session.rs` where T104's ordering change must precede T101's `try_start_for` delegation. T107–T111 (D) depend on T097 for the new event kind but are otherwise independent of A/B/C. T112–T115 depend on all preceding Phase 10 tasks.
 
 ### User Story Dependencies
 
@@ -420,6 +506,7 @@ resolution.
 - **US4**: tests T063–T065 all `[P]`; each trigger implementation (T068–T071) is a different call site and can be parallelised.
 - **US5**: all tasks are `[P]` — the adapter change is a handful of lines, the NYI stub change is independent, the test files are new.
 - **Polish**: T081–T087 all `[P]`.
+- **Phase 10 corrections**: T099 (eligibility module) and T103 / T106 / T111 (integration tests) are `[P]`. T104 (session.rs ordering) and T101 (start.rs) serialize on `src/mediation/session.rs`. T107 / T108 / T109 serialize on the resolved-dispute handler + report module. T113 / T114 are `[P]` audits.
 
 ---
 
@@ -456,7 +543,9 @@ Task: "Inline unit tests in src/db/mediation.rs"
 4. Add US3 → cooperative resolutions reach human solvers as clean artifacts.
 5. Add US4 → out-of-scope disputes exit Phase 3 cleanly with a Phase 4 handoff.
 6. Add US5 → operators can swap endpoints without code changes.
-7. Run Polish phase before tagging the Phase 3 release.
+7. Add US6 → externally resolved disputes close without leaving state dangling.
+8. Run Polish phase.
+9. Run Phase 10 corrections (FR-121/122/123/124) to move start to event-driven, couple take to reasoning, broaden eligibility, and close the FR-124 reporting gap before tagging the Phase 3 release.
 
 ### Out of Scope for This Tasks File
 

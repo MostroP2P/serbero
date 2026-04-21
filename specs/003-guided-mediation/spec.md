@@ -135,16 +135,22 @@ system.
 
 **Acceptance Scenarios**:
 
-1. **Given** Phases 1 and 2 are running, a dispute is in `notified`
-   state, and a configured reasoning provider is reachable,
-   **When** the policy classifies the dispute as low-risk coordination
-   (payment delay, confusion, unresponsive counterparty),
-   **Then** Serbero derives the per-party shared chat keys using ECDH
-   as specified by Mostro's chat protocol, publishes an initial
-   clarifying message via gift-wrapped chat events addressed to the
-   shared pubkeys of each party, records a new `mediation_sessions`
-   row with state `awaiting_response`, and records the exact prompt
-   bundle version used.
+1. **Given** Phases 1 and 2 are running, a dispute has just been
+   detected and is mediation-eligible under the composed predicate
+   defined in FR-123, and a configured reasoning provider is reachable,
+   **When** the dispute-detection event fires (not a later periodic
+   sweep),
+   **Then** Serbero synchronously invokes the reasoning layer, and if
+   the reasoning verdict classifies the dispute as low-risk
+   coordination (payment delay, confusion, unresponsive counterparty)
+   Serbero issues `TakeDispute` on the strength of that verdict (per
+   FR-122), derives the per-party shared chat keys using ECDH as
+   specified by Mostro's chat protocol, publishes an initial clarifying
+   message via gift-wrapped chat events addressed to the shared
+   pubkeys of each party, records a new `mediation_sessions` row with
+   state `awaiting_response`, and records the exact prompt bundle
+   version used — all within the same event-handling path, without
+   waiting for a background tick.
 
 2. **Given** the reasoning provider is not configured or not reachable,
    **When** the policy would otherwise start a mediation session,
@@ -365,6 +371,79 @@ provider.
 
 ---
 
+### User Story 6 - Serbero reports externally-resolved disputes to the solver (Priority: P1)
+
+After Serbero has opened a mediation context for a dispute — either a
+full session with outbound party messages, a session that reached
+`escalation_recommended`, or at least a reasoning verdict and
+classification — the dispute is sometimes resolved in a path Serbero
+did not fully drive. The parties coordinate outside the mediation
+channel and signal Mostro, or an assigned solver closes it through
+Mostro directly. When that resolution is observed as a Phase 1/2
+lifecycle transition, Serbero must still tell the solver set what it
+knows, so there is no silent disappearance of a dispute Serbero had
+touched.
+
+**Why this priority**: Without this report, Serbero's audit surface
+has a blind spot exactly where it matters — disputes it started
+mediating but never saw through. Operators need a consistent
+closing-loop message any time Serbero was involved, including the
+cases where Serbero's own mediation messages did not converge.
+
+**Independent Test**: Can be tested by driving four resolution
+scenarios — (a) session with both-parties exchange that resolves
+externally, (b) session with only outbound messages sent (no party
+replies) that resolves externally, (c) session that reached
+`escalation_recommended` and then resolves externally, (d) a
+detected dispute for which reasoning ran and produced a verdict but
+no session was ever opened, that then resolves externally — and
+verifying that in each case Serbero sends exactly one solver-facing
+DM via the Phase 1/2 notifier whose body includes the fields
+required by FR-124 and "Final Solver Report on External Resolution".
+
+**Acceptance Scenarios**:
+
+1. **Given** a mediation session for a dispute has been opened and
+   Serbero has exchanged at least one outbound message with a party,
+   **When** the dispute transitions to a resolved terminal state via
+   a Phase 1/2 lifecycle event (Mostro settled, cancelled, or
+   otherwise closed it — without Serbero executing that action),
+   **Then** Serbero MUST emit exactly one solver-facing DM via the
+   Phase 1/2 notifier routed per "Solver-Facing Routing", whose body
+   includes the dispute id, session id, latest known classification
+   and confidence, an outbound-message counter, the final observed
+   dispute status, and a short narrative derived from lifecycle
+   transitions; the session outcome is recorded as
+   `resolved_externally_reported`.
+
+2. **Given** Serbero produced a reasoning verdict and classification
+   for a dispute but `TakeDispute` failed or was never attempted (and
+   so no `mediation_sessions` row exists) — mediation context
+   nonetheless exists in the form of a `mediation_events` row,
+   **When** the dispute transitions to a resolved terminal state,
+   **Then** Serbero MUST emit the final report per FR-124 with
+   `outbound_party_messages = 0` and session id explicitly absent or
+   null.
+
+3. **Given** a session reached `escalation_recommended` and the
+   Phase 4 handoff package is pending consumption,
+   **When** the dispute transitions to a resolved terminal state
+   before Phase 4 acts,
+   **Then** Serbero MUST emit the final report AND the report
+   narrative MUST note that an escalation was recommended but the
+   dispute resolved before Phase 4 acted. The escalation handoff
+   package MUST remain in place for Phase 4 historical context.
+
+4. **Given** a dispute that Phase 1/2 detected but for which Serbero
+   produced NO mediation context (no reasoning verdict, no session,
+   no events),
+   **When** the dispute later transitions to a resolved terminal
+   state,
+   **Then** Serbero MUST NOT emit the final report (this case belongs
+   entirely to Phase 1/2 notifications).
+
+---
+
 ### Edge Cases
 
 - **Mostro chat protocol changes shape**: if Mostro updates the chat
@@ -399,6 +478,23 @@ provider.
 - **Multiple Serbero instances run against the same DB**: out of
   scope for Phase 3 (inherits the single-instance assumption from
   Phases 1 and 2).
+- **Dispute resolves before the first outbound party message**: if a
+  dispute transitions to a resolved terminal state after Serbero
+  produced any mediation context (reasoning verdict, classification,
+  session row, events) but before the first outbound party message
+  was sent, Serbero MUST still emit the FR-124 final solver-facing
+  report with `outbound_party_messages = 0`. The absence of a
+  party-facing message does NOT exempt Serbero from reporting.
+- **Dispute resolves while the session is `escalation_recommended`**:
+  the escalation handoff package remains in place for Phase 4; the
+  FR-124 final report fires and notes that an escalation was
+  recommended but the dispute resolved before Phase 4 acted.
+- **Dispute detected but mediation start fails transiently** (reasoning
+  timeout inside the retry budget, chat-transport backpressure): the
+  event-driven path (FR-121) reports the failure via
+  `mediation_events`, does NOT commit a session row, does NOT issue
+  `TakeDispute`, and leaves the dispute eligible under FR-123 so the
+  engine-tick safety net retries it on the next pass.
 
 ## Requirements *(mandatory)*
 
@@ -507,13 +603,14 @@ provider.
   from the persisted SQLite state without losing round counts,
   last-seen markers, or prompt-bundle pinning.
 
-- **FR-118**: Mediation MUST run only on disputes that Phase 2 has
-  transitioned to a state compatible with guided mediation (e.g.
-  `notified` or a Phase 3-specific state introduced by this spec).
-  Mediation MUST NOT preempt Phase 2 assignment detection: if a human
-  solver takes the dispute via Mostro, mediation MUST either defer to
-  the solver or close as `superseded_by_human`, per the mediation
-  style policy.
+- **FR-118**: Mediation MUST run on any dispute that satisfies the
+  composed mediation-eligibility predicate defined in FR-123.
+  Eligibility MUST NOT be pinned to a single narrow persisted state
+  name (e.g. `lifecycle_state = 'notified'` alone); the authoritative
+  rule is the composed predicate. Mediation MUST NOT preempt Phase 2
+  assignment detection: if a human solver takes the dispute via
+  Mostro, mediation MUST either defer to the solver or close as
+  `superseded_by_human`, per the mediation style policy.
 
 - **FR-119**: Serbero MUST record every outbound chat event it sends
   as a row in `mediation_messages` with direction `outbound`, the
@@ -533,6 +630,106 @@ provider.
   dispute details, party statements, or PII into aggregate log
   streams while preserving the full evidence trail for operator
   review.
+
+- **FR-121** *(immediate, event-driven start)*: When Phase 1/2 detects
+  a new dispute and persists it, Serbero MUST attempt to open a
+  guided-mediation session from within that same event-handling path.
+  The mediation start flow (reasoning verdict → `TakeDispute` → first
+  party-facing message) MUST NOT depend on a later periodic sweep.
+  The background mediation engine tick MAY continue to exist — but
+  only as a resumption and retry safety net (restart recovery, open
+  sessions whose first attempt failed transiently, eligibility
+  re-evaluation after config reload). A session MUST NOT be reachable
+  exclusively via the tick; every new-dispute case MUST also be
+  reachable via the event-driven handoff. If the event-driven attempt
+  fails transiently (reasoning provider timeout inside the retry
+  budget, chat-transport backpressure), the dispute MUST remain
+  eligible under FR-123 so the tick can pick it up on the next pass.
+
+- **FR-122** *(take strictly coupled to reasoning)*: Serbero MUST NOT
+  issue `TakeDispute` on a dispute unless the reasoning layer has
+  produced a verdict that the dispute is mediation-eligible under the
+  classification policy, for that same session-open attempt. The
+  required ordering within a session-open attempt is:
+  1. verify reasoning provider health (TC-102, FR-102);
+  2. compute a reasoning verdict for the specific dispute;
+  3. only if the verdict is positive, issue `TakeDispute`;
+  4. only after `TakeDispute` succeeds, insert the
+     `mediation_sessions` row and send the first party-facing
+     message.
+  Serbero MUST NOT take a dispute via a manual or scripted fallback,
+  a "model-absent" heuristic, or a cached previous verdict for a
+  different session. If the reasoning provider is unavailable or
+  returns a non-eligible verdict, Serbero MUST NOT take the dispute;
+  Phase 1/2 notification continues unchanged. A session row that was
+  committed before `TakeDispute` succeeded or before the first
+  party-facing message was sent is a spec violation.
+
+- **FR-123** *(composed mediation-eligibility predicate)*: A dispute
+  is mediation-eligible if and only if ALL of the following hold:
+  - the dispute has NOT transitioned to a resolved terminal state
+    (from Phase 2's perspective: `resolved`, `cancelled_settled`, or
+    any state that denotes Mostro has closed the dispute);
+  - the dispute has NOT been handed off to Phase 4 escalation
+    (no `mediation_sessions` row for this dispute is in
+    `escalation_recommended`);
+  - there is NO currently active (non-terminal, non-escalated)
+    `mediation_sessions` row for this dispute;
+  - a human solver has NOT taken the dispute and moved it to
+    `superseded_by_human` (FR-118).
+
+  Eligibility MUST NOT be implemented as a single-state check like
+  `lifecycle_state = 'notified'`. The detection path (FR-121) and
+  the engine tick (resumption/retry role) MUST both evaluate the
+  same composed predicate, so a dispute cannot be skipped because it
+  transitioned through a short-lived intermediate state between
+  detection and the next sweep.
+
+- **FR-124** *(final solver report on external resolution)*: When a
+  dispute transitions to a resolved terminal state and Serbero has
+  collected **substantive** mediation context for that dispute,
+  Serbero MUST emit exactly one final solver-facing report via the
+  Phase 1/2 notifier. Substantive context is defined as ANY of the
+  following:
+  - a prior reasoning verdict (a `reasoning_verdict` row or a
+    persisted `reasoning_rationales` row) — Serbero reasoned about
+    the dispute;
+  - a `mediation_sessions` row in any state (including
+    `escalation_recommended`, `closed`, `superseded_by_human`) —
+    Serbero took the dispute;
+  - one or more `mediation_messages` rows — Serbero talked to at
+    least one party;
+  - any session-scoped `mediation_events` row (`session_id IS NOT
+    NULL`) that records a mediation side effect (e.g.
+    `classification_produced`, `escalation_recommended`,
+    `handoff_prepared`, `summary_generated`, `state_transition`).
+
+  Pre-reasoning bookkeeping rows do NOT count as substantive context
+  on their own: a dispute whose only `mediation_events` entries are
+  `start_attempt_started` and `start_attempt_stopped` (the attempt
+  never reached reasoning or take-dispute, e.g. the eligibility
+  gate or the auth gate refused) MUST NOT trigger an FR-124 report.
+  The rule of thumb: the report fires only if Serbero either
+  reasoned about the dispute, took it, or spoke to a party. Routing follows "Solver-Facing Routing". The report MUST
+  include, at minimum:
+  - the dispute id and the linked mediation session id (if any);
+  - the latest known mediation classification and confidence (if
+    any), or an explicit "no classification recorded" marker;
+  - a counter of outbound party-facing messages Serbero sent
+    (0, 1, or 2), distinguishing the three cases where Serbero spoke
+    to neither party, one party, or both;
+  - the final observed dispute status from the Phase 1/2 lifecycle;
+  - a short narrative stating that the dispute resolved without
+    further Serbero-driven escalation, derived from lifecycle
+    transitions — Serbero MUST NOT infer party intent from chat it
+    did not observe.
+
+  The report MUST fire even when (a) no first outbound party message
+  was ever sent, (b) the session is `escalation_recommended`, or
+  (c) the session was closed before the resolution event. The report
+  MUST NOT fire when Serbero never produced any mediation context for
+  the dispute (a Phase 1/2-only case). Free-text rationale MUST follow
+  FR-120 (reference id only in general logs).
 
 ### Key Entities *(include if feature involves data)*
 
@@ -642,6 +839,88 @@ is verified in the implementation flow used by Mostro clients.
   messages for that dispute. In that case the dispute is handled by
   the human solver via Mostro; Phase 3 transitions the session to
   `superseded_by_human` or closes it without sending party messages.
+
+## Mediation Start-Flow Ordering
+
+This section is normative. It expands FR-121, FR-122, and FR-123 and
+fixes the sequence by which a new dispute enters guided mediation.
+
+The intended product behavior is: a dispute is opened → Serbero
+evaluates it immediately → if mediation-eligible, Serbero takes the
+dispute immediately → Serbero contacts both parties. The mediation
+engine exists to make that flow resumable and retry-able, not to be
+the only way a session can begin.
+
+### Trigger
+
+- The canonical trigger for opening a new mediation session is the
+  Phase 1/2 dispute-detection event (FR-121). The handler for that
+  event MUST attempt the start flow synchronously, in-path, before
+  returning.
+- A periodic engine tick MAY exist, but its role is bounded to:
+  resuming open sessions after a daemon restart; retrying start
+  attempts that failed transiently; re-evaluating eligibility after a
+  config reload or after `mediation_sessions` state changes; and
+  handling disputes observed via backfill after downtime. The tick
+  MUST NOT be the only path by which a new dispute can reach
+  mediation.
+- The same eligibility predicate (FR-123) MUST be used by both the
+  event-driven path and the tick, so they cannot disagree about what
+  is eligible.
+
+### Strict ordering within a start attempt
+
+Within a single attempt to open a mediation session for a dispute,
+Serbero MUST perform these steps in order. Each step is a precondition
+for the next:
+
+1. **Eligibility**: evaluate the composed predicate from FR-123
+   against the current dispute and session state. If the dispute is
+   not eligible, stop.
+2. **Reasoning health**: confirm the reasoning provider is reachable
+   (TC-102). If it is not, stop — do not take the dispute.
+3. **Reasoning verdict**: ask the reasoning layer to classify the
+   dispute under the loaded policy bundle (TC-103, FR-105). If the
+   verdict is not that the dispute is mediation-eligible, stop — do
+   not take the dispute.
+4. **TakeDispute**: only now, issue the `TakeDispute` Mostro action
+   using Serbero's solver identity. If this fails, stop and let the
+   engine tick retry under FR-121's safety-net role.
+5. **Commit session**: only after `TakeDispute` succeeds, insert the
+   `mediation_sessions` row (pinning `prompt_bundle_id`,
+   `policy_hash`, `instructions_version`) and emit a
+   `mediation_events` row recording the verdict and take.
+6. **First party-facing message**: send the first clarifying message
+   via the Mostro chat transport (FR-101, Transport Requirements).
+
+This ordering is normative. In particular:
+
+- `TakeDispute` MUST NOT precede the reasoning verdict (FR-122). A
+  run that takes the dispute first and classifies afterward is a spec
+  violation.
+- A `mediation_sessions` row MUST NOT be committed before
+  `TakeDispute` succeeds. An orphan session row with no take and no
+  outbound message is a spec violation.
+- If the reasoning provider becomes unreachable between step 2 and
+  step 3, Serbero MUST NOT fall back to a scripted or manual take.
+  The attempt stops; the dispute remains eligible per FR-123 so the
+  engine tick can retry once reasoning recovers.
+
+### Relationship to the background engine
+
+The background engine continues to exist. Its responsibilities after
+this ordering becomes normative are limited to:
+
+- resuming already-open sessions (FR-117);
+- retrying start attempts that failed transiently, for disputes still
+  eligible under FR-123;
+- handling disputes that were missed by the event-driven path during
+  daemon downtime and observed through Phase 1/2 backfill;
+- advancing session state for timeouts, inbound responses, and
+  escalation triggers (unchanged from prior sections).
+
+It is explicitly NOT a gatekeeper for whether a new dispute ever
+reaches mediation. The detection event is.
 
 ## Reasoning Provider Configuration
 
@@ -806,6 +1085,81 @@ resolves through this section. US3 Scenario 1, FR-112, FR-113, the
 `assigned solver reference` attribute in the `MediationSession`
 entity, and any later reference all use the same rule.
 
+## Final Solver Report on External Resolution
+
+This section is normative. It expands FR-124 and specifies exactly
+what Serbero owes the solver set when a dispute resolves in a path
+Serbero did not fully drive.
+
+### When it fires
+
+A final solver-facing report MUST be emitted when ALL of:
+
+- a Phase 1/2 dispute-lifecycle transition moves the dispute to a
+  resolved terminal state (Mostro has closed the dispute — settled,
+  cancelled, released to buyer, released to seller, or the equivalent
+  terminal label in use);
+- Serbero has collected at least one piece of mediation context for
+  that dispute (see FR-124 — a reasoning verdict, classification, any
+  `mediation_sessions` row including `escalation_recommended`, any
+  `mediation_messages` row, or any `mediation_events` row).
+
+The report MUST fire exactly once per resolved dispute, independent of
+how many mediation sessions existed for it (there may be more than
+one, e.g. a `superseded_by_human` session followed by a re-dispute).
+Duplicate delivery MUST be prevented (idempotency key: dispute id +
+final observed status).
+
+### When it does NOT fire
+
+- When no mediation context exists for the dispute (pure Phase 1/2
+  case). Phase 1/2 notifications stand on their own.
+- Before the dispute reaches a resolved terminal state. A session
+  closing internally (e.g. `summary_delivered`) is not a trigger for
+  the external-resolution report — the Phase 3 summary flow (US3)
+  covers that case.
+
+### What the report contains
+
+At minimum, and consistent with FR-124:
+
+- dispute id and linked session id(s);
+- latest known mediation classification and confidence, if any,
+  OR an explicit "no classification recorded" marker;
+- a counter of outbound party-messages sent by Serbero (0 / 1 / 2+),
+  so the solver can tell whether Serbero spoke to both parties, one
+  party, or neither;
+- final observed dispute status from the Phase 1/2 lifecycle;
+- a short narrative derived from lifecycle transitions, stating that
+  the dispute resolved without further Serbero-driven escalation.
+
+The report MUST NOT reconstruct or quote party-to-party chat that
+Serbero never received. Serbero does not subscribe to buyer-seller
+chat, only to the mediation channel. If Serbero's own mediation
+exchange produced content, that content MAY be summarized in the
+report per FR-120 constraints (reference id in logs, full text in
+the controlled audit store).
+
+### Routing and transport
+
+The report is a solver-facing DM and uses the Phase 1/2 notifier
+unchanged. Routing follows "Solver-Facing Routing" above: targeted to
+the assigned solver when one exists, broadcast otherwise. The report
+MUST NOT be sent into the Mostro chat transport (that transport is
+party-facing only).
+
+### Interaction with escalation
+
+If the session is in `escalation_recommended` at the moment the
+resolved-terminal transition is observed:
+
+- the escalation handoff package remains in place for Phase 4 to
+  consume as historical context;
+- the final report MUST still fire (this is the most common case the
+  issue behind FR-124 calls out);
+- the report narrative MUST note that an escalation was recommended
+  but the dispute resolved before Phase 4 acted on it.
+
 ## Solver Identity and Authorization
 
 - Serbero MUST act under a Nostr keypair loaded from config (same
@@ -918,6 +1272,11 @@ Environment variable overrides (including `SERBERO_PRIVATE_KEY`,
   `mediation_timeout`.
 - `superseded_by_human` — a human solver took the dispute via Mostro
   while mediation was in progress.
+- `resolved_externally_reported` — the dispute transitioned to a
+  resolved terminal state (parties coordinated outside Serbero's
+  mediation channel, or a solver closed it through Mostro) and
+  Serbero emitted the final solver-facing report per FR-124 and
+  "Final Solver Report on External Resolution".
 
 ### Forbidden Phase 3 outcomes
 
@@ -987,6 +1346,31 @@ Environment variable overrides (including `SERBERO_PRIVATE_KEY`,
 - **SC-108**: After a daemon restart mid-session, every open
   mediation session can be resumed from SQLite state alone without
   losing round counts, last-seen markers, or prompt-bundle pinning.
+- **SC-109** *(immediate event-driven start)*: For a dispute that is
+  mediation-eligible under FR-123 and for which the reasoning
+  provider is healthy, the session-open attempt (reasoning verdict →
+  `TakeDispute` → first party-facing message) MUST be initiated from
+  within the Phase 1/2 dispute-detection event-handling path, not
+  from a later periodic sweep. Verifiable by: disabling the
+  background engine tick in a test harness and confirming that a
+  newly detected eligible dispute still reaches the first party-
+  facing message without the tick running.
+- **SC-110** *(take coupled to reasoning)*: No `TakeDispute` action
+  signed by Serbero's pubkey exists for any dispute unless a
+  preceding `mediation_events` row records a positive reasoning
+  verdict for that dispute within the same session-open attempt, and
+  no `mediation_sessions` row exists whose insertion predates a
+  successful `TakeDispute` for that dispute. Verifiable by SQL audit
+  over `mediation_events` + `mediation_sessions` + the outbound
+  Mostro-action log.
+- **SC-111** *(external-resolution report)*: For 100 % of disputes
+  that transition to a resolved terminal state AND for which Serbero
+  had collected any mediation context (per FR-124), exactly one
+  solver-facing final report was emitted via the Phase 1/2 notifier.
+  Verifiable by joining dispute lifecycle transitions against
+  `mediation_sessions` / `mediation_events` / `mediation_messages`
+  and the notifier outbound log, and confirming no duplicates and no
+  omissions.
 
 ## Assumptions
 

@@ -173,7 +173,7 @@ pub async fn initial_classification(
         }
     };
 
-    let decision = classify_to_decision(&classification);
+    let decision = classify_to_decision(&classification, PolicyRound::Initial);
 
     // Persist rationale + emit audit event BEFORE returning: the
     // decision is only legitimate once the audit trail is durable.
@@ -226,7 +226,7 @@ pub async fn evaluate(
     model_name: &str,
     classification: ClassificationResponse,
 ) -> Result<PolicyDecision> {
-    let decision = classify_to_decision(&classification);
+    let decision = classify_to_decision(&classification, PolicyRound::MidSession);
 
     let rationale_id = persist_classification_audit(
         conn,
@@ -250,11 +250,32 @@ pub async fn evaluate(
     Ok(decision)
 }
 
+/// Where in the session lifecycle a classification was produced.
+/// Drives whether low-confidence escalates on an otherwise-benign
+/// `AskClarification` suggestion: on the opening call the transcript
+/// is empty by construction, so the model has nothing to be confident
+/// about and a clarifying question is the expected next step.
+/// Escalating there produces sessions that never talk to the parties.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PolicyRound {
+    /// Very first classification for a freshly-taken dispute. No
+    /// inbound messages from either party yet.
+    Initial,
+    /// Any later round. At least one inbound message is on file.
+    MidSession,
+}
+
 /// Pure validation: run the contract rules against a single
 /// [`ClassificationResponse`] and return the resulting decision.
 /// Extracted so unit tests can exercise the rule table without
 /// setting up a DB / rationale store.
-pub(crate) fn classify_to_decision(classification: &ClassificationResponse) -> PolicyDecision {
+///
+/// The `round` argument differentiates two otherwise-identical rule
+/// paths. See [`PolicyRound`] for the rationale.
+pub(crate) fn classify_to_decision(
+    classification: &ClassificationResponse,
+    round: PolicyRound,
+) -> PolicyDecision {
     // Rule 1: fraud / conflicting-claims flags dominate every other
     // signal. Both are explicit "this dispute does not belong in
     // guided mediation" indicators from the model.
@@ -280,10 +301,23 @@ pub(crate) fn classify_to_decision(classification: &ClassificationResponse) -> P
         return PolicyDecision::Escalate(EscalationTrigger::AuthorityBoundaryAttempt);
     }
 
-    // Low confidence. Strict `<` so a model that reports exactly
-    // the threshold is still trusted to proceed (matches contract
-    // wording: "below threshold").
-    if classification.confidence < LOW_CONFIDENCE_THRESHOLD {
+    // Low-confidence gate. On the opening round a low-confidence
+    // `AskClarification` is not an escalation signal — the model has
+    // no transcript yet and a clarifying question is the cheap
+    // next step. Escalating there prevents Serbero from ever
+    // talking to the parties (observed in production with `gpt-5`
+    // returning sensibly-cautious scores on empty transcripts).
+    //
+    // For every other suggested action on the opening round, and for
+    // every suggested action mid-session, the threshold still applies.
+    let passthrough_low_confidence_ask_clarification = matches!(round, PolicyRound::Initial)
+        && matches!(
+            classification.suggested_action,
+            SuggestedAction::AskClarification(_)
+        );
+    if classification.confidence < LOW_CONFIDENCE_THRESHOLD
+        && !passthrough_low_confidence_ask_clarification
+    {
         return PolicyDecision::Escalate(EscalationTrigger::LowConfidence);
     }
 
@@ -545,15 +579,42 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn low_confidence_escalates_under_threshold() {
+    async fn low_confidence_with_summarize_escalates_on_initial() {
+        // The low-confidence gate still fires on the initial round
+        // for consumative suggested actions (Summarize). Only
+        // AskClarification is allowed through on low confidence,
+        // because an extra clarifying round is cheap while an
+        // unconfident summary is a terminal commitment.
         let conn = fresh_conn();
         let mut resp = base_response();
         resp.confidence = 0.3;
+        resp.suggested_action = SuggestedAction::Summarize;
         let provider = ScriptedProvider::ok(resp);
         let decision = run_initial(&conn, &provider).await.unwrap();
         assert_eq!(
             decision,
             PolicyDecision::Escalate(EscalationTrigger::LowConfidence)
+        );
+    }
+
+    #[tokio::test]
+    async fn initial_round_passes_low_confidence_ask_clarification() {
+        // Production case observed 2026-04-21: `gpt-5` returned
+        // `AskClarification(...)` with confidence 0.3 on an empty
+        // transcript (nothing else to be confident about). The old
+        // policy escalated on LowConfidence and the session never
+        // reached the parties. The new rule lets the clarifying
+        // round proceed; if the next round is still confused, the
+        // mid-session gate applies as usual.
+        let conn = fresh_conn();
+        let mut resp = base_response();
+        resp.confidence = 0.3; // below LOW_CONFIDENCE_THRESHOLD
+        // base_response already sets AskClarification("please confirm X").
+        let provider = ScriptedProvider::ok(resp);
+        let decision = run_initial(&conn, &provider).await.unwrap();
+        assert_eq!(
+            decision,
+            PolicyDecision::AskClarification("please confirm X".into())
         );
     }
 

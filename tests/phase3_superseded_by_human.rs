@@ -84,6 +84,11 @@ fn ctx(
         conn,
         client,
         solvers,
+        // This test exercises the Phase 1/2 + FR-124 handler
+        // paths only. The FR-121 event-driven mediation start is
+        // opt-in via `phase3 = Some(..)` and is covered by the
+        // dedicated integration test `phase3_event_driven_start`.
+        phase3: None,
     }
 }
 
