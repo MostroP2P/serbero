@@ -491,7 +491,7 @@ second outbound within one ingest-tick cycle of Bob's reply.
 
 ### Setup / schema
 
-- [ ] T116 Add migration v4 in `src/db/migrations.rs` behind the
+- [X] T116 Add migration v4 in `src/db/migrations.rs` behind the
   existing `schema_version` guard. Two `ALTER TABLE mediation_sessions
   ADD COLUMN` statements: `round_count_last_evaluated INTEGER NOT NULL
   DEFAULT 0` and `consecutive_eval_failures INTEGER NOT NULL DEFAULT
