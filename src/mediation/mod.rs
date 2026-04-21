@@ -330,6 +330,177 @@ pub async fn draft_and_send_initial_message(
     Ok(())
 }
 
+/// Phase 11 mid-session follow-up drafter (T119 / FR-126).
+///
+/// Sibling of [`draft_and_send_initial_message`] for the round-2+
+/// clarifying exchange. Three differences from the initial drafter:
+///
+/// 1. **Round-number marker in the body.** Each party-facing content
+///    is prefixed with `"Round {N}. {role}: "` so parties can
+///    distinguish a follow-up question from the opening one.
+///    `round_number` is the 1-based round counter (round 1 is the
+///    first follow-up, *after* the opening round).
+///
+/// 2. **State transition is `classified → awaiting_response`.** The
+///    caller ([`advance_session_round`], T120) has already
+///    transitioned `awaiting_response → classified` in its own tx
+///    alongside the `classification_produced` audit event. This
+///    drafter flips the session back to `awaiting_response` inside
+///    its own tx, atomic with the two outbound rows and the
+///    evaluator-marker advance (FR-127 idempotency).
+///
+/// 3. **Idempotency marker.** The same transaction that commits the
+///    two `mediation_messages` rows also calls
+///    [`db::mediation::advance_evaluator_marker`] with the supplied
+///    `round_count_to_mark` — so a crash between "published
+///    outbound" and "marked round evaluated" cannot re-dispatch and
+///    double-message the parties on the next tick.
+///
+/// Publish of the gift-wraps happens OUTSIDE the transaction,
+/// mirroring the initial drafter's commit-then-publish pattern. A
+/// publish failure returns `Err` with the rows already committed;
+/// see spec §"Non-Goals (Phase 11)" — partial-publish recovery is
+/// explicitly deferred.
+///
+/// The prompt bundle is NOT modified by this path: the `content`
+/// pushed through the gift-wrap is `clarification_text` as returned
+/// by `policy::evaluate` from the same pinned bundle the session
+/// was opened with. The round-number prefix is cosmetic and does
+/// not affect `policy_hash`.
+#[instrument(skip_all, fields(session_id = %session_id, round = round_number))]
+#[allow(clippy::too_many_arguments)]
+pub async fn draft_and_send_followup_message(
+    conn: &Arc<AsyncMutex<rusqlite::Connection>>,
+    client: &Client,
+    serbero_keys: &Keys,
+    session_id: &str,
+    round_number: u32,
+    round_count_to_mark: i64,
+    buyer_shared_keys: &Keys,
+    seller_shared_keys: &Keys,
+    prompt_bundle: &Arc<PromptBundle>,
+    clarification_text: &str,
+) -> Result<()> {
+    let buyer_content = format!("Round {round_number}. Buyer: {clarification_text}");
+    let seller_content = format!("Round {round_number}. Seller: {clarification_text}");
+
+    let buyer_wrap = outbound::build_wrap(
+        serbero_keys,
+        &buyer_shared_keys.public_key(),
+        &buyer_content,
+    )
+    .await?;
+    let seller_wrap = outbound::build_wrap(
+        serbero_keys,
+        &seller_shared_keys.public_key(),
+        &seller_content,
+    )
+    .await?;
+
+    if buyer_wrap.inner_event_id == seller_wrap.inner_event_id {
+        return Err(Error::ChatTransport(
+            "inner event ids collided across parties on follow-up; refusing to \
+             persist rows that would violate the dedup invariant"
+                .into(),
+        ));
+    }
+
+    let buyer_shared_pubkey_hex = buyer_shared_keys.public_key().to_hex();
+    let seller_shared_pubkey_hex = seller_shared_keys.public_key().to_hex();
+    let buyer_inner_id_hex = buyer_wrap.inner_event_id.to_hex();
+    let seller_inner_id_hex = seller_wrap.inner_event_id.to_hex();
+    let now = current_ts_secs()?;
+
+    // Single transaction: both outbound rows + the state flip from
+    // `classified` back to `awaiting_response` + the evaluator
+    // marker advance (+ consecutive_eval_failures reset, also via
+    // advance_evaluator_marker). A rollback loses ALL of them —
+    // the FR-127 idempotency guarantee lives or dies on this atom.
+    {
+        let mut guard = conn.lock().await;
+        let tx = guard.transaction()?;
+        db::mediation::insert_outbound_message(
+            &tx,
+            &db::mediation::NewOutboundMessage {
+                session_id,
+                party: TranscriptParty::Buyer,
+                shared_pubkey: &buyer_shared_pubkey_hex,
+                inner_event_id: &buyer_inner_id_hex,
+                inner_event_created_at: buyer_wrap.inner_created_at,
+                outer_event_id: Some(&buyer_wrap.outer.id.to_hex()),
+                content: &buyer_content,
+                prompt_bundle_id: &prompt_bundle.id,
+                policy_hash: &prompt_bundle.policy_hash,
+                persisted_at: now,
+            },
+        )?;
+        db::mediation::insert_outbound_message(
+            &tx,
+            &db::mediation::NewOutboundMessage {
+                session_id,
+                party: TranscriptParty::Seller,
+                shared_pubkey: &seller_shared_pubkey_hex,
+                inner_event_id: &seller_inner_id_hex,
+                inner_event_created_at: seller_wrap.inner_created_at,
+                outer_event_id: Some(&seller_wrap.outer.id.to_hex()),
+                content: &seller_content,
+                prompt_bundle_id: &prompt_bundle.id,
+                policy_hash: &prompt_bundle.policy_hash,
+                persisted_at: now,
+            },
+        )?;
+        // Transition `classified → awaiting_response`. The caller
+        // has already written the session into `classified`; we flip
+        // it back as part of the same atom that persisted the rows.
+        // The `state = 'classified'` guard protects against a caller
+        // that forgot the preceding transition — the UPDATE then
+        // no-ops, which is better than quietly flipping from any
+        // other state.
+        tx.execute(
+            "UPDATE mediation_sessions
+             SET state = 'awaiting_response', last_transition_at = ?1
+             WHERE session_id = ?2 AND state = 'classified'",
+            params![now, session_id],
+        )?;
+        db::mediation::advance_evaluator_marker(&tx, session_id, round_count_to_mark)?;
+        tx.commit()?;
+    }
+
+    // Publish + audit outside the transaction. Matches the initial
+    // drafter's pattern: failure here returns `Err` and the rows
+    // stay committed as a historical record. See FR-126 Non-Goals
+    // in spec.md.
+    session::publish_with_bounded_retry(client, &buyer_wrap.outer, "buyer").await?;
+    record_outbound_sent_audit(
+        conn,
+        session_id,
+        &buyer_shared_pubkey_hex,
+        &buyer_inner_id_hex,
+        prompt_bundle,
+    )
+    .await?;
+
+    session::publish_with_bounded_retry(client, &seller_wrap.outer, "seller").await?;
+    record_outbound_sent_audit(
+        conn,
+        session_id,
+        &seller_shared_pubkey_hex,
+        &seller_inner_id_hex,
+        prompt_bundle,
+    )
+    .await?;
+
+    info!(
+        session_id = %session_id,
+        round = round_number,
+        round_count_marked = round_count_to_mark,
+        prompt_bundle_id = %prompt_bundle.id,
+        policy_hash = %prompt_bundle.policy_hash,
+        "follow-up clarifying message dispatched to both parties"
+    );
+    Ok(())
+}
+
 /// Record one `outbound_sent` audit row in its own short-lived
 /// transaction. Separate from the main outbound-persist tx because
 /// the row should only land once the relay has accepted the wrap.

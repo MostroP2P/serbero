@@ -540,19 +540,23 @@ second outbound within one ingest-tick cycle of Bob's reply.
   two bumps followed by one successful advance resets the streak
   back to 0.
 
-- [ ] T119 Implement the mid-session drafter in `src/chat/outbound.rs`
-  as a variant of the existing `draft_and_send_initial_message` flow.
-  Accept a `round_number: u32` parameter; emit a round-number marker
-  in the outbound body (concrete text lives in
-  `prompts/phase3-message-templates.md` — a follow-up placeholder
-  already exists under the template id `phase3-followup-ask`; if it
-  doesn't, add a minimal placeholder in the same commit and reuse the
-  existing policy_hash since no classifier-governing content changes).
-  The drafter MUST NOT quote or re-send earlier Serbero outbound text.
-  Two-row commit (buyer + seller mediation_messages rows) and the
-  state transition MUST land in the same transaction. Reuses the
-  existing per-party `shared_pubkey` addressing; no changes to
-  `session_key_cache`.
+- [X] T119 Implement the mid-session drafter as `draft_and_send_followup_message`
+  in `src/mediation/mod.rs` (not `src/chat/outbound.rs` as the spec
+  originally said — the open-time sibling `draft_and_send_initial_message`
+  already lives in `mediation/mod.rs`, so co-locating keeps the two
+  drafters next to each other). Accepts `round_number: u32` and
+  `round_count_to_mark: i64`; emits `"Round {N}. Buyer: ..."` /
+  `"Round {N}. Seller: ..."` as the per-party body prefix (no
+  prompt-bundle changes — the prefix is inline, `policy_hash` is
+  preserved). The drafter does NOT quote or re-send earlier outbound
+  text. Single transaction commits the two `mediation_messages` rows
+  + the `classified → awaiting_response` state flip + the
+  `advance_evaluator_marker` call (from T118); publish of the
+  gift-wraps happens OUTSIDE the transaction per the Non-Goals
+  carve-out in spec.md. Reuses the existing per-party `shared_pubkey`
+  addressing; no changes to `session_key_cache`. End-to-end coverage
+  lands with T122 (integration test that drives the full round-2
+  flow against MockRelay).
 
 - [ ] T120 Implement `src/mediation/mod.rs::advance_session_round(
   conn, client, serbero_keys, reasoning, prompt_bundle, session_id,
