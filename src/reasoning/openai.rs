@@ -296,14 +296,21 @@ impl OpenAiProvider {
                 .next()
                 .and_then(|c| c.message.content)
                 .ok_or_else(|| ReasoningError::MalformedResponse("empty choices".into()))?;
-            // Log the raw model output at DEBUG so operators can see
-            // the exact JSON / text that drove the policy decision.
-            // Truncated to keep log lines reasonable; the full content
-            // is re-derivable from the OpenAI logs if needed.
+            // FR-120 / TC-103 invariant: the full model output may
+            // contain party statements and a free-text rationale that
+            // the spec forbids in general logs. We emit metadata only
+            // at this level — length plus a truncated SHA-256 prefix
+            // — so operators can correlate logs with the authoritative
+            // copy in `reasoning_rationales` without duplicating the
+            // sensitive bytes to the log stream.
+            use nostr_sdk::hashes::Hash as _;
+            let content_hash = nostr_sdk::hashes::sha256::Hash::hash(content.as_bytes());
+            let content_hash_prefix = &content_hash.to_string()[..16];
             debug!(
                 attempt,
                 model = self.model,
-                content = %truncate(&content, 1000),
+                content_len = content.len(),
+                content_sha256_prefix = content_hash_prefix,
                 "openai reasoning call response"
             );
             return Ok(content);

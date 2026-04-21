@@ -687,12 +687,30 @@ required by FR-124 and "Final Solver Report on External Resolution".
 
 - **FR-124** *(final solver report on external resolution)*: When a
   dispute transitions to a resolved terminal state and Serbero has
-  collected ANY mediation context for that dispute — any of: a prior
-  reasoning verdict, an initial classification, a `mediation_sessions`
-  row in any state (including `escalation_recommended`), one or more
-  `mediation_messages` rows, or any `mediation_events` rows — Serbero
-  MUST emit exactly one final solver-facing report via the Phase 1/2
-  notifier. Routing follows "Solver-Facing Routing". The report MUST
+  collected **substantive** mediation context for that dispute,
+  Serbero MUST emit exactly one final solver-facing report via the
+  Phase 1/2 notifier. Substantive context is defined as ANY of the
+  following:
+  - a prior reasoning verdict (a `reasoning_verdict` row or a
+    persisted `reasoning_rationales` row) — Serbero reasoned about
+    the dispute;
+  - a `mediation_sessions` row in any state (including
+    `escalation_recommended`, `closed`, `superseded_by_human`) —
+    Serbero took the dispute;
+  - one or more `mediation_messages` rows — Serbero talked to at
+    least one party;
+  - any session-scoped `mediation_events` row (`session_id IS NOT
+    NULL`) that records a mediation side effect (e.g.
+    `classification_produced`, `escalation_recommended`,
+    `handoff_prepared`, `summary_generated`, `state_transition`).
+
+  Pre-reasoning bookkeeping rows do NOT count as substantive context
+  on their own: a dispute whose only `mediation_events` entries are
+  `start_attempt_started` and `start_attempt_stopped` (the attempt
+  never reached reasoning or take-dispute, e.g. the eligibility
+  gate or the auth gate refused) MUST NOT trigger an FR-124 report.
+  The rule of thumb: the report fires only if Serbero either
+  reasoned about the dispute, took it, or spoke to a party. Routing follows "Solver-Facing Routing". The report MUST
   include, at minimum:
   - the dispute id and the linked mediation session id (if any);
   - the latest known mediation classification and confidence (if

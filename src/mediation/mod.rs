@@ -665,34 +665,53 @@ async fn run_engine_tick(
                 continue;
             }
         };
-        match session::open_session(session::OpenSessionParams {
-            conn,
-            client,
-            serbero_keys,
-            mostro_pubkey,
-            reasoning,
-            prompt_bundle,
-            dispute_id,
-            initiator_role: *initiator_role,
-            dispute_uuid,
-            take_flow_timeout: Duration::from_secs(15),
-            take_flow_poll_interval: Duration::from_millis(250),
-            provider_name,
-            model_name,
-            auth_handle,
-            session_key_cache: Some(session_key_cache),
-            solvers,
+        // Route retry attempts through `start::try_start_for` with
+        // `trigger = "tick_retry"` so the tick path emits the same
+        // `start_attempt_started` / `start_attempt_stopped` audit
+        // trail as the event-driven handler (T101). The nested
+        // `StartOutcome::Started(OpenOutcome::...)` match preserves
+        // the existing per-variant handling (ReadyForSummary →
+        // deliver_summary, EscalatedOnOpen → escalation::recommend,
+        // etc.) — `try_start_for` only adds the audit trail and the
+        // refusal-branch mapping to `StoppedBeforeTake`.
+        let start_outcome = start::try_start_for(start::StartParams {
+            open: session::OpenSessionParams {
+                conn,
+                client,
+                serbero_keys,
+                mostro_pubkey,
+                reasoning,
+                prompt_bundle,
+                dispute_id,
+                initiator_role: *initiator_role,
+                dispute_uuid,
+                take_flow_timeout: DEFAULT_TAKE_FLOW_TIMEOUT,
+                take_flow_poll_interval: DEFAULT_TAKE_FLOW_POLL_INTERVAL,
+                provider_name,
+                model_name,
+                auth_handle,
+                session_key_cache: Some(session_key_cache),
+                solvers,
+            },
+            trigger: start::StartTrigger::TickRetry,
         })
-        .await
-        {
-            Ok(session::OpenOutcome::Opened { session_id }) => {
+        .await;
+
+        match start_outcome {
+            start::StartOutcome::NotEligible => {
+                debug!(
+                    dispute_id = %dispute_id,
+                    "engine tick: dispute no longer eligible; skipping"
+                );
+            }
+            start::StartOutcome::Started(session::OpenOutcome::Opened { session_id }) => {
                 info!(
                     dispute_id = %dispute_id,
                     session_id = %session_id,
                     "engine opened new mediation session"
                 );
             }
-            Ok(session::OpenOutcome::ReadyForSummary {
+            start::StartOutcome::Started(session::OpenOutcome::ReadyForSummary {
                 session_id,
                 classification,
                 confidence,
@@ -733,14 +752,14 @@ async fn run_engine_tick(
                     );
                 }
             }
-            Ok(session::OpenOutcome::AlreadyOpen { session_id }) => {
+            start::StartOutcome::Started(session::OpenOutcome::AlreadyOpen { session_id }) => {
                 debug!(
                     dispute_id = %dispute_id,
                     session_id = %session_id,
                     "engine tick: dispute already has an open mediation session"
                 );
             }
-            Ok(session::OpenOutcome::EscalatedOnOpen {
+            start::StartOutcome::Started(session::OpenOutcome::EscalatedOnOpen {
                 session_id,
                 trigger,
             }) => {
@@ -781,32 +800,41 @@ async fn run_engine_tick(
                     }
                 }
             }
-            Ok(session::OpenOutcome::RefusedReasoningUnavailable { reason }) => {
+            // The three `Refused*` variants are collapsed into
+            // `StoppedBeforeTake` by `try_start_for`; this arm is
+            // unreachable unless a future variant slips through.
+            start::StartOutcome::Started(session::OpenOutcome::RefusedReasoningUnavailable {
+                reason,
+            })
+            | start::StartOutcome::Started(session::OpenOutcome::RefusedAuthPending { reason })
+            | start::StartOutcome::Started(session::OpenOutcome::RefusedAuthTerminated {
+                reason,
+            }) => {
                 warn!(
                     dispute_id = %dispute_id,
                     reason = %reason,
-                    "engine tick: reasoning provider unavailable; skipping (SC-105)"
+                    "engine tick: Started arm carried a Refused variant (unexpected)"
                 );
             }
-            Ok(session::OpenOutcome::RefusedAuthPending { reason }) => {
+            start::StartOutcome::StoppedBeforeTake { reason } => {
                 warn!(
                     dispute_id = %dispute_id,
                     reason = %reason,
-                    "engine tick: auth pending; skipping dispute (SC-105)"
+                    "engine tick: start attempt stopped before take; will retry next cycle (SC-105)"
                 );
             }
-            Ok(session::OpenOutcome::RefusedAuthTerminated { reason }) => {
-                error!(
+            start::StartOutcome::TakeFailed { reason } => {
+                warn!(
                     dispute_id = %dispute_id,
                     reason = %reason,
-                    "engine tick: auth terminated; skipping dispute (SC-105)"
+                    "engine tick: take-dispute failed"
                 );
             }
-            Err(e) => {
+            start::StartOutcome::Error(e) => {
                 error!(
                     dispute_id = %dispute_id,
                     error = %e,
-                    "engine tick: open_session failed; continuing with next dispute"
+                    "engine tick: start attempt returned error; continuing with next dispute"
                 );
             }
         }

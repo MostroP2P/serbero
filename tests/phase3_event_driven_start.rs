@@ -126,6 +126,14 @@ async fn detected_handler_opens_session_without_engine_tick() {
         solvers: vec![solver_cfg.clone()],
     });
 
+    // Intentionally handler-only: this test constructs HandlerContext
+    // by hand instead of booting `daemon::run_with_shutdown` + the
+    // notification loop. The point is that a dispute event reaches
+    // `mediation_sessions { state: awaiting_response }` and two
+    // outbound rows with NO engine task running at all — the engine
+    // cannot fire here because it is never spawned (SC-109). Daemon-
+    // level wiring of `phase3 = Some(..)` is covered structurally by
+    // the single construction site in `src/daemon.rs`.
     let ctx = HandlerContext {
         conn: Arc::clone(&conn),
         client: serbero_client.clone(),
