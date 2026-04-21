@@ -80,6 +80,17 @@ impl OpenAiProvider {
     fn chat_completions_url(&self) -> String {
         format!("{}/chat/completions", self.api_base)
     }
+
+    /// Some models (notably `gpt-5*`) reject explicit temperature
+    /// values and require the server-side default instead. In those
+    /// cases we omit the field entirely.
+    fn request_temperature(&self, value: f64) -> Option<f64> {
+        if self.model.starts_with("gpt-5") {
+            None
+        } else {
+            Some(value)
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -98,7 +109,8 @@ struct ChatRequest<'a> {
     messages: Vec<ChatMessage<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     response_format: Option<ResponseFormat>,
-    temperature: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    temperature: Option<f64>,
 }
 
 #[derive(Serialize)]
@@ -169,7 +181,7 @@ impl ReasoningProvider for OpenAiProvider {
             response_format: Some(ResponseFormat {
                 kind: "json_object".into(),
             }),
-            temperature: 0.0,
+            temperature: self.request_temperature(0.0),
         };
         let raw = self.post_chat(&body).await?;
         parse_classification(&raw)
@@ -194,7 +206,7 @@ impl ReasoningProvider for OpenAiProvider {
                 },
             ],
             response_format: None,
-            temperature: 0.2,
+            temperature: self.request_temperature(0.2),
         };
         let raw = self.post_chat(&body).await?;
         parse_summary(&raw)
@@ -209,7 +221,7 @@ impl ReasoningProvider for OpenAiProvider {
                 content: "ping",
             }],
             response_format: None,
-            temperature: 0.0,
+            temperature: self.request_temperature(0.0),
         };
         self.post_chat(&body).await.map(|_| ())
     }
