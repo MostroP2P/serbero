@@ -26,6 +26,7 @@ pub mod router;
 pub mod session;
 pub mod start;
 pub mod summarizer;
+pub mod transcript;
 
 use std::collections::HashMap;
 use std::sync::Arc;

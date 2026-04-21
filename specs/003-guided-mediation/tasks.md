@@ -505,18 +505,26 @@ second outbound within one ingest-tick cycle of Bob's reply.
 
 ### Helpers (core loop)
 
-- [ ] T117 Implement `src/mediation/transcript.rs` (new module):
+- [X] T117 Implement `src/mediation/transcript.rs` (new module):
   `load_transcript_for_session(conn, session_id, max_rows: usize) ->
   Result<Vec<TranscriptEntry>>`. Reads `mediation_messages` for the
-  session, orders by `inner_created_at ASC`, tags each row with its
-  party role by matching `shared_pubkey` against the session's
-  `buyer_shared_pubkey` / `seller_shared_pubkey`, filters out rows
-  with `ingest_status = 'stale'`, and returns at most `max_rows` most
-  recent entries. Rows that match neither shared pubkey MUST be
-  excluded and logged at `warn!`. Reuse the existing
-  `crate::models::reasoning::TranscriptEntry` type. Unit tests cover:
-  normal flow (buyer + seller rows interleaved), party-mismatch
-  row exclusion, 40-row cap, stale exclusion, empty session.
+  session, orders by `inner_event_created_at ASC`, tags each row
+  with its party role by matching `shared_pubkey` against the
+  session's `buyer_shared_pubkey` / `seller_shared_pubkey`, excludes
+  rows with `stale = 1`, and caps at the most recent `max_rows`
+  entries via SQL `LIMIT` (so an unbounded transcript cannot blow up
+  the transfer). Rows with an inbound `shared_pubkey` that matches
+  neither side are dropped and logged at `warn!`. Reuses the
+  existing `crate::models::reasoning::TranscriptEntry` type. Seven
+  unit tests cover: unknown session, session with no messages,
+  interleaved outbound/inbound normal flow, stale exclusion,
+  unknown-shared-pubkey drop, cap returning the last N in ascending
+  order, and a zero-cap edge case. Note on the spec vs schema: the
+  spec referred to `ingest_status IN ('fresh','duplicate')` but the
+  real schema stores non-stale rows via UNIQUE-index dedup (no
+  duplicate rows land) plus a `stale INTEGER 0/1` flag; the code
+  filters on `stale = 0`, equivalent for the reasoning-input
+  purpose.
 
 - [ ] T118 Add `db::mediation::advance_evaluator_marker(tx, session_id,
   new_round_count)` — writes `round_count_last_evaluated =
