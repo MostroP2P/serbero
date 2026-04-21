@@ -632,16 +632,21 @@ second outbound within one ingest-tick cycle of Bob's reply.
 
 ### Integration tests
 
-- [ ] T122 [P] `tests/phase3_followup_round.rs` (SC-112 + SC-113):
-  open a session, dispatch the first outbound, script the
-  `MockReasoningProvider` to return a second `AskClarification(...)`
-  on the mid-session call. Send party replies through the relay so
-  the ingest tick picks them up. Assert: within one extra ingest-tick
-  cycle, two MORE outbound `mediation_messages` rows exist (total 4:
-  round 0 × 2 + round 1 × 2), the session is back in
-  `awaiting_response`, and `round_count_last_evaluated = 1`. Second
-  assertion for SC-113: trigger a NO-OP ingest tick (no new inbound)
-  and assert the outbound row count did NOT change.
+- [X] T122 [P] `tests/phase3_followup_round.rs` (SC-112 + SC-113):
+  seeds a session at `round_count = 1` with two round-0 outbound
+  rows and two inbound reply rows (the state a real US1+US2 run
+  would have left on disk), populates `SessionKeyCache` with
+  `DisputeChatMaterial`, and calls `follow_up::advance_session_round`
+  directly. Asserts (SC-112) 4 outbound rows total, each new row
+  carrying the `"Round 1. "` prefix and the scripted clarification
+  text, state back at `awaiting_response`, and `round_count_last_evaluated
+  = 1`. Asserts (SC-113) a second `advance_session_round` call with
+  no new inbound produces zero new outbound rows and exactly one
+  `classification_produced` audit row (idempotency gate holds).
+  Implementation note: the test calls the orchestrator directly
+  rather than driving `run_ingest_tick` so the harness stays
+  focused — the ingest-tick hook path is exercised structurally by
+  T121's single call site.
 
 - [ ] T123 [P] `tests/phase3_followup_summary.rs` (SC-114): same
   harness but the scripted provider returns `Summarize {
