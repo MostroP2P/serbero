@@ -269,11 +269,27 @@ pub async fn advance_session_round(
             classification,
             confidence,
         } => {
-            // `deliver_summary` owns its own transaction scope,
-            // so the marker advance lives in a separate short-
-            // lived DB write afterwards. `deliver_summary` walks
-            // the session through classified → summary_pending →
-            // summary_delivered → closed.
+            // `deliver_summary` begins with a `classified →
+            // summary_pending` transition, so we must pre-flip the
+            // session from `awaiting_response` to `classified`
+            // first. This creates a brief window (the summarizer
+            // call + routing, typically a few seconds) where the
+            // session is in `classified` without `round_count_last_evaluated`
+            // having been advanced. If the daemon crashes inside
+            // that window, the next ingest tick skips this session
+            // (state gate rejects `classified`). This is a
+            // documented Phase 11 limitation — see spec.md
+            // §"Non-Goals (Phase 11)" regarding crash recovery
+            // during mid-session dispatch.
+            {
+                let guard = conn.lock().await;
+                db::mediation::set_session_state(
+                    &guard,
+                    session_id,
+                    MediationSessionState::Classified,
+                    super::current_ts_secs()?,
+                )?;
+            }
             if let Err(e) = deliver_summary(
                 conn,
                 client,

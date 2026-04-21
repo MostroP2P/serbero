@@ -648,12 +648,26 @@ second outbound within one ingest-tick cycle of Bob's reply.
   focused — the ingest-tick hook path is exercised structurally by
   T121's single call site.
 
-- [ ] T123 [P] `tests/phase3_followup_summary.rs` (SC-114): same
-  harness but the scripted provider returns `Summarize {
-  CoordinationFailureResolvable, 0.9 }` on the mid-session call.
-  Assert `deliver_summary` fires exactly once; session ends `closed`
-  with a `summary_delivered` event on file; the solver receives the
-  summary DM.
+- [X] T123 [P] `tests/phase3_followup_summary.rs` (SC-114): same
+  seeding strategy as T122 but with a `SummarizingProvider` (inline
+  in the test) whose `classify` returns `Summarize +
+  CoordinationFailureResolvable + 0.9` and whose `summarize` returns
+  a valid `SummaryResponse`. Asserts session ends `closed`, marker
+  advanced, exactly one `mediation_summaries` row, exactly one
+  `summary_generated` audit event, and the solver receives the
+  summary DM via the configured notifier path. Also asserts a
+  second invocation on the now-closed session is a no-op (no
+  additional summary rows). Required one tweak to
+  `advance_session_round`'s Summarize branch: pre-transition
+  `awaiting_response → classified` before calling `deliver_summary`
+  (which starts at `classified`); the brief window where the
+  session is in `classified` without a marker advance is documented
+  as a known Phase 11 limitation tied to the Non-Goal on
+  crash-recovery during mid-session dispatch. Removed an
+  over-specified `state_transition` audit-count assertion — that
+  event kind is defined but has no writer in `main` today; the
+  authoritative state-change signal is the domain-specific event
+  (`summary_generated`) plus the `mediation_sessions.state` column.
 
 - [ ] T124 [P] `tests/phase3_followup_reasoning_failure.rs` (SC-115):
   script the provider to fail (`ReasoningError::Unreachable`) three
