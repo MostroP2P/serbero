@@ -558,9 +558,21 @@ second outbound within one ingest-tick cycle of Bob's reply.
   lands with T122 (integration test that drives the full round-2
   flow against MockRelay).
 
-- [ ] T120 Implement `src/mediation/mod.rs::advance_session_round(
+- [X] T120 Implement `src/mediation/follow_up.rs::advance_session_round(
   conn, client, serbero_keys, reasoning, prompt_bundle, session_id,
-  solvers, provider_name, model_name) -> Result<()>`. Flow:
+  session_key_cache, solvers, provider_name, model_name) -> Result<()>`.
+  Landed in a new `src/mediation/follow_up.rs` module (not in
+  `mod.rs` as the spec originally said — keeps the orchestrator
+  apart from the drafters and gives it room to grow). **Design
+  divergence from FR-129**: the session stays in `awaiting_response`
+  throughout the loop; no mid-session transition to `classified` or
+  `follow_up_pending` is written. The state machine rejects the
+  direct `classified → awaiting_response` edge, and composing
+  `classified → follow_up_pending → awaiting_response` inside one TX
+  is ceremonial for outside observers because no tick ever sees the
+  intermediate state. The single authoritative gate against
+  re-dispatch is `round_count_last_evaluated` (FR-127); the drafter
+  refreshes `last_transition_at` without touching `state`. Flow:
   1. Load session row; short-circuit if state NOT in
      {`awaiting_response`}. (The other states — `classified`,
      `summary_pending`, `summary_delivered`, `escalation_recommended`,

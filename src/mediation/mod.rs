@@ -21,6 +21,7 @@
 pub mod auth_retry;
 pub mod eligibility;
 pub mod escalation;
+pub mod follow_up;
 pub mod policy;
 pub mod router;
 pub mod session;
@@ -333,7 +334,7 @@ pub async fn draft_and_send_initial_message(
 /// Phase 11 mid-session follow-up drafter (T119 / FR-126).
 ///
 /// Sibling of [`draft_and_send_initial_message`] for the round-2+
-/// clarifying exchange. Three differences from the initial drafter:
+/// clarifying exchange. Differences from the initial drafter:
 ///
 /// 1. **Round-number marker in the body.** Each party-facing content
 ///    is prefixed with `"Round {N}. {role}: "` so parties can
@@ -341,20 +342,26 @@ pub async fn draft_and_send_initial_message(
 ///    `round_number` is the 1-based round counter (round 1 is the
 ///    first follow-up, *after* the opening round).
 ///
-/// 2. **State transition is `classified → awaiting_response`.** The
-///    caller ([`advance_session_round`], T120) has already
-///    transitioned `awaiting_response → classified` in its own tx
-///    alongside the `classification_produced` audit event. This
-///    drafter flips the session back to `awaiting_response` inside
-///    its own tx, atomic with the two outbound rows and the
-///    evaluator-marker advance (FR-127 idempotency).
-///
-/// 3. **Idempotency marker.** The same transaction that commits the
+/// 2. **Idempotency marker.** The same transaction that commits the
 ///    two `mediation_messages` rows also calls
 ///    [`db::mediation::advance_evaluator_marker`] with the supplied
 ///    `round_count_to_mark` — so a crash between "published
 ///    outbound" and "marked round evaluated" cannot re-dispatch and
 ///    double-message the parties on the next tick.
+///
+/// Unlike FR-129's original sketch, the session does NOT transition
+/// through `classified` / `follow_up_pending` during the mid-session
+/// loop. The state machine (`MediationSessionState::can_transition_to`)
+/// rejects a direct `classified → awaiting_response` step, and
+/// composing the legal `classified → follow_up_pending →
+/// awaiting_response` pair inside one transaction would be
+/// ceremonial churn for outside observers because no tick ever sees
+/// the intermediate state. The session instead stays in
+/// `awaiting_response` throughout the loop; the single authoritative
+/// gate against re-dispatch is `round_count_last_evaluated` (FR-127).
+/// This drafter's UPDATE refreshes `last_transition_at` so operators
+/// can see Serbero acted on this round, but leaves the `state`
+/// column unchanged.
 ///
 /// Publish of the gift-wraps happens OUTSIDE the transaction,
 /// mirroring the initial drafter's commit-then-publish pattern. A
@@ -449,17 +456,19 @@ pub async fn draft_and_send_followup_message(
                 persisted_at: now,
             },
         )?;
-        // Transition `classified → awaiting_response`. The caller
-        // has already written the session into `classified`; we flip
-        // it back as part of the same atom that persisted the rows.
-        // The `state = 'classified'` guard protects against a caller
-        // that forgot the preceding transition — the UPDATE then
-        // no-ops, which is better than quietly flipping from any
-        // other state.
+        // Refresh `last_transition_at` to mark that Serbero did
+        // work on this round. The WHERE guard keeps the write
+        // honest: if the session is no longer in
+        // `awaiting_response` (something else raced us into
+        // escalation / supersession), the drafter's UPDATE is a
+        // no-op and the caller still commits the rows + marker —
+        // that's fine because the outbound is historical evidence
+        // of the attempt; the stale `last_transition_at` is a
+        // cosmetic artifact, not a state-machine violation.
         tx.execute(
             "UPDATE mediation_sessions
-             SET state = 'awaiting_response', last_transition_at = ?1
-             WHERE session_id = ?2 AND state = 'classified'",
+             SET last_transition_at = ?1
+             WHERE session_id = ?2 AND state = 'awaiting_response'",
             params![now, session_id],
         )?;
         db::mediation::advance_evaluator_marker(&tx, session_id, round_count_to_mark)?;

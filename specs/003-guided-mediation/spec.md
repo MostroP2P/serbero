@@ -796,23 +796,39 @@ required by FR-124 and "Final Solver Report on External Resolution".
   guard against runaway token cost). Stale rows (`ingest_status =
   'stale'`) are NEVER included.
 
-- **FR-129** *(mid-session state transitions)*: The mid-session loop
-  writes these transitions using states that ALREADY exist in
-  `mediation_sessions`:
+- **FR-129** *(mid-session state transitions)*: The mid-session
+  loop keeps the session in `awaiting_response` throughout. Only
+  these transitions are written — and only when the corresponding
+  decision fires, reusing the existing open-time helpers that
+  already own those state flips:
 
-  - `awaiting_response → classified`: written atomically with the
-    `classification_produced` event when `policy::evaluate` returns
-    a decision that will dispatch further (AskClarification or
-    Summarize).
-  - `classified → awaiting_response`: written when the
-    AskClarification dispatch commits successfully.
-  - `classified → summary_pending`: written when the Summarize
-    dispatch starts (existing path).
-  - `classified → escalation_recommended`: written when the decision
-    is Escalate.
+  - `awaiting_response → summary_pending`: when `policy::evaluate`
+    returns `Summarize`, by the existing `deliver_summary` entry
+    point (which then progresses `summary_pending →
+    summary_delivered → closed` as it does on the open-time
+    cooperative-summary path).
+  - `awaiting_response → escalation_recommended`: when the decision
+    is `Escalate(trigger)`, by `escalation::recommend`.
 
-  The `follow_up_pending` state exists in the model but MUST NOT be
-  written by this loop (kept for a future cleanup PR).
+  When the decision is `AskClarification`, the loop does NOT
+  transition the session state at all: the follow-up drafter
+  refreshes `last_transition_at` to mark that Serbero acted on this
+  round and leaves the `state` column as `awaiting_response`. The
+  single authoritative gate against re-dispatch is
+  `round_count_last_evaluated` (FR-127).
+
+  The `classified` and `follow_up_pending` states defined in
+  `mediation_sessions.state` are NOT written by this loop. The
+  state machine (`MediationSessionState::can_transition_to`)
+  rejects the direct `classified → awaiting_response` edge, and
+  composing the legal `classified → follow_up_pending →
+  awaiting_response` pair inside a single transaction is ceremonial
+  churn for outside observers because no ingest-tick observer ever
+  sees the intermediate state. Earlier drafts of this FR called for
+  using those states; the implementation (T119 drafter + T120
+  orchestrator) drops them as a known, documented divergence. A
+  future cleanup PR may remove the two unused variants from the
+  enum; see "Non-Goals (Phase 11)".
 
 - **FR-130** *(failure isolation and bounded retry)*: A reasoning-
   call or DB failure during mid-session evaluation MUST log at
