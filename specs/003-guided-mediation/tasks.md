@@ -567,9 +567,15 @@ second outbound within one ingest-tick cycle of Bob's reply.
   6. Open a transaction; transition `awaiting_response → classified`
      and write the `classification_produced` event inside it.
   7. Dispatch on the `PolicyDecision`:
-     - `AskClarification(text)` → T119 drafter; on success, transition
-       `classified → awaiting_response` and call `advance_evaluator_marker`
-       within the same transaction; commit.
+     - `AskClarification(text)` → T119 drafter. The drafter MUST
+       persist the two `mediation_messages` rows + the `classified →
+       awaiting_response` state transition + `advance_evaluator_marker`
+       in one DB transaction, then publish gift-wraps OUTSIDE the
+       transaction (mirrors the open-time `draft_and_send_initial_message`
+       pattern). A publish failure returns `Err` with rows committed
+       and NO automatic retry — see spec §"Non-Goals (Phase 11)".
+       On `Err`, call `bump_consecutive_eval_failures`; do NOT try
+       to roll back the committed rows.
      - `Summarize { .. }` → call the existing `deliver_summary`
        (the function already handles the `summary_pending →
        summary_delivered → closed` progression); call

@@ -747,13 +747,19 @@ required by FR-124 and "Final Solver Report on External Resolution".
   mirror open-time dispatch:
 
   - `AskClarification(text)` → draft per-party outbound messages,
-    persist two `mediation_messages` rows (one per party) inside the
-    same transaction as the state transition, publish both
-    gift-wraps, and transition the session to `awaiting_response`.
-    Both buyer- and seller-addressed messages MUST be dispatched; a
-    partial dispatch is a failure and MUST leave the session in the
-    prior state with an `outbound_send_failed` audit row (mirrors the
-    open-time drafter).
+    persist two `mediation_messages` rows (one per party) and the
+    state transition atomically inside one DB transaction, then
+    publish both gift-wraps. On success the session progresses to
+    `awaiting_response`. Failure handling MUST match the existing
+    open-time drafter (`draft_and_send_initial_message`): the DB
+    commit happens before publish, so a publish failure for either
+    party returns `Err` with the rows already committed and NO
+    automatic retry. The operator sees the failure via the log line
+    and (for Phase 11) via the `consecutive_eval_failures` counter;
+    the session keeps its existing drafter semantics rather than
+    inventing a new recovery path mid-session. Partial-publish
+    recovery is explicitly out of scope for Phase 11 — see "Non-Goals
+    (Phase 11)" below.
   - `Summarize { classification, confidence }` → delegate to the
     existing `deliver_summary` entrypoint with the mid-session
     transcript; the session progresses `classified → summary_pending
@@ -1303,17 +1309,41 @@ run_ingest_tick persists a fresh inbound envelope for session S
 └─────────────────────────────────────────────────────────┘
 ```
 
-Failure at step (3) or (4) or any commit step: log at `warn!`,
-leave `round_count_last_evaluated` unchanged, increment
-`consecutive_eval_failures`. The next ingest tick retries the same
-round. At the third consecutive failure, the session escalates with
-`ReasoningUnavailable` (FR-130).
+Failure handling by step:
+
+- **(3) reasoning call** or **(4) policy evaluation** error: log at
+  `warn!`, leave `round_count_last_evaluated` unchanged, increment
+  `consecutive_eval_failures`. The next ingest tick retries the same
+  round. At the third consecutive failure the session escalates with
+  `ReasoningUnavailable` (FR-130). No partial state is written.
+- **(5) DB commit** error (transition + `classification_produced`):
+  same as (3)/(4) — nothing landed, retry on next tick.
+- **(6) dispatch** error:
+  - For `AskClarification`, the drafter commits the two
+    `mediation_messages` rows and the state transition atomically,
+    THEN publishes gift-wraps. A publish failure for either party
+    returns `Err` with rows already committed (mirrors the open-time
+    drafter). `round_count_last_evaluated` is NOT advanced and
+    `consecutive_eval_failures` IS incremented, so the next
+    `Fresh` ingest for this session triggers another evaluation —
+    but the already-committed rows are NOT re-drafted (they stay as
+    historical record). No automatic republish; see Non-Goals.
+  - For `Summarize`, `deliver_summary` owns its own transaction and
+    state progression (`classified → summary_pending → ...`). On
+    failure the existing `deliver_summary` error path applies
+    unchanged; `advance_evaluator_marker` is called in a post-commit
+    DB op on success only.
+  - For `Escalate`, `escalation::recommend` transitions the session
+    out of `awaiting_response`; `consecutive_eval_failures` is moot
+    at that point because no further evaluations will run on this
+    session.
 
 ### What this loop does NOT do
 
 - No new state definitions. `classified`, `summary_pending`,
   `summary_delivered`, `escalation_recommended` already exist.
-  `follow_up_pending` stays unused.
+  `follow_up_pending` stays unused (kept for a future cleanup PR;
+  see "Non-Goals" below).
 - No prompt-bundle changes. Uses the same `policy_hash` the session
   was opened with.
 - No change to the transport or key lifecycle. Mid-session outbounds
@@ -1323,6 +1353,35 @@ round. At the third consecutive failure, the session escalates with
   behavior).
 - No free-text escalation reasons. `escalation::recommend` receives
   one of the existing `EscalationTrigger` variants.
+
+### Non-Goals (Phase 11)
+
+The following are deliberately out of scope. Each belongs in a
+subsequent slice with its own spec amendment.
+
+- **Partial-publish recovery.** When the mid-session `AskClarification`
+  dispatch commits both `mediation_messages` rows but the gift-wrap
+  publish for one of the two parties fails, Phase 11 returns `Err`,
+  leaves the rows committed (consistent with the open-time drafter),
+  and does NOT emit a dedicated `outbound_send_failed` audit row, does
+  NOT maintain a retry queue, and does NOT automatically republish.
+  The session keeps the same visibility / recovery posture it has
+  today when the opening drafter fails mid-publish. Known consequence:
+  the "silent" party does not receive the clarifying question and
+  will not reply; the round-limit check (US4) eventually escalates
+  that session.
+- **Removing the `follow_up_pending` enum variant + CHECK constraint.**
+  Phase 11 does not write the state and does not touch the schema
+  around it. A future housekeeping PR can remove it after confirming
+  no downstream consumer (Phase 4 handoff, analytics, replay tooling)
+  depends on the string form.
+- **Promoting the 40-row transcript cap to config.** `N = 40` stays
+  hardcoded for this increment; a later PR may expose it as
+  `[mediation].max_transcript_messages`.
+- **Multi-tick concurrency.** If future scale requires parallel
+  per-session tick workers, `round_count_last_evaluated` is the
+  correct idempotency primitive, but the concurrency harness itself
+  is out of scope here.
 
 ## Solver Identity and Authorization
 
