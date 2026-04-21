@@ -526,16 +526,19 @@ second outbound within one ingest-tick cycle of Bob's reply.
   filters on `stale = 0`, equivalent for the reasoning-input
   purpose.
 
-- [ ] T118 Add `db::mediation::advance_evaluator_marker(tx, session_id,
+- [X] T118 Add `db::mediation::advance_evaluator_marker(tx, session_id,
   new_round_count)` — writes `round_count_last_evaluated =
   new_round_count` AND `consecutive_eval_failures = 0` in a single
-  UPDATE. Must accept a `&rusqlite::Transaction` so the caller can
-  commit it atomically with the dispatched side effect's row writes
-  (FR-127). Add the symmetric
-  `db::mediation::bump_consecutive_eval_failures(conn, session_id) ->
-  Result<i64>` that increments the counter and returns the new value;
-  caller uses the return value to decide whether to escalate
-  (FR-130, threshold = 3). Unit-test both.
+  UPDATE. Accepts `&rusqlite::Transaction` so the caller can commit
+  it atomically with the dispatched side effect's row writes
+  (FR-127). Added `db::mediation::bump_consecutive_eval_failures(conn,
+  session_id) -> Result<i64>` that increments the counter and returns
+  the new value; caller uses the return value to decide whether to
+  escalate (FR-130, threshold = 3). Four unit tests cover: marker
+  advance + failure reset; rollback of the enclosing TX leaves the
+  marker untouched; increment returns 1→2→3 across successive bumps;
+  two bumps followed by one successful advance resets the streak
+  back to 0.
 
 - [ ] T119 Implement the mid-session drafter in `src/chat/outbound.rs`
   as a variant of the existing `draft_and_send_initial_message` flow.
