@@ -308,8 +308,8 @@ async fn summarize_branch_delivers_summary_once_and_closes_session() {
     );
     assert_eq!(round_count, 1);
     assert_eq!(
-        marker, 1,
-        "FR-127: marker must advance after the Summarize branch commits"
+        marker, 2,
+        "FR-127: marker counts fresh inbounds evaluated (2: one buyer + one seller) after the Summarize branch commits"
     );
 
     // (b) exactly one mediation_summaries row with the returned

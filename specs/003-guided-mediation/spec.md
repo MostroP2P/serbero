@@ -740,7 +740,7 @@ required by FR-124 and "Final Solver Report on External Resolution".
   that transcript and the session's pinned prompt bundle, feed the
   `ClassificationResponse` into `policy::evaluate`, and dispatch the
   returned `PolicyDecision`. The evaluator MUST be invoked at most
-  once per `round_count` value per session (see FR-127).
+  once per fresh-inbound total per session (see FR-127).
 
 - **FR-126** *(dispatch on PolicyDecision mid-session)*: Given a
   `PolicyDecision` from `policy::evaluate`, mid-session dispatch MUST
@@ -777,23 +777,30 @@ required by FR-124 and "Final Solver Report on External Resolution".
 
 - **FR-127** *(evaluation idempotency)*: `mediation_sessions` MUST
   carry a `round_count_last_evaluated` column. The evaluator MUST
-  read `round_count` and `round_count_last_evaluated` under the
-  session lock, skip the evaluation when they are equal, and write
-  `round_count_last_evaluated = round_count` atomically with the
-  **DB commit** of the dispatched side effect (inside the same
-  transaction that writes the outbound rows or the state
-  transition). "Atomic with the DB commit" is branch (A) of the
-  commit-vs-publish choice: a successful publish of the gift-wraps
-  is NOT a precondition for the marker advance. Rationale:
-  mirroring the open-time drafter's commit-then-publish pattern
-  keeps the two paths symmetric and keeps the DB state inspectable
-  without cross-referencing relay state. The consequence —
-  partial-publish failures leave the marker advanced and the rows
-  committed, blocking automatic retry — is a documented limitation
-  (see "Non-Goals (Phase 11)" on partial-publish recovery). A
-  crash between the reasoning call and the dispatch DB commit MUST
-  NOT advance the marker, which means the next tick retries
-  cleanly.
+  count the session's fresh inbound rows
+  (`direction = 'inbound' AND stale = 0`) and
+  `round_count_last_evaluated` under the session lock, skip the
+  evaluation when they are equal, and write
+  `round_count_last_evaluated = <current fresh-inbound count>`
+  atomically with the **DB commit** of the dispatched side effect
+  (inside the same transaction that writes the outbound rows or the
+  state transition). Note the column name is historical: it counts
+  "fresh inbounds already evaluated", NOT completed rounds. A
+  single-party reply is enough to cross the gate — waiting for the
+  other party before re-evaluating was the original design and
+  turned out to mis-serve the common case (one side answers first,
+  then Serbero should press the other). "Atomic with the DB commit"
+  is branch (A) of the commit-vs-publish choice: a successful
+  publish of the gift-wraps is NOT a precondition for the marker
+  advance. Rationale: mirroring the open-time drafter's
+  commit-then-publish pattern keeps the two paths symmetric and
+  keeps the DB state inspectable without cross-referencing relay
+  state. The consequence — partial-publish failures leave the
+  marker advanced and the rows committed, blocking automatic retry
+  — is a documented limitation (see "Non-Goals (Phase 11)" on
+  partial-publish recovery). A crash between the reasoning call
+  and the dispatch DB commit MUST NOT advance the marker, which
+  means the next tick retries cleanly.
 
 - **FR-128** *(transcript construction)*: The transcript passed to
   `classify` MUST include every `mediation_messages` row for the
@@ -1322,10 +1329,12 @@ run_ingest_tick persists a fresh inbound envelope for session S
        │ US4 round-limit check (existing) does NOT escalate
        ▼
 ┌─────────────────────────────────────────────────────────┐
-│ advance_session_round(S, round_count)                   │
+│ advance_session_round(S)                                │
 │                                                         │
-│ (1) gate: round_count > round_count_last_evaluated      │
-│     — else skip (FR-127 idempotency)                    │
+│ (1) gate: fresh_inbound_count >                         │
+│     round_count_last_evaluated — else skip              │
+│     (FR-127 idempotency; column name is historical,     │
+│     counts evaluated fresh inbounds, not rounds)        │
 │ (2) reconstruct transcript from mediation_messages      │
 │     (FR-128: ordered, annotated by party, ≤ 40 rows)    │
 │ (3) reasoning.classify(transcript, pinned_bundle)       │

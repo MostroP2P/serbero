@@ -8,11 +8,13 @@
 //!
 //! # Flow
 //!
-//! 1. Load session metadata (state, `round_count`,
-//!    `round_count_last_evaluated`, `dispute_id`, the two
-//!    `*_shared_pubkey`s). Short-circuit if the row is gone, the
-//!    state is not `awaiting_response`, or the idempotency gate
-//!    says this round was already evaluated (FR-127).
+//! 1. Load session metadata (state, `round_count_last_evaluated`,
+//!    `dispute_id`) and count the session's total fresh (non-stale)
+//!    inbound rows. Short-circuit if the row is gone, the state is
+//!    not `awaiting_response`, or the idempotency gate says every
+//!    fresh inbound has already been classified (FR-127 — compares
+//!    the live fresh-inbound count to `round_count_last_evaluated`,
+//!    which counts evaluations, not completed rounds).
 //! 2. Load the per-party chat material from the in-memory
 //!    [`SessionKeyCache`]. Skip with a `debug!` if missing — the
 //!    T052 restart-resume pass does not re-derive in production,
@@ -131,11 +133,25 @@ pub async fn advance_session_round(
         );
         return Ok(());
     }
-    if info.round_count <= info.round_count_last_evaluated {
+    // Gate on total fresh inbounds, not `round_count`.
+    //
+    // `round_count` only increments when BOTH parties have replied
+    // (it's `min(buyer_fresh, seller_fresh)`), so a single-party
+    // reply — the common mid-session case — would never cross a
+    // `round_count`-based gate. FR-127 asks us to re-evaluate after
+    // ANY fresh inbound, so we compare the total fresh-inbound count
+    // against `round_count_last_evaluated` (reinterpreted as "count
+    // of fresh inbounds already classified"; see the helper's
+    // docstring in `db::mediation`).
+    let total_fresh_inbounds = {
+        let guard = conn.lock().await;
+        db::mediation::count_fresh_inbounds(&guard, session_id)?
+    };
+    if total_fresh_inbounds <= info.round_count_last_evaluated {
         debug!(
-            round_count = info.round_count,
+            total_fresh_inbounds,
             round_count_last_evaluated = info.round_count_last_evaluated,
-            "advance_session_round: round already evaluated; skipping"
+            "advance_session_round: no new fresh inbounds since last evaluation; skipping"
         );
         return Ok(());
     }
@@ -212,6 +228,14 @@ pub async fn advance_session_round(
 
     // (6) Policy layer — persists the rationale + the
     //     `classification_produced` audit row in its own tx.
+    // `followup_number` is 1-based — the count of the evaluation
+    // currently in flight, not a retrospective index. Since
+    // `round_count_last_evaluated` is the count of fresh inbounds
+    // already classified (see `db::mediation::count_fresh_inbounds`
+    // docstring), the next-to-commit evaluation is number
+    // `round_count_last_evaluated + 1`. Used by the policy layer's
+    // early-mid-session low-confidence bypass.
+    let followup_number = info.round_count_last_evaluated.max(0) as u32 + 1;
     let decision = match policy::evaluate(
         conn,
         session_id,
@@ -219,6 +243,7 @@ pub async fn advance_session_round(
         provider_name,
         model_name,
         classification,
+        followup_number,
     )
     .await
     {
@@ -241,7 +266,7 @@ pub async fn advance_session_round(
     // (7) Dispatch.
     match decision {
         policy::PolicyDecision::AskClarification(text) => {
-            let new_marker = info.round_count;
+            let new_marker = total_fresh_inbounds;
             let round_number = round_number_for_followup(info.round_count_last_evaluated);
             if let Err(e) = draft_and_send_followup_message(
                 conn,
@@ -336,7 +361,7 @@ pub async fn advance_session_round(
             // now terminal (closed), keeping the marker current is
             // a cheap invariant — a future tick never mistakes an
             // evaluated round for an unevaluated one.
-            let new_marker = info.round_count;
+            let new_marker = total_fresh_inbounds;
             let mut guard = conn.lock().await;
             let tx = guard.transaction()?;
             db::mediation::advance_evaluator_marker(&tx, session_id, new_marker)?;
@@ -453,10 +478,16 @@ async fn load_initiator_role(
 }
 
 /// Pure helper — the drafter receives `round_number` for the body
-/// prefix. The first follow-up round is `N = 1` (round 0 was the
-/// opening clarification); the second follow-up is `N = 2`, etc.
-/// Computed from `round_count_last_evaluated` (the number of
-/// rounds already evaluated) + 1.
+/// prefix. The first follow-up is `N = 1` (the opening clarification
+/// was round 0); the second follow-up is `N = 2`, etc.
+///
+/// Computed from `round_count_last_evaluated` + 1. Post-FR-127 fix,
+/// that column counts "fresh inbounds already evaluated", not
+/// completed rounds — so `round_number` now increments once per
+/// evaluation regardless of whether both parties replied. That
+/// matches the user-visible intent ("follow-up N") better than the
+/// old min-rule did, since we only emit a follow-up when we actually
+/// run an evaluation.
 fn round_number_for_followup(round_count_last_evaluated: i64) -> u32 {
     round_count_last_evaluated.max(0) as u32 + 1
 }

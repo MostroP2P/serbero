@@ -210,6 +210,29 @@ pub fn recompute_round_count(conn: &Connection, session_id: &str) -> Result<i64>
     Ok(new_rounds)
 }
 
+/// Total number of fresh (non-stale) inbound rows for a session.
+///
+/// Phase 11's dispatch gate (FR-127) keys off "evaluated at least one
+/// new inbound since the last verdict", NOT "round_count advanced".
+/// The `round_count` min-rule from `recompute_round_count` requires
+/// BOTH parties to reply before it increments — so a single-party
+/// reply (the common mid-session case) would never cross the gate if
+/// it watched `round_count`. Instead, `advance_session_round` compares
+/// this total against `round_count_last_evaluated`, which is
+/// reinterpreted as "count of fresh inbounds already classified".
+///
+/// The column name stays `round_count_last_evaluated` for migration
+/// continuity; a rename is a future cleanup.
+pub fn count_fresh_inbounds(conn: &Connection, session_id: &str) -> Result<i64> {
+    let n: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM mediation_messages
+         WHERE session_id = ?1 AND direction = 'inbound' AND stale = 0",
+        params![session_id],
+        |r| r.get(0),
+    )?;
+    Ok(n)
+}
+
 /// Snapshot of a live mediation_sessions row, used by the engine's
 /// startup-resume pass and its per-tick ingest loop (T051 / T052).
 /// Only the fields both paths need — keep thin.

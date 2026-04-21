@@ -78,6 +78,7 @@ async fn authority_boundary_attempt_suppresses_and_escalates() {
         "openai",
         "gpt-test",
         classification,
+        1,
     )
     .await
     .unwrap();

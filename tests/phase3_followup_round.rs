@@ -24,11 +24,13 @@
 //! - SC-112: after `advance_session_round`, there are 4 outbound
 //!   rows in total (round 0 × 2 from the seed + round 1 × 2 from
 //!   this call), the session is back in `awaiting_response`, and
-//!   `round_count_last_evaluated = 1`. Each round-1 row carries a
-//!   `"Round 1. "` body prefix (the drafter's marker).
+//!   `round_count_last_evaluated = 2` (two fresh inbounds
+//!   evaluated — the column name is historical; see FR-127). Each
+//!   round-1 row carries a `"Round 1. "` body prefix (the drafter's
+//!   marker, derived from the pre-advance value of the column).
 //! - SC-113: calling `advance_session_round` a second time without
 //!   a new Fresh ingest produces ZERO new outbound rows and leaves
-//!   the marker at `1`.
+//!   the marker at `2`.
 
 mod common;
 
@@ -65,9 +67,10 @@ fn fixture_bundle() -> Arc<PromptBundle> {
 /// Seed the session row and the four rows that a real US1+US2 run
 /// would have left on disk by the time the follow-up loop fires:
 /// two outbound (round 0) + two inbound (the parties' replies).
-/// `round_count` is set to 1 so the Phase 11 idempotency gate
-/// (`round_count > round_count_last_evaluated`) passes on the first
-/// `advance_session_round` call.
+/// `round_count` is set to 1 (one completed round by the old
+/// min-rule), but the Phase 11 idempotency gate compares fresh
+/// inbound count (2) against `round_count_last_evaluated` (0), so
+/// the gate opens on the first `advance_session_round` call.
 #[allow(clippy::too_many_arguments)]
 fn seed_session_with_round_zero(
     conn: &rusqlite::Connection,
@@ -329,7 +332,10 @@ async fn second_round_outbound_fires_once_and_is_idempotent() {
     };
     assert_eq!(state, "awaiting_response");
     assert_eq!(round_count, 1);
-    assert_eq!(marker, 1, "FR-127: marker must advance to round_count");
+    assert_eq!(
+        marker, 2,
+        "FR-127: marker counts fresh inbounds evaluated (2: one buyer + one seller)"
+    );
 
     // --- Second advance: no new inbound, must be a no-op. -------
     advance_session_round(
@@ -390,7 +396,7 @@ async fn second_round_outbound_fires_once_and_is_idempotent() {
         .unwrap()
     };
     assert_eq!(state_after, "awaiting_response");
-    assert_eq!(marker_after, 1);
+    assert_eq!(marker_after, 2);
 }
 
 /// Defensive TranscriptParty import — silences the "unused" warning

@@ -133,7 +133,7 @@ async fn conflicting_claims_triggers_escalation() {
     let mut resp = base_response();
     resp.flags = vec![Flag::ConflictingClaims];
 
-    let decision = policy::evaluate(&conn, "sess-cc", &bundle, "openai", "gpt-test", resp)
+    let decision = policy::evaluate(&conn, "sess-cc", &bundle, "openai", "gpt-test", resp, 1)
         .await
         .unwrap();
     assert_eq!(
@@ -172,7 +172,7 @@ async fn fraud_indicator_triggers_escalation() {
     let mut resp = base_response();
     resp.flags = vec![Flag::FraudRisk];
 
-    let decision = policy::evaluate(&conn, "sess-fr", &bundle, "openai", "gpt-test", resp)
+    let decision = policy::evaluate(&conn, "sess-fr", &bundle, "openai", "gpt-test", resp, 1)
         .await
         .unwrap();
     assert_eq!(
@@ -208,9 +208,20 @@ async fn low_confidence_triggers_escalation() {
     let mut resp = base_response();
     resp.confidence = 0.2;
 
-    let decision = policy::evaluate(&conn, "sess-lc", &bundle, "openai", "gpt-test", resp)
-        .await
-        .unwrap();
+    // Past the early-mid-session bypass window — sustained low
+    // confidence at this point is the real "Serbero tried and
+    // failed" signal and MUST escalate.
+    let decision = policy::evaluate(
+        &conn,
+        "sess-lc",
+        &bundle,
+        "openai",
+        "gpt-test",
+        resp,
+        policy::EARLY_MIDSESSION_BYPASS_FOLLOWUPS + 1,
+    )
+    .await
+    .unwrap();
     assert_eq!(
         decision,
         PolicyDecision::Escalate(EscalationTrigger::LowConfidence)

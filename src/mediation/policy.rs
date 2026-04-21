@@ -217,6 +217,10 @@ pub async fn initial_classification(
 /// Like [`initial_classification`], `evaluate` does NOT send any
 /// outbound chat on its own — the caller dispatches on the returned
 /// [`PolicyDecision`].
+///
+/// `followup_number` is 1-based and identifies which mid-session
+/// evaluation this is for the session. It governs the low-confidence
+/// bypass window — see [`EARLY_MIDSESSION_BYPASS_FOLLOWUPS`].
 #[allow(clippy::too_many_arguments)]
 pub async fn evaluate(
     conn: &Arc<AsyncMutex<rusqlite::Connection>>,
@@ -225,8 +229,10 @@ pub async fn evaluate(
     provider_name: &str,
     model_name: &str,
     classification: ClassificationResponse,
+    followup_number: u32,
 ) -> Result<PolicyDecision> {
-    let decision = classify_to_decision(&classification, PolicyRound::MidSession);
+    let decision =
+        classify_to_decision(&classification, PolicyRound::MidSession { followup_number });
 
     let rationale_id = persist_classification_audit(
         conn,
@@ -252,18 +258,42 @@ pub async fn evaluate(
 
 /// Where in the session lifecycle a classification was produced.
 /// Drives whether low-confidence escalates on an otherwise-benign
-/// `AskClarification` suggestion: on the opening call the transcript
-/// is empty by construction, so the model has nothing to be confident
-/// about and a clarifying question is the expected next step.
-/// Escalating there produces sessions that never talk to the parties.
+/// `AskClarification` suggestion.
+///
+/// Two escalation-bypass windows exist:
+///
+/// - `Initial`: opening call, transcript is empty by construction,
+///   the model has nothing to be confident about. A clarifying
+///   question is the expected next step.
+/// - `MidSession { followup_number }` with
+///   `followup_number <= EARLY_MIDSESSION_BYPASS_FOLLOWUPS`: the first
+///   few mid-session evaluations frequently come back low-confidence
+///   because we only have one party's partial info. Escalating there
+///   hands off to a solver before Serbero has made a real attempt.
+///   After the bypass window, persistent low confidence is a genuine
+///   "we tried and can't resolve" signal — escalation is correct.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PolicyRound {
     /// Very first classification for a freshly-taken dispute. No
     /// inbound messages from either party yet.
     Initial,
-    /// Any later round. At least one inbound message is on file.
-    MidSession,
+    /// Later round. `followup_number` is 1-based: 1 = first
+    /// mid-session evaluation, 2 = second, etc.
+    MidSession { followup_number: u32 },
 }
+
+/// Number of mid-session follow-ups that bypass the low-confidence
+/// escalation rule for `AskClarification` suggestions. Follow-ups
+/// 1..=N pass through; follow-up N+1 onward escalate as before.
+///
+/// Rationale (2026-04-21 Alice/Bob run): gpt-5 returned confidence
+/// 0.31 after the first single-party reply, which escalated the
+/// session to a solver before Serbero ever asked a second clarifying
+/// question. 3 is the empirical sweet spot: enough rounds to gather
+/// both sides' stories, few enough that a session truly stuck in
+/// ambiguity still surfaces to a human within a reasonable wall-clock
+/// window.
+pub const EARLY_MIDSESSION_BYPASS_FOLLOWUPS: u32 = 3;
 
 /// Pure validation: run the contract rules against a single
 /// [`ClassificationResponse`] and return the resulting decision.
@@ -301,16 +331,32 @@ pub(crate) fn classify_to_decision(
         return PolicyDecision::Escalate(EscalationTrigger::AuthorityBoundaryAttempt);
     }
 
-    // Low-confidence gate. On the opening round a low-confidence
-    // `AskClarification` is not an escalation signal — the model has
-    // no transcript yet and a clarifying question is the cheap
-    // next step. Escalating there prevents Serbero from ever
-    // talking to the parties (observed in production with `gpt-5`
-    // returning sensibly-cautious scores on empty transcripts).
+    // Low-confidence gate. Two windows bypass this gate for
+    // `AskClarification` suggestions — see [`PolicyRound`]:
     //
-    // For every other suggested action on the opening round, and for
-    // every suggested action mid-session, the threshold still applies.
-    let passthrough_low_confidence_ask_clarification = matches!(round, PolicyRound::Initial)
+    // - Opening round: transcript is empty, the model has nothing to
+    //   anchor its confidence on. Escalating there prevents Serbero
+    //   from ever talking to the parties (observed 2026-04-21 with
+    //   `gpt-5` returning ~0.3 on empty transcripts).
+    // - First `EARLY_MIDSESSION_BYPASS_FOLLOWUPS` mid-session
+    //   evaluations: the model usually only has one party's partial
+    //   reply by then; escalating to a solver after a single follow-up
+    //   hand-offs before Serbero has actually tried to mediate
+    //   (observed 2026-04-21 Alice/Bob run, confidence 0.31 after
+    //   buyer's first reply triggered LowConfidence).
+    //
+    // Past the bypass window, sustained low confidence means
+    // "Serbero tried and cannot get traction" — escalation is the
+    // right outcome. For non-`AskClarification` actions the gate
+    // always applies: an unconfident `Summarize` is a terminal
+    // commitment Serbero must not make, even in the bypass window.
+    let in_bypass_window = match round {
+        PolicyRound::Initial => true,
+        PolicyRound::MidSession { followup_number } => {
+            followup_number <= EARLY_MIDSESSION_BYPASS_FOLLOWUPS
+        }
+    };
+    let passthrough_low_confidence_ask_clarification = in_bypass_window
         && matches!(
             classification.suggested_action,
             SuggestedAction::AskClarification(_)
@@ -741,6 +787,23 @@ mod tests {
         conn: &Arc<AsyncMutex<rusqlite::Connection>>,
         classification: ClassificationResponse,
     ) -> Result<PolicyDecision> {
+        // Default to a followup_number past the bypass window so tests
+        // that don't care about the bypass still exercise the
+        // escalation path by default. Tests that DO care about the
+        // bypass use `run_evaluate_at` directly.
+        run_evaluate_at(
+            conn,
+            classification,
+            EARLY_MIDSESSION_BYPASS_FOLLOWUPS + 1,
+        )
+        .await
+    }
+
+    async fn run_evaluate_at(
+        conn: &Arc<AsyncMutex<rusqlite::Connection>>,
+        classification: ClassificationResponse,
+        followup_number: u32,
+    ) -> Result<PolicyDecision> {
         let bundle = test_bundle();
         evaluate(
             conn,
@@ -749,6 +812,7 @@ mod tests {
             "openai",
             "gpt-test",
             classification,
+            followup_number,
         )
         .await
     }
@@ -779,10 +843,81 @@ mod tests {
 
     #[tokio::test]
     async fn evaluate_low_confidence_escalates() {
+        // Default `run_evaluate` runs past the bypass window (follow-up
+        // N+1), so a low-confidence response still escalates as before.
         let conn = fresh_conn();
         let mut resp = base_response();
         resp.confidence = 0.3;
         let decision = run_evaluate(&conn, resp).await.unwrap();
+        assert_eq!(
+            decision,
+            PolicyDecision::Escalate(EscalationTrigger::LowConfidence)
+        );
+    }
+
+    #[tokio::test]
+    async fn evaluate_low_confidence_ask_clarification_bypasses_in_early_mid_session() {
+        // Production case 2026-04-21 Alice/Bob: gpt-5 returned
+        // confidence 0.31 after the first single-party reply. Old
+        // policy escalated with LowConfidence and the parties never
+        // saw a second clarifying question. The bypass window
+        // (follow-ups 1..=EARLY_MIDSESSION_BYPASS_FOLLOWUPS) lets
+        // Serbero ask again before giving up.
+        let conn = fresh_conn();
+        let mut resp = base_response();
+        resp.confidence = 0.3; // below LOW_CONFIDENCE_THRESHOLD
+                               // base_response's suggested_action is AskClarification.
+        let decision = run_evaluate_at(&conn, resp, 1).await.unwrap();
+        assert_eq!(
+            decision,
+            PolicyDecision::AskClarification("please confirm X".into())
+        );
+    }
+
+    #[tokio::test]
+    async fn evaluate_low_confidence_ask_clarification_bypasses_at_boundary() {
+        // The bypass window is inclusive. Follow-up exactly equal to
+        // EARLY_MIDSESSION_BYPASS_FOLLOWUPS must still pass through.
+        let conn = fresh_conn();
+        let mut resp = base_response();
+        resp.confidence = 0.3;
+        let decision = run_evaluate_at(&conn, resp, EARLY_MIDSESSION_BYPASS_FOLLOWUPS)
+            .await
+            .unwrap();
+        assert_eq!(
+            decision,
+            PolicyDecision::AskClarification("please confirm X".into())
+        );
+    }
+
+    #[tokio::test]
+    async fn evaluate_low_confidence_ask_clarification_past_bypass_escalates() {
+        // Immediately past the bypass window, sustained low confidence
+        // is a real "tried and failed" signal — escalate as before.
+        let conn = fresh_conn();
+        let mut resp = base_response();
+        resp.confidence = 0.3;
+        let decision = run_evaluate_at(&conn, resp, EARLY_MIDSESSION_BYPASS_FOLLOWUPS + 1)
+            .await
+            .unwrap();
+        assert_eq!(
+            decision,
+            PolicyDecision::Escalate(EscalationTrigger::LowConfidence)
+        );
+    }
+
+    #[tokio::test]
+    async fn evaluate_low_confidence_summarize_escalates_inside_bypass_window() {
+        // The bypass only covers AskClarification. An unconfident
+        // Summarize is a terminal commitment Serbero must NOT make
+        // even in the early mid-session window — Summarize triggers
+        // notification-to-solvers and a state walk all the way to
+        // `closed`; getting that wrong is expensive to recover from.
+        let conn = fresh_conn();
+        let mut resp = base_response();
+        resp.confidence = 0.3;
+        resp.suggested_action = SuggestedAction::Summarize;
+        let decision = run_evaluate_at(&conn, resp, 1).await.unwrap();
         assert_eq!(
             decision,
             PolicyDecision::Escalate(EscalationTrigger::LowConfidence)
