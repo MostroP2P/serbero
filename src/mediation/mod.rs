@@ -1782,6 +1782,19 @@ async fn run_ingest_tick(
                     // would just add noise to an escalated transcript.
                     let rc_after: u32 = round_count_after.max(0) as u32;
                     if session::check_round_limit(rc_after, mediation_cfg.max_rounds) {
+                        // Clear the per-session "had fresh" flag
+                        // before the escalation attempt so the
+                        // post-loop Phase 11 hook
+                        // (advance_session_round) does NOT run for
+                        // this session on this tick. If
+                        // escalation::recommend succeeds, the state
+                        // gate in advance_session_round would also
+                        // skip; if it fails, the session stays in
+                        // awaiting_response and without this
+                        // explicit clear the hook would run and try
+                        // to dispatch clarifications on a session
+                        // that the tick just decided should escalate.
+                        session_had_fresh = false;
                         warn!(
                             session_id = %session_id,
                             round_count = rc_after,

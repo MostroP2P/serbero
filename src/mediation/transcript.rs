@@ -97,11 +97,19 @@ pub fn load_transcript_for_session(
     //     when the DB has somehow accumulated a runaway transcript.
     //     `max_rows == 0` collapses to a zero-LIMIT query that
     //     returns no rows; the caller can short-circuit on that.
+    // Secondary `id DESC` tie-breaker: `inner_event_created_at` is
+    // seconds-granular, so multiple messages in the same second
+    // would otherwise sort non-deterministically. `id` is the
+    // `INTEGER PRIMARY KEY AUTOINCREMENT` column — monotone with
+    // insert order — so using it DESC under the DESC-primary sort
+    // preserves "most recent first" while giving SQLite something
+    // stable to break ties on. The final Rust-side reverse below
+    // then yields a deterministic ascending sequence.
     let mut stmt = conn.prepare(
         "SELECT direction, shared_pubkey, inner_event_created_at, content
          FROM mediation_messages
          WHERE session_id = ?1 AND stale = 0
-         ORDER BY inner_event_created_at DESC
+         ORDER BY inner_event_created_at DESC, id DESC
          LIMIT ?2",
     )?;
     let rows = stmt.query_map(params![session_id, max_rows as i64], |r| {

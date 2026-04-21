@@ -261,7 +261,15 @@ pub async fn advance_session_round(
                     error = %e,
                     "advance_session_round: follow-up drafter failed; rows may be committed without publish"
                 );
-                bump_failure_best_effort(conn, session_id).await;
+                handle_reasoning_failure(
+                    conn,
+                    client,
+                    session_id,
+                    &info.dispute_id,
+                    solvers,
+                    prompt_bundle,
+                )
+                .await;
                 return Ok(());
             }
             info!(
@@ -313,7 +321,15 @@ pub async fn advance_session_round(
             .await
             {
                 warn!(error = %e, "advance_session_round: deliver_summary failed");
-                bump_failure_best_effort(conn, session_id).await;
+                handle_reasoning_failure(
+                    conn,
+                    client,
+                    session_id,
+                    &info.dispute_id,
+                    solvers,
+                    prompt_bundle,
+                )
+                .await;
                 return Ok(());
             }
             // Mark the round evaluated. Even though the session is
@@ -347,7 +363,15 @@ pub async fn advance_session_round(
                     trigger = %trigger,
                     "advance_session_round: escalation::recommend failed"
                 );
-                bump_failure_best_effort(conn, session_id).await;
+                handle_reasoning_failure(
+                    conn,
+                    client,
+                    session_id,
+                    &info.dispute_id,
+                    solvers,
+                    prompt_bundle,
+                )
+                .await;
                 return Ok(());
             }
             notify_solvers_escalation(conn, client, solvers, &info.dispute_id, session_id, trigger)
@@ -441,6 +465,17 @@ fn round_number_for_followup(round_count_last_evaluated: i64) -> u32 {
 /// threshold, escalate the session with `ReasoningUnavailable`
 /// (FR-130). Absorbs all errors with a `warn!`; never returns
 /// failure to the caller.
+///
+/// Used by every failure path in `advance_session_round` — the
+/// pre-dispatch failures (classify / policy::evaluate) and the
+/// post-dispatch failures (drafter, deliver_summary,
+/// escalation::recommend). The same threshold applies in both
+/// classes so persistent failures of any kind eventually surface
+/// to a human operator rather than looping silently. The trigger
+/// string `reasoning_unavailable` is the closest fit in the
+/// existing `EscalationTrigger` enum; a future refinement may
+/// introduce a dedicated `DispatchFailed` trigger, but that is not
+/// Phase 11 scope.
 async fn handle_reasoning_failure(
     conn: &Arc<AsyncMutex<rusqlite::Connection>>,
     client: &Client,
@@ -504,22 +539,14 @@ async fn handle_reasoning_failure(
     .await;
 }
 
-/// Best-effort failure bump on the dispatch-error path (post-
-/// policy::evaluate). Distinct from [`handle_reasoning_failure`]
-/// above: here we do NOT escalate on the third failure because the
-/// dispatch side-effects (outbound rows already persisted,
-/// escalation row already written, summary already delivered) may
-/// have partially committed; chaining a further escalation would
-/// compound the damage. Operators see the failure via the
-/// `consecutive_eval_failures` counter and the warn! log; the next
-/// tick's classify phase will drive the eventual escalation through
-/// the normal path.
-async fn bump_failure_best_effort(conn: &Arc<AsyncMutex<rusqlite::Connection>>, session_id: &str) {
-    let guard = conn.lock().await;
-    if let Err(e) = db::mediation::bump_consecutive_eval_failures(&guard, session_id) {
-        warn!(error = %e, "advance_session_round: failed to bump failure counter on dispatch error");
-    }
-}
+// Previous versions carried a `bump_failure_best_effort` helper
+// that only incremented the counter on dispatch errors without
+// escalating. Review feedback flagged that as a zombie-session
+// risk: if the drafter's publish keeps failing or
+// escalation::recommend itself keeps failing, the session would
+// never surface to a human. All failure paths now go through
+// `handle_reasoning_failure` so the FR-130 threshold applies
+// uniformly.
 
 #[cfg(test)]
 mod tests {

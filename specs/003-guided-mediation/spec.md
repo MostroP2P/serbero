@@ -780,21 +780,38 @@ required by FR-124 and "Final Solver Report on External Resolution".
   read `round_count` and `round_count_last_evaluated` under the
   session lock, skip the evaluation when they are equal, and write
   `round_count_last_evaluated = round_count` atomically with the
-  dispatched side effect (inside the same transaction that writes the
-  outbound rows or the state transition). A crash between the
-  reasoning call and the dispatch MUST NOT advance the marker.
+  **DB commit** of the dispatched side effect (inside the same
+  transaction that writes the outbound rows or the state
+  transition). "Atomic with the DB commit" is branch (A) of the
+  commit-vs-publish choice: a successful publish of the gift-wraps
+  is NOT a precondition for the marker advance. Rationale:
+  mirroring the open-time drafter's commit-then-publish pattern
+  keeps the two paths symmetric and keeps the DB state inspectable
+  without cross-referencing relay state. The consequence —
+  partial-publish failures leave the marker advanced and the rows
+  committed, blocking automatic retry — is a documented limitation
+  (see "Non-Goals (Phase 11)" on partial-publish recovery). A
+  crash between the reasoning call and the dispatch DB commit MUST
+  NOT advance the marker, which means the next tick retries
+  cleanly.
 
 - **FR-128** *(transcript construction)*: The transcript passed to
   `classify` MUST include every `mediation_messages` row for the
-  session with `direction = outbound` (Serbero-authored) and
-  `direction = inbound` with `ingest_status IN ('fresh',
-  'duplicate')`. Rows MUST be ordered by `inner_created_at`
-  ascending. Party role MUST be tagged from the session's
-  `buyer_shared_pubkey` / `seller_shared_pubkey` mapping; an inbound
-  whose shared pubkey matches neither side MUST be excluded and
-  logged at `warn!`. No more than the last 40 rows are included (a
-  guard against runaway token cost). Stale rows (`ingest_status =
-  'stale'`) are NEVER included.
+  session with `direction = 'outbound'` (Serbero-authored) and
+  `direction = 'inbound'` with `stale = 0`. Rows MUST be ordered by
+  `inner_event_created_at` ascending, with a stable tie-breaker on
+  the row `id` so identical timestamps do not cause
+  non-deterministic ordering. Party role MUST be tagged from the
+  session's `buyer_shared_pubkey` / `seller_shared_pubkey` mapping;
+  an inbound whose shared pubkey matches neither side MUST be
+  excluded and logged at `warn!`. No more than the last 40 rows are
+  included (a guard against runaway token cost). Rows with
+  `stale = 1` are NEVER included — they exist for audit purposes
+  (see `phase3_stale_message` in the Phase 3 integration suite) but
+  MUST NOT participate in classification. Duplicate inbound rows
+  never land in the first place (the unique index
+  `uq_mediation_messages_inner_event` blocks them), so no separate
+  "duplicate" filter is needed.
 
 - **FR-129** *(mid-session state transitions)*: The mid-session
   loop keeps the session in `awaiting_response` throughout. Only
@@ -1313,15 +1330,24 @@ run_ingest_tick persists a fresh inbound envelope for session S
 │     (FR-128: ordered, annotated by party, ≤ 40 rows)    │
 │ (3) reasoning.classify(transcript, pinned_bundle)       │
 │ (4) policy::evaluate → PolicyDecision                   │
-│ (5) transition awaiting_response → classified atomic    │
-│     with classification_produced event                  │
-│ (6) dispatch on decision (FR-126):                      │
-│       AskClarification → drafter + 2 outbounds +        │
-│           transition classified → awaiting_response     │
-│       Summarize → deliver_summary (existing path)       │
-│       Escalate → escalation::recommend                  │
-│ (7) advance round_count_last_evaluated, reset           │
-│     consecutive_eval_failures, commit                   │
+│     (writes classification_produced in its own tx)      │
+│ (5) dispatch on decision (FR-126 + FR-129):             │
+│       AskClarification → T119 drafter:                  │
+│         - state stays `awaiting_response` throughout    │
+│           (no mid-session classified transition)        │
+│         - 2 outbound rows + advance_evaluator_marker    │
+│           committed in one tx                           │
+│         - publish gift-wraps outside the tx             │
+│       Summarize → pre-transition                        │
+│         `awaiting_response → classified`, then          │
+│         deliver_summary walks classified →              │
+│         summary_pending → summary_delivered → closed,   │
+│         then advance_evaluator_marker in a short tx     │
+│       Escalate → escalation::recommend (session →       │
+│         escalation_recommended); marker is moot         │
+│ (6) on AskClarification, the marker advanced at (5)     │
+│     and consecutive_eval_failures reset to 0 in the     │
+│     same tx that committed the outbound rows            │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -1332,18 +1358,16 @@ Failure handling by step:
   `consecutive_eval_failures`. The next ingest tick retries the same
   round. At the third consecutive failure the session escalates with
   `ReasoningUnavailable` (FR-130). No partial state is written.
-- **(5) DB commit** error (transition + `classification_produced`):
-  same as (3)/(4) — nothing landed, retry on next tick.
-- **(6) dispatch** error:
+- **(5) dispatch** error:
   - For `AskClarification`, the drafter commits the two
-    `mediation_messages` rows and the state transition atomically,
-    THEN publishes gift-wraps. A publish failure for either party
-    returns `Err` with rows already committed (mirrors the open-time
-    drafter). `round_count_last_evaluated` is NOT advanced and
-    `consecutive_eval_failures` IS incremented, so the next
-    `Fresh` ingest for this session triggers another evaluation —
-    but the already-committed rows are NOT re-drafted (they stay as
-    historical record). No automatic republish; see Non-Goals.
+    `mediation_messages` rows AND `advance_evaluator_marker`
+    atomically, THEN publishes gift-wraps. Per FR-127 branch (A),
+    a publish failure returns `Err` with rows + marker already
+    committed — partial-publish recovery is a Non-Goal. The
+    dispatch-error path bumps `consecutive_eval_failures`; the
+    unified failure handler escalates with `ReasoningUnavailable`
+    on the third consecutive failure (FR-130) so persistent
+    dispatch issues eventually surface to a human.
   - For `Summarize`, `deliver_summary` owns its own transaction and
     state progression (`classified → summary_pending → ...`). On
     failure the existing `deliver_summary` error path applies
