@@ -631,8 +631,12 @@ pub async fn run_engine(
         if let Err(e) = run_ingest_tick(
             &conn,
             &client,
+            &serbero_keys,
+            reasoning.as_ref(),
             &session_key_cache,
             &prompt_bundle,
+            &provider_name,
+            &model_name,
             &mediation_cfg,
             &solvers,
         )
@@ -1613,8 +1617,12 @@ pub(crate) fn current_ts_secs() -> Result<i64> {
 async fn run_ingest_tick(
     conn: &Arc<AsyncMutex<rusqlite::Connection>>,
     client: &Client,
+    serbero_keys: &Keys,
+    reasoning: &dyn ReasoningProvider,
     session_key_cache: &SessionKeyCache,
     prompt_bundle: &Arc<PromptBundle>,
+    provider_name: &str,
+    model_name: &str,
     mediation_cfg: &MediationConfig,
     solvers: &[SolverConfig],
 ) -> Result<()> {
@@ -1751,11 +1759,20 @@ async fn run_ingest_tick(
             }
         };
         envelopes_fetched += envelopes.len() as u64;
+        // Track whether this session received any Fresh envelope on
+        // this tick cycle. If yes, fire the Phase 11 mid-session
+        // advancement hook (T121) after the envelope loop finishes;
+        // if no, skip it — `advance_session_round`'s idempotency
+        // gate (round_count > round_count_last_evaluated) would
+        // detect nothing to do anyway, but this local flag avoids
+        // the redundant DB lookup.
+        let mut session_had_fresh = false;
 
         'envelope_loop: for env in &envelopes {
             match session::ingest_inbound(conn, &session_id, env).await {
                 Ok(session::IngestOutcome::Fresh { round_count_after }) => {
                     rows_ingested += 1;
+                    session_had_fresh = true;
                     // T068 — after each Fresh ingest, check whether
                     // the session has hit the configured round cap.
                     // If so, escalate with `RoundLimit` and STOP
@@ -1839,6 +1856,45 @@ async fn run_ingest_tick(
                     );
                 }
             }
+        }
+
+        // Phase 11 / T121 — mid-session advancement hook.
+        //
+        // Fires once per session per tick, AFTER the envelope loop,
+        // when at least one Fresh envelope landed. Reasons the call
+        // site lives here rather than inside the Fresh arm:
+        //
+        // - If both parties replied between ticks we still want
+        //   exactly one reasoning call (with the transcript that
+        //   includes both replies), not one per reply.
+        // - If the round-limit escalation above broke out of the
+        //   envelope loop and flipped the session to
+        //   `escalation_recommended`, `advance_session_round`'s
+        //   state gate short-circuits — no duplicate dispatch.
+        // - Any error inside `advance_session_round` is absorbed
+        //   there (log + failure-counter bump). The ingest tick
+        //   MUST keep processing other sessions.
+        if session_had_fresh {
+            follow_up::advance_session_round(
+                conn,
+                client,
+                serbero_keys,
+                reasoning,
+                prompt_bundle,
+                &session_id,
+                session_key_cache,
+                solvers,
+                provider_name,
+                model_name,
+            )
+            .await
+            .unwrap_or_else(|e| {
+                warn!(
+                    session_id = %session_id,
+                    error = %e,
+                    "ingest tick: advance_session_round surfaced an error (continuing tick)"
+                );
+            });
         }
     }
 

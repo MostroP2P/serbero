@@ -615,14 +615,20 @@ second outbound within one ingest-tick cycle of Bob's reply.
   8. Any error past step 5 calls `bump_consecutive_eval_failures`
      and returns without committing.
 
-- [ ] T121 Hook `advance_session_round` into
-  `src/mediation/mod.rs::run_ingest_tick`. After the existing
-  `check_round_limit` call for each session that ingested at least
-  one fresh envelope this cycle, call `advance_session_round`. The
-  call MUST be inside the same per-session iteration (sequential, not
-  spawned) to satisfy FR-131's concurrency guard. A failure from
-  `advance_session_round` MUST log at `warn!` and NOT abort the tick
-  for other sessions.
+- [X] T121 Hook `advance_session_round` into
+  `src/mediation/mod.rs::run_ingest_tick`. After the `'envelope_loop`
+  finishes for each session (not inside the `Fresh` arm, so both
+  parties' replies are batched into one reasoning call rather than
+  producing two per cycle), check a local `session_had_fresh` flag
+  and call `advance_session_round` when it is `true`. Sequential per
+  session by construction (the hook is in the `while let Some(res) =
+  fetchers.join_next()` drain), satisfying FR-131's concurrency
+  guard. Errors surface via `advance_session_round`'s own internal
+  handling; this wrapper catches any `Err` return with `warn!` and
+  continues the tick for other sessions. The `run_ingest_tick`
+  signature grew to include `serbero_keys`, `reasoning`,
+  `provider_name`, `model_name` — the caller in `run_engine` (one
+  site) was updated.
 
 ### Integration tests
 
