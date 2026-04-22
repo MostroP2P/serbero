@@ -107,10 +107,15 @@ classification, summary delivery, and escalation routing.
 Setting `[mediation].enabled = true` and `[reasoning].enabled = true`
 spawns the mediation engine task. On every tick it:
 
-- **Opens sessions** (`open_dispute_session`) for new disputes that
-  pass the mediation-eligibility gate, executes the dispute-chat
-  take-flow, and dispatches the first clarifying message to each
-  party's **shared (per-trade) pubkey** — never their primary pubkey.
+- **Opens sessions** for new disputes that pass the mediation-
+  eligibility gate. The reasoning provider classifies the dispute
+  first; only if the verdict is positive does Serbero issue
+  `TakeDispute` and commit a session row (FR-122 / SC-110). The
+  first clarifying message is dispatched to each party's **shared
+  (per-trade) pubkey** — never their primary pubkey. If the
+  reasoning verdict is negative (e.g. suspected fraud), no take is
+  issued and the dispute is escalated with a dispute-scoped handoff
+  to all configured solvers.
 - **Ingests inbound replies** (`fetch_inbound` + `ingest_inbound`)
   with author authentication, dedup by `(session_id,
   inner_event_id)`, transcript recomputation, and per-party last-seen
@@ -168,7 +173,7 @@ Phase 3 specification:
 
 - **Rust toolchain**, stable, edition 2021. Install via [`rustup`](https://rustup.rs/).
 - Access to at least one Nostr relay that carries Mostro's dispute events.
-- A **hex-encoded** Nostr key pair for Serbero. If you hold your keys in Bech32 form (`nsec...`, `npub...`), convert them to hex before placing them in the config.
+- A **hex-encoded** Nostr key pair for Serbero. You can generate one with [rana](https://github.com/grunch/rana) (a Nostr vanity pubkey miner) or any Nostr key tool. If you hold your keys in Bech32 form (`nsec...`, `npub...`), convert them to hex before placing them in the config. The public key derived from this keypair is the identity Serbero uses on Nostr — you must register it as a solver on the Mostro instance before enabling Phase 3 (see [Enable Phase 3](#enable-phase-3-guided-mediation)).
 - **Hex-encoded** Nostr public keys for the Mostro instance you monitor and for every solver you want to notify.
 
 ### Build
@@ -181,7 +186,7 @@ The binary is produced at `./target/release/serbero`.
 
 ### Configure
 
-Create `config.toml` in the working directory (see [Configuration Reference](#configuration-reference) for the full surface):
+Create `config.toml` in the working directory. A reference template is provided at [`config.sample.toml`](config.sample.toml) — copy it and fill in your values (see [Configuration Reference](#configuration-reference) for the full surface):
 
 ```toml
 [serbero]
@@ -253,7 +258,7 @@ Shut down with `Ctrl-C` (SIGINT). On Unix hosts Serbero also catches SIGTERM (so
 
 Phase 3 layers on top of Phases 1 and 2. To enable it:
 
-1. **Register Serbero as a solver** on the target Mostro instance (operator action — at least `read` permission). Serbero never holds fund-moving credentials.
+1. **Register Serbero as a solver** on the target Mostro instance with at least `read` permission. Serbero's public key is derived from the `private_key` field in `[serbero]` — you can obtain it with any Nostr key tool (e.g. `nak key public <hex-secret-key>`). In **Mostrix**, go to **Settings → Solvers**, paste the hex pubkey, and select `read` permission. Serbero never holds fund-moving credentials.
 2. **Provision a reasoning endpoint** (any OpenAI-compatible HTTPS endpoint: hosted OpenAI, self-hosted vLLM / llama.cpp / Ollama, LiteLLM, or any router proxy exposing `/chat/completions`).
 3. **Export the API key** under the env-var name configured in `[reasoning].api_key_env` (default: `SERBERO_REASONING_API_KEY`):
 
@@ -526,6 +531,34 @@ trigger: <snake_case_trigger>. Needs human judgment.
 
 The compact body keeps DMs readable across Nostr clients; the full handoff package (evidence refs, rationale refs, prompt bundle id, policy hash, assembled-at timestamp) lives alongside in `mediation_events` as a `handoff_prepared` row for Phase 4 to consume.
 
+### Dispute-scoped escalation (FR-122, pre-take)
+
+`notif_type='mediation_escalation_recommended'`, broadcast to **all** configured solvers (no session was opened, so there is no assigned solver):
+
+```text
+Dispute <dispute_id> escalated before mediation take —
+trigger: <snake_case_trigger>. Serbero ran the reasoning verdict and
+the policy layer said this dispute is not a mediation candidate.
+No session was opened. Needs human judgment.
+```
+
+This fires when the reasoning verdict at session-open time is negative (e.g. `suspected_fraud` or `not_suitable_for_mediation`). No `TakeDispute` is issued and no `mediation_sessions` row is committed (SC-110).
+
+### Final resolution report (FR-124)
+
+`notif_type='mediation_resolution_report'`, broadcast to all configured solvers:
+
+```text
+Final resolution report for dispute <dispute_id>.
+resolution: <settled|cancelled|...>
+escalation_count: <N>
+rounds: <N>
+duration_seconds: <N>
+handoff: <true|false>
+```
+
+Emitted once when a dispute that had any Phase 3 mediation context (session rows, dispute-scoped handoff events, or mediation messages) transitions to a resolved terminal state. Idempotent: duplicate `dispute_resolved` events do not trigger additional reports. Contains no rationale text (FR-120).
+
 Notifications **never include** the initiator's primary pubkey — only their trade role (buyer / seller). Outbound mediation gift wraps address parties' **shared (per-trade) pubkeys**, never their primary pubkeys (SC-107). This matches the privacy clarification in `spec.md` Session 2026-04-16.
 
 ---
@@ -540,6 +573,11 @@ Serbero emits structured `tracing` spans and events at every decision point:
 - `assignment_detected` (with `assigned_solver`)
 - `assignment_notification_sent` / `assignment_notification_failed`
 - `renotification_tick` (with `count`)
+- `start_attempt_started` / `start_attempt_stopped` (with `trigger`, `stop_reason`)
+- `reasoning_verdict` / `reasoning_verdict_negative`
+- `take_dispute_issued` (with `outcome: success|failure`)
+- `solver_dispute_escalation_notified` (FR-122 dispute-scoped handoff)
+- `solver_final_resolution_report_sent` (FR-124)
 
 Use `SERBERO_LOG` to tune the filter:
 
@@ -677,9 +715,14 @@ Combined with the constitutional invariant that Serbero holds no credentials for
 │   │   ├── mod.rs                       # run_engine, draft_and_send_initial_message,
 │   │   │                                # deliver_summary, notify_solvers_escalation,
 │   │   │                                # startup_resume_pass
-│   │   ├── session.rs                   # open_dispute_session + auth gate
+│   │   ├── session.rs                   # open_session + auth gate
+│   │   ├── start.rs                     # try_start_for: unified entry for event-driven + tick
 │   │   ├── auth_retry.rs                # bounded solver-auth revalidation
 │   │   ├── policy.rs                    # classification → action decision
+│   │   ├── eligibility.rs               # composed eligibility predicate (FR-123)
+│   │   ├── follow_up.rs                 # mid-session ingest + classify loop
+│   │   ├── transcript.rs                # transcript builder for reasoning calls
+│   │   ├── report.rs                    # FR-124 final solver-facing resolution report
 │   │   ├── summarizer.rs                # summarize + AUTHORITY_BOUNDARY_PHRASES
 │   │   ├── router.rs                    # targeted vs broadcast solver routing
 │   │   └── escalation.rs                # 12 triggers + handoff package
@@ -708,7 +751,11 @@ Combined with the constitutional invariant that Serbero holds no credentials for
 │   ├── phase3_response_ingest.rs        ├── phase3_escalation_triggers.rs
 │   ├── phase3_response_dedup_restart.rs ├── phase3_provider_swap.rs
 │   ├── phase3_stale_message.rs          ├── phase3_provider_not_yet_implemented.rs
-│   ├── phase3_routing_model.rs          └── phase3_cooperative_summary.rs
+│   ├── phase3_routing_model.rs          ├── phase3_cooperative_summary.rs
+│   ├── phase3_event_driven_start.rs     ├── phase3_superseded_by_human.rs
+│   ├── phase3_take_reasoning_coupling.rs├── phase3_external_resolution_report.rs
+│   ├── phase3_followup_round.rs         ├── phase3_followup_summary.rs
+│   ├── phase3_followup_reasoning_failure.rs
 │   └── fixtures/prompts/                # stable bundle for tests (untouched)
 └── specs/
     ├── 002-phased-dispute-coordination/ # Phase 1/2 spec + plan + tasks
@@ -719,7 +766,7 @@ Combined with the constitutional invariant that Serbero holds no credentials for
 
 ## Running the Test Suite
 
-The crate ships **155 tests**: 123 inline `#[cfg(test)]` lib unit tests (covering parsers, policy decisions, audit-store invariants, migrations, prompt loading, …) plus 32 integration tests that spin up an in-process `nostr-relay-builder::MockRelay` (and, where relevant, an `httpmock` reasoning endpoint) and exercise the daemon end-to-end.
+The crate ships **228 tests**: 179 inline `#[cfg(test)]` lib unit tests (covering parsers, policy decisions, audit-store invariants, migrations, prompt loading, …) plus 49 integration tests that spin up an in-process `nostr-relay-builder::MockRelay` (and, where relevant, an `httpmock` reasoning endpoint) and exercise the daemon end-to-end.
 
 ```bash
 # Unit tests only (fast)
@@ -762,6 +809,13 @@ cargo build --release
 | `phase3_authority_boundary.rs`                  | Fund-moving / dispute-closing output suppressed; session escalates with `authority_boundary_attempt`               |
 | `phase3_escalation_triggers.rs`                 | All applicable triggers fire correctly: `conflicting_claims`, `fraud_indicator`, `low_confidence`, `party_unresponsive`, `round_limit`, `reasoning_unavailable`, `authorization_lost` |
 | `phase3_provider_swap.rs`                       | Two `OpenAiProvider`s pointing at distinct httpmock endpoints both work; `openai-compatible` routes to the same adapter (US5) |
+| `phase3_event_driven_start.rs`                  | SC-109: event-driven path opens session without the background tick running                                        |
+| `phase3_superseded_by_human.rs`                 | External resolution (human solver) closes session + fires FR-124 final report to all solvers                       |
+| `phase3_take_reasoning_coupling.rs`             | FR-122 / SC-110: negative reasoning verdict (fraud flag or model escalate) skips TakeDispute entirely              |
+| `phase3_external_resolution_report.rs`          | FR-124: final solver-facing report emitted for every dispute with Phase 3 context; idempotent on re-fire           |
+| `phase3_followup_round.rs`                      | SC-112: mid-session happy path — party replies trigger second outbound within one ingest tick                      |
+| `phase3_followup_summary.rs`                    | SC-114: mid-session summarize branch fires exactly once and closes session                                         |
+| `phase3_followup_reasoning_failure.rs`           | SC-115: three consecutive reasoning failures escalate with `reasoning_unavailable`                                 |
 | `phase3_provider_not_yet_implemented.rs`        | Unshipped vendor names (`anthropic`, `ppqai`, `openclaw`) fail loudly at startup with an actionable error          |
 
 ---
