@@ -5,6 +5,12 @@
 **Status**: Draft
 **Input**: User description: Phase 4 of the Serbero dispute coordination pipeline — consume the escalation handoff packages produced by Phase 3 and dispatch structured context to human solvers with write permission.
 
+## Clarifications
+
+### Session 2026-04-22
+
+- Q: Should `escalation_dispatches.status` capture the send outcome, or is the split-brain between dispatch-intent and per-recipient delivery the intended design? → A: Option A — extend the status enum with `send_failed`. The dispatcher writes `dispatched` when at least one targeted recipient succeeded and `send_failed` when every recipient failed. Partial-success cases stay `dispatched`; per-recipient forensic detail remains in the existing notifications table.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 — Write-Permission Solver Receives Structured Escalation (Priority: P1)
@@ -183,13 +189,19 @@ solver with the audit event's `target_solver` listing all of them.
   `escalation_dispatch_orphan`, and skips — no DM, no retries.
 
 - **Gift-wrap send fails for every targeted solver** (relay down,
-  all recipients unreachable): Each per-recipient failure is
+  all recipients unreachable): each per-recipient failure is
   recorded in the existing `notifications` table with
-  `status = 'failed'`; the `escalation_dispatches` row is still
-  written once with the attempted target list so the operator can
-  see "we tried". Phase 4 does NOT retry — the notifications table
-  is the operator's hook for targeted re-delivery via whatever
-  out-of-band mechanism exists.
+  `status = 'failed'`. The `escalation_dispatches` row is written
+  once with the attempted target list and `status = 'send_failed'`
+  so the all-failed outcome is visible from the dispatch table
+  alone (no JOIN needed for the common "nothing reached anyone"
+  query). If at least one recipient succeeded but others failed,
+  the row records `status = 'dispatched'` — partial success is
+  still success at the Phase 4 layer, and per-recipient gaps
+  remain available in `notifications` for forensic work. Phase 4
+  does NOT retry — the notifications table is the operator's hook
+  for targeted re-delivery via whatever out-of-band mechanism
+  exists.
 
 - **Serbero restart mid-cycle**: The cycle is idempotent (dedup by
   `handoff_event_id`) so a restart just resumes on the next
@@ -274,13 +286,22 @@ solver with the audit event's `target_solver` listing all of them.
 
 **Audit**
 
-- **FR-211**: Every successful dispatch MUST insert exactly one
-  `escalation_dispatches` row (dispatch_id, dispute_id,
-  session_id optional, handoff_event_id, target_solver,
-  dispatched_at, status = `dispatched`) and one
+- **FR-211**: Every dispatch attempt that reached the send step
+  (i.e. was not superseded and was not unroutable) MUST insert
+  exactly one `escalation_dispatches` row (dispatch_id,
+  dispute_id, session_id optional, handoff_event_id,
+  target_solver, dispatched_at, status) and one
   `escalation_dispatched` `mediation_events` audit row whose
-  payload carries dispatch_id, dispute_id, target_solver, and the
-  fallback flag if the fallback path was used.
+  payload carries dispatch_id, dispute_id, target_solver, and
+  the fallback flag if the fallback path was used. The
+  `status` column MUST be set according to the per-recipient
+  outcomes:
+  - `dispatched` when at least one recipient in the target list
+    successfully received the gift-wrapped DM.
+  - `send_failed` when every recipient in the target list failed
+    (network error, malformed pubkey, relay rejection, etc.).
+  Partial success counts as `dispatched`; per-recipient gaps
+  remain visible in `notifications.status`.
 
 - **FR-212**: Every supersession (FR-208) MUST insert one
   `escalation_superseded` `mediation_events` audit row and MUST NOT
@@ -332,13 +353,19 @@ solver with the audit event's `target_solver` listing all of them.
   shape.
 
 - **Escalation Dispatch** (new, table `escalation_dispatches`): one
-  row per successful dispatch. Carries dispatch_id (UUID v4),
-  dispute_id, optional session_id, handoff_event_id (FK to
-  `mediation_events.id` of the handoff_prepared row), target_solver
-  (pubkey or pubkey-list representation; exact encoding is an
-  implementation detail), dispatched_at (Unix seconds), status
-  (`dispatched`; future extensions MAY add states), created_at
-  (Unix seconds).
+  row per dispatch attempt that reached the send step. Carries
+  dispatch_id (UUID v4), dispute_id, optional session_id,
+  handoff_event_id (references the `handoff_prepared` audit row
+  that triggered this dispatch), target_solver (pubkey or
+  pubkey-list representation; exact encoding is an implementation
+  detail), dispatched_at (Unix seconds), status, created_at (Unix
+  seconds). Valid `status` values for this feature:
+  - `dispatched` — at least one recipient successfully received
+    the gift-wrapped DM.
+  - `send_failed` — every recipient failed. Per-recipient error
+    detail remains in `notifications`.
+  (Supersession is recorded as a `mediation_events` audit row, not
+  as an `escalation_dispatches` status — see FR-212.)
 
 - **Escalation DM** (new, runtime-only): the gift-wrapped Nostr
   event delivered to the target solver(s). Its body is a
@@ -373,11 +400,13 @@ solver with the audit event's `target_solver` listing all of them.
   machine-readable handoff payload. Operator sampling of delivered
   DMs finds zero DMs missing either section.
 
-- **SC-203**: For every successful dispatch there is exactly one
-  dispatch-tracking row AND one `escalation_dispatched` audit
-  event, keyed consistently by dispatch id. An audit reconciliation
-  between the two stores returns zero mismatches over a 24-hour
-  window.
+- **SC-203**: For every dispatch attempt that reached the send step
+  there is exactly one dispatch-tracking row AND one
+  `escalation_dispatched` audit event, keyed consistently by
+  dispatch id. An audit reconciliation between the two stores
+  returns zero mismatches over a 24-hour window, regardless of
+  whether the dispatch row's status is `dispatched` or
+  `send_failed`.
 
 - **SC-204**: When no write-permission solvers are configured and
   fallback is off, 100% of resulting handoffs produce an ERROR
@@ -399,6 +428,14 @@ solver with the audit event's `target_solver` listing all of them.
   regression test-suite run against a pre-Phase-4 snapshot and
   the post-Phase-4 snapshot produces identical outputs for every
   Phase 1/2 and Phase 3 test.
+
+- **SC-208**: When every recipient of a dispatch fails, the
+  resulting `escalation_dispatches` row carries
+  `status = 'send_failed'` AND the `notifications` table carries
+  one `status = 'failed'` row per attempted recipient. A single
+  "which dispatches reached nobody?" operator query against
+  `escalation_dispatches` alone returns the correct set — no
+  JOIN against `notifications` required.
 
 ## Assumptions
 

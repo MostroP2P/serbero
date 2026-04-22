@@ -37,5 +37,11 @@
 - The spec references prior-phase functional requirements (FR-120, FR-122)
   to document what Phase 4 carries forward. Those identifiers belong to
   Phase 3's spec; Phase 4's own FRs start at FR-201.
+- **2026-04-22 clarification session**: resolved the audit-trail
+  ambiguity around `escalation_dispatches.status` vs. per-recipient
+  `notifications.status` (Option A — extend the status enum with
+  `send_failed`). Documented in `spec.md` §Clarifications, §Edge
+  Cases, FR-211, Key Entities, SC-208. No further `[NEEDS
+  CLARIFICATION]` markers outstanding.
 - Items marked incomplete require spec updates before `/speckit.clarify`
   or `/speckit.plan`. All items currently pass.
