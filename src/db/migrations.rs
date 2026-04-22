@@ -3,7 +3,7 @@ use rusqlite::{params, Connection, Transaction};
 use crate::error::Result;
 
 #[cfg(test)]
-const CURRENT_SCHEMA_VERSION: i64 = 4;
+const CURRENT_SCHEMA_VERSION: i64 = 5;
 
 pub fn run_migrations(conn: &mut Connection) -> Result<()> {
     conn.execute_batch(
@@ -31,6 +31,9 @@ pub fn run_migrations(conn: &mut Connection) -> Result<()> {
     }
     if applied < 4 {
         run_versioned(conn, 4, apply_v4)?;
+    }
+    if applied < 5 {
+        run_versioned(conn, 5, apply_v5)?;
     }
 
     Ok(())
@@ -282,6 +285,44 @@ fn apply_v4(tx: &Transaction<'_>) -> Result<()> {
     Ok(())
 }
 
+/// Phase 4 migration — add the `escalation_dispatches` table that
+/// tracks one row per dispatch attempt of a `handoff_prepared`
+/// audit event. Schema matches
+/// `specs/004-escalation-execution/data-model.md` §escalation_dispatches.
+///
+/// The `status` CHECK constraint is enforced at the schema level so
+/// a mis-spelled value surfaces as a SQL error, not a silent audit
+/// drift. The two indexes cover the dispute-lookup and the
+/// dedup-probe query shapes (FR-203 / SC-205). FKs reference Phase
+/// 1/2/3 tables but the caller still writes Phase 4 rows
+/// append-only — FR-217 forbids Phase 4 from mutating any existing
+/// Phase 1/2/3 row.
+fn apply_v5(tx: &Transaction<'_>) -> Result<()> {
+    tx.execute_batch(
+        "CREATE TABLE IF NOT EXISTS escalation_dispatches (
+            dispatch_id         TEXT PRIMARY KEY,
+            dispute_id          TEXT NOT NULL,
+            session_id          TEXT,
+            handoff_event_id    INTEGER NOT NULL,
+            target_solver       TEXT NOT NULL,
+            dispatched_at       INTEGER NOT NULL,
+            created_at          INTEGER NOT NULL,
+            status              TEXT NOT NULL DEFAULT 'dispatched'
+                                CHECK (status IN ('dispatched', 'send_failed')),
+            fallback_broadcast  INTEGER NOT NULL DEFAULT 0,
+            FOREIGN KEY (dispute_id) REFERENCES disputes(dispute_id),
+            FOREIGN KEY (session_id) REFERENCES mediation_sessions(session_id),
+            FOREIGN KEY (handoff_event_id) REFERENCES mediation_events(id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_escalation_dispatches_dispute
+            ON escalation_dispatches(dispute_id);
+        CREATE INDEX IF NOT EXISTS idx_escalation_dispatches_handoff
+            ON escalation_dispatches(handoff_event_id);",
+    )?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -529,5 +570,144 @@ mod tests {
             .unwrap();
         assert_eq!(rcl, 0, "backfill of round_count_last_evaluated must be 0");
         assert_eq!(cef, 0, "backfill of consecutive_eval_failures must be 0");
+    }
+
+    #[test]
+    fn phase4_escalation_dispatches_table_and_indexes_exist() {
+        // After a clean migration, v5 must have created the Phase 4
+        // `escalation_dispatches` table plus both indexes (dispute
+        // lookup + handoff-event dedup probe).
+        let mut conn = open_in_memory().unwrap();
+        run_migrations(&mut conn).unwrap();
+
+        let table_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master
+                 WHERE type = 'table' AND name = 'escalation_dispatches'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            table_count, 1,
+            "escalation_dispatches table should exist after v5"
+        );
+
+        for idx in [
+            "idx_escalation_dispatches_dispute",
+            "idx_escalation_dispatches_handoff",
+        ] {
+            let hit: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master
+                     WHERE type = 'index' AND name = ?1",
+                    params![idx],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(hit, 1, "index {idx} should exist after v5");
+        }
+    }
+
+    #[test]
+    fn phase4_status_check_constraint_rejects_unknown_token() {
+        // The CHECK constraint on `status` must reject any value
+        // other than `dispatched` or `send_failed`. A mis-spelled
+        // token surfaces as a SQL error, not a silent audit drift.
+        let mut conn = open_in_memory().unwrap();
+        run_migrations(&mut conn).unwrap();
+
+        // Seed a minimal parent dispute + mediation_event so FKs
+        // are satisfied.
+        conn.execute(
+            "INSERT INTO disputes (
+                dispute_id, event_id, mostro_pubkey, initiator_role,
+                dispute_status, event_timestamp, detected_at, lifecycle_state
+             ) VALUES ('d-check', 'evt-check', 'mostro', 'buyer',
+                       'initiated', 10, 11, 'notified')",
+            [],
+        )
+        .unwrap();
+        let handoff_event_id: i64 = conn
+            .query_row(
+                "INSERT INTO mediation_events (session_id, kind, payload_json, occurred_at)
+             VALUES (NULL, 'handoff_prepared', '{}', 100)
+             RETURNING id",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+
+        // Valid statuses succeed.
+        for status in ["dispatched", "send_failed"] {
+            conn.execute(
+                "INSERT INTO escalation_dispatches (
+                    dispatch_id, dispute_id, handoff_event_id,
+                    target_solver, dispatched_at, created_at, status
+                 ) VALUES (?1, 'd-check', ?2, 'solver-pk', 200, 200, ?3)",
+                params![format!("dispatch-{status}"), handoff_event_id, status],
+            )
+            .unwrap();
+        }
+
+        // Any other token must error.
+        let err = conn.execute(
+            "INSERT INTO escalation_dispatches (
+                dispatch_id, dispute_id, handoff_event_id,
+                target_solver, dispatched_at, created_at, status
+             ) VALUES ('dispatch-bogus', 'd-check', ?1, 'solver-pk', 200, 200, 'bogus')",
+            params![handoff_event_id],
+        );
+        assert!(
+            err.is_err(),
+            "CHECK constraint must reject status = 'bogus', but insert succeeded"
+        );
+    }
+
+    #[test]
+    fn applying_phase4_over_existing_phase11_schema_is_idempotent() {
+        // Simulate upgrading a v4 DB (Phase 11 mid-session columns
+        // already present, no Phase 4 table yet) to v5. Running
+        // twice should not produce errors, and the
+        // `escalation_dispatches` table MUST land on the first run.
+        let mut conn = open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE schema_version (version INTEGER PRIMARY KEY);")
+            .unwrap();
+        for (v, apply) in [
+            (1_i64, apply_v1 as fn(&Transaction<'_>) -> Result<()>),
+            (2, apply_v2),
+            (3, apply_v3),
+            (4, apply_v4),
+        ] {
+            let tx = conn.transaction().unwrap();
+            apply(&tx).unwrap();
+            tx.execute(
+                "INSERT INTO schema_version (version) VALUES (?1)",
+                params![v],
+            )
+            .unwrap();
+            tx.commit().unwrap();
+        }
+
+        // Walk forward to v5.
+        run_migrations(&mut conn).unwrap();
+        // Second pass should be a no-op (CREATE TABLE IF NOT EXISTS
+        // + CREATE INDEX IF NOT EXISTS).
+        run_migrations(&mut conn).unwrap();
+
+        let version: i64 = conn
+            .query_row("SELECT MAX(version) FROM schema_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, CURRENT_SCHEMA_VERSION);
+
+        let table_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master
+                 WHERE type = 'table' AND name = 'escalation_dispatches'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(table_count, 1);
     }
 }
