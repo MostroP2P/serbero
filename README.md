@@ -186,7 +186,7 @@ The binary is produced at `./target/release/serbero`.
 
 ### Configure
 
-Create `config.toml` in the working directory (see [Configuration Reference](#configuration-reference) for the full surface):
+Create `config.toml` in the working directory. A reference template is provided at [`config.sample.toml`](config.sample.toml) — copy it and fill in your values (see [Configuration Reference](#configuration-reference) for the full surface):
 
 ```toml
 [serbero]
