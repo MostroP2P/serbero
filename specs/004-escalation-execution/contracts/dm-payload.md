@@ -24,8 +24,15 @@ dispute <dispute_id> on your Mostro instance to review the full
 context.
 
 Handoff payload (JSON):
-{"dispute_id":"<dispute_id>","session_id":<session_id|null>,"trigger":"<trigger>","evidence_refs":[...],"prompt_bundle_id":"<bundle>","policy_hash":"<hex>","rationale_refs":[...],"assembled_at":<unix_seconds>}
+{"dispute_id":"<dispute_id>"[,"session_id":"<session_id>"],"trigger":"<trigger>","evidence_refs":[...],"prompt_bundle_id":"<bundle>","policy_hash":"<hex>","rationale_refs":[...],"assembled_at":<unix_seconds>}
 ```
+
+The `session_id` key is included ONLY when a Phase 3 mediation
+session row exists for the dispute. When no session was opened
+(the FR-122 dispute-scoped handoff shape), the key is OMITTED
+entirely from the JSON — it is NEVER serialized as
+`"session_id": null`. Consumers that use `session_id` MUST treat
+the two presences as equivalent: "key absent" ≡ "no session".
 
 ### Field semantics
 

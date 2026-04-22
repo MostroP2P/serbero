@@ -7,7 +7,9 @@ Mostro instance that already produces disputes you can escalate.
 ## Prerequisites (Phase 4 additions)
 
 - Phases 1/2 + Phase 3 installed and verified. Your `serbero.db`
-  is at schema v3.
+  is at schema v4 (v1–v3 cover Phase 1/2/3 tables; v4 added the
+  Phase 11 mid-session classifier columns on `mediation_sessions`).
+  Phase 4's first run applies migration v5 on top of that baseline.
 - At least one solver configured with write permission. If your
   deployment intentionally has no write-permission solvers, set
   `[escalation].fallback_to_all_solvers = true` before enabling
@@ -169,12 +171,19 @@ drive a Phase 3 escalation, and observe:
 
 ```bash
 sqlite3 serbero.db \
-  "SELECT dispatch_id, status FROM escalation_dispatches
+  "SELECT dispatch_id, dispute_id, status FROM escalation_dispatches
     ORDER BY dispatched_at DESC LIMIT 1;"
 
+# Count per-recipient failures for the dispute you just drove. The
+# subquery pulls the most recent dispatch's dispute_id so the
+# command is self-contained (no shell interpolation required).
 sqlite3 serbero.db \
   "SELECT COUNT(*) FROM notifications
-    WHERE dispute_id = ? AND status = 'failed';"
+    WHERE dispute_id = (
+        SELECT dispute_id FROM escalation_dispatches
+         ORDER BY dispatched_at DESC LIMIT 1
+    )
+      AND status = 'failed';"
 ```
 
 Expected: the dispatch row carries `status = 'send_failed'`, and
