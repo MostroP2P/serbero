@@ -390,7 +390,8 @@ pub async fn advance_session_round(
         policy::PolicyDecision::Escalate(trigger) => {
             if let Err(e) = escalation::recommend(escalation::RecommendParams {
                 conn,
-                session_id,
+                session_id: Some(session_id),
+                dispute_id: &info.dispute_id,
                 trigger,
                 evidence_refs: Vec::new(),
                 rationale_refs: Vec::new(),
@@ -540,7 +541,8 @@ async fn handle_reasoning_failure(
     );
     if let Err(e) = escalation::recommend(escalation::RecommendParams {
         conn,
-        session_id,
+        session_id: Some(session_id),
+        dispute_id,
         trigger: EscalationTrigger::ReasoningUnavailable,
         evidence_refs: Vec::new(),
         rationale_refs: Vec::new(),

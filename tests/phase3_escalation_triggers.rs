@@ -146,7 +146,8 @@ async fn conflicting_claims_triggers_escalation() {
 
     escalation::recommend(RecommendParams {
         conn: &conn,
-        session_id: "sess-cc",
+        session_id: Some("sess-cc"),
+        dispute_id: "dispute-cc",
         trigger: EscalationTrigger::ConflictingClaims,
         evidence_refs: Vec::new(),
         rationale_refs: Vec::new(),
@@ -185,7 +186,8 @@ async fn fraud_indicator_triggers_escalation() {
 
     escalation::recommend(RecommendParams {
         conn: &conn,
-        session_id: "sess-fr",
+        session_id: Some("sess-fr"),
+        dispute_id: "dispute-fr",
         trigger: EscalationTrigger::FraudIndicator,
         evidence_refs: Vec::new(),
         rationale_refs: Vec::new(),
@@ -232,7 +234,8 @@ async fn low_confidence_triggers_escalation() {
 
     escalation::recommend(RecommendParams {
         conn: &conn,
-        session_id: "sess-lc",
+        session_id: Some("sess-lc"),
+        dispute_id: "dispute-lc",
         trigger: EscalationTrigger::LowConfidence,
         evidence_refs: Vec::new(),
         rationale_refs: Vec::new(),
@@ -351,7 +354,8 @@ async fn round_limit_triggers_escalation() {
 
     escalation::recommend(RecommendParams {
         conn: &conn,
-        session_id: "sess-rl",
+        session_id: Some("sess-rl"),
+        dispute_id: "dispute-rl",
         trigger: EscalationTrigger::RoundLimit,
         evidence_refs: Vec::new(),
         rationale_refs: Vec::new(),
@@ -438,7 +442,8 @@ async fn reasoning_unavailable_triggers_escalation() {
 
     escalation::recommend(RecommendParams {
         conn: &conn,
-        session_id: "sess-ru",
+        session_id: Some("sess-ru"),
+        dispute_id: "dispute-ru",
         trigger: EscalationTrigger::ReasoningUnavailable,
         evidence_refs: Vec::new(),
         rationale_refs: Vec::new(),

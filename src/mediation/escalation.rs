@@ -69,10 +69,18 @@ const ESCALATABLE_STATES: &[&str] = &[
 /// Phase 4 handoff package. Persisted as the `handoff_prepared`
 /// mediation event's payload so Phase 4 can consume it later by
 /// reading the audit log — no additional table needed.
+///
+/// `session_id` is optional: mid-session escalations always carry a
+/// session id, but opening-call escalations (policy returned
+/// `Escalate` before the `TakeDispute` step) never committed a
+/// session row in the first place and the field stays `None`.
+/// Phase 4 consumers MUST accept both shapes — see FR-122 and the
+/// dispute-scoped handoff flow added in T104d.
 #[derive(Debug, Clone, Serialize)]
 pub struct HandoffPackage {
     pub dispute_id: String,
-    pub session_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
     /// `EscalationTrigger::to_string()` — the snake-case form so
     /// the payload is operator-readable and grep-friendly.
     pub trigger: String,
@@ -91,9 +99,25 @@ pub struct HandoffPackage {
 
 /// Parameters for [`recommend`]. Grouped so the call site stays
 /// compact and clippy does not flag too_many_arguments.
+///
+/// Two shapes:
+/// - **Session-scoped** (mid-session / post-open): `session_id` is
+///   `Some`. The session row's state flips to
+///   `escalation_recommended` and the audit events carry the
+///   session id. `dispute_id` must still match the row (checked at
+///   runtime).
+/// - **Dispute-scoped** (opening-call escalation per FR-122):
+///   `session_id` is `None` because no `mediation_sessions` row
+///   was ever committed. No state flip is attempted; the audit
+///   events land with `session_id = NULL` and the dispute id lives
+///   in the payload.
 pub struct RecommendParams<'a> {
     pub conn: &'a Arc<AsyncMutex<rusqlite::Connection>>,
-    pub session_id: &'a str,
+    pub session_id: Option<&'a str>,
+    /// Required in both shapes. For session-scoped calls it is
+    /// cross-checked against `mediation_sessions.dispute_id`; for
+    /// dispute-scoped calls it is written into the event payload.
+    pub dispute_id: &'a str,
     pub trigger: EscalationTrigger,
     /// Non-rationale evidence refs (inner/outer event ids,
     /// outbound wrap ids, free-form notes). Caller-partitioned.
@@ -117,11 +141,16 @@ pub struct RecommendParams<'a> {
 /// Does NOT send any outbound chat message; does NOT notify solvers
 /// (the engine owns that); does NOT retry on DB error (the single
 /// transaction either lands or rolls back).
-#[instrument(skip_all, fields(session_id = %params.session_id, trigger = %params.trigger))]
+#[instrument(skip_all, fields(
+    session_id = params.session_id.unwrap_or("<none>"),
+    dispute_id = %params.dispute_id,
+    trigger = %params.trigger,
+))]
 pub async fn recommend(params: RecommendParams<'_>) -> Result<()> {
     let RecommendParams {
         conn,
         session_id,
+        dispute_id,
         trigger,
         evidence_refs,
         rationale_refs,
@@ -133,24 +162,34 @@ pub async fn recommend(params: RecommendParams<'_>) -> Result<()> {
 
     let mut guard = conn.lock().await;
 
-    // (1) dispute_id lookup — load-bearing for the handoff package.
-    //     Missing row is a real bug; surface InvalidEvent rather
-    //     than fabricating an empty string into the handoff.
-    let dispute_id: String = match guard.query_row(
-        "SELECT dispute_id FROM mediation_sessions WHERE session_id = ?1",
-        params![session_id],
-        |r| r.get::<_, String>(0),
-    ) {
-        Ok(s) => s,
-        Err(rusqlite::Error::QueryReturnedNoRows) => {
+    // When session-scoped, sanity-check that `dispute_id` matches
+    // the stored row. Prevents a caller from escalating a session
+    // under the wrong dispute id (which would poison the handoff
+    // package and any FR-124 final-report lookup).
+    if let Some(sid) = session_id {
+        let stored: String = match guard.query_row(
+            "SELECT dispute_id FROM mediation_sessions WHERE session_id = ?1",
+            params![sid],
+            |r| r.get::<_, String>(0),
+        ) {
+            Ok(s) => s,
+            Err(rusqlite::Error::QueryReturnedNoRows) => {
+                return Err(Error::InvalidEvent(format!(
+                    "escalation::recommend: no mediation_sessions row for session_id={sid}"
+                )));
+            }
+            Err(e) => return Err(Error::Db(e)),
+        };
+        if stored != dispute_id {
             return Err(Error::InvalidEvent(format!(
-                "escalation::recommend: no mediation_sessions row for session_id={session_id}"
+                "escalation::recommend: session_id={sid} stored dispute_id={stored} \
+                 does not match caller-supplied dispute_id={dispute_id}"
             )));
         }
-        Err(e) => return Err(Error::Db(e)),
-    };
+    }
 
-    // (2)–(4) tx: state flip + 2 events in one atomic block.
+    // (2)–(4) tx: state flip (session-scoped only) + 2 events in
+    //            one atomic block.
     let tx = guard.transaction()?;
 
     // Conditional state flip. Only transitions OUT of the live
@@ -158,51 +197,62 @@ pub async fn recommend(params: RecommendParams<'_>) -> Result<()> {
     // already-escalated session updates zero rows, the tx is
     // rolled back below, and no duplicate events are written.
     //
-    // The WHERE clause binds the shared [`ESCALATABLE_STATES`]
-    // whitelist so the allowed-transition set stays in lockstep
-    // with [`MediationSessionState::can_transition_to`] (pinned by
-    // the `escalatable_states_match_can_transition_to` unit test).
-    // Encoding the rule in SQL makes the guarantee hold in release
-    // builds where the `debug_assert!` inside `set_session_state`
-    // is stripped.
-    let placeholders = (0..ESCALATABLE_STATES.len())
-        .map(|i| format!("?{}", i + 3))
-        .collect::<Vec<_>>()
-        .join(", ");
-    let update_sql = format!(
-        "UPDATE mediation_sessions
-         SET state = 'escalation_recommended', last_transition_at = ?1
-         WHERE session_id = ?2 AND state IN ({placeholders})"
-    );
-    let mut sql_params: Vec<&dyn rusqlite::ToSql> =
-        Vec::with_capacity(2 + ESCALATABLE_STATES.len());
-    sql_params.push(&now);
-    sql_params.push(&session_id);
-    for s in ESCALATABLE_STATES {
-        sql_params.push(s);
-    }
-    let rows = tx.execute(&update_sql, sql_params.as_slice())?;
-    if rows == 0 {
-        // Read the actual current state inside the same transaction
-        // so the error carries the real `from` value rather than a
-        // placeholder string. Operators reading the resulting log
-        // then see "classified -> escalation_recommended" (or
-        // similar) — enough context to tell whether this was a
-        // double-escalation attempt vs. a FK / race bug.
-        let actual: String = tx
-            .query_row(
-                "SELECT state FROM mediation_sessions WHERE session_id = ?1",
-                params![session_id],
-                |r| r.get::<_, String>(0),
-            )
-            .unwrap_or_else(|_| "<session row missing>".to_string());
-        return Err(Error::InvalidStateTransition {
-            from: actual,
-            to: "escalation_recommended".to_string(),
-        });
+    // Skipped entirely for dispute-scoped calls: no session row
+    // exists to flip, and the audit events below will carry
+    // `session_id = NULL` so Phase 4 can distinguish the two shapes.
+    //
+    // For session-scoped calls the WHERE clause binds the shared
+    // [`ESCALATABLE_STATES`] whitelist so the allowed-transition set
+    // stays in lockstep with [`MediationSessionState::can_transition_to`]
+    // (pinned by the `escalatable_states_match_can_transition_to`
+    // unit test). Encoding the rule in SQL makes the guarantee hold
+    // in release builds where the `debug_assert!` inside
+    // `set_session_state` is stripped.
+    if let Some(sid) = session_id {
+        let placeholders = (0..ESCALATABLE_STATES.len())
+            .map(|i| format!("?{}", i + 3))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let update_sql = format!(
+            "UPDATE mediation_sessions
+             SET state = 'escalation_recommended', last_transition_at = ?1
+             WHERE session_id = ?2 AND state IN ({placeholders})"
+        );
+        let mut sql_params: Vec<&dyn rusqlite::ToSql> =
+            Vec::with_capacity(2 + ESCALATABLE_STATES.len());
+        sql_params.push(&now);
+        sql_params.push(&sid);
+        for s in ESCALATABLE_STATES {
+            sql_params.push(s);
+        }
+        let rows = tx.execute(&update_sql, sql_params.as_slice())?;
+        if rows == 0 {
+            // Read the actual current state inside the same
+            // transaction so the error carries the real `from` value
+            // rather than a placeholder string. Operators reading
+            // the resulting log then see "classified ->
+            // escalation_recommended" (or similar) — enough context
+            // to tell a double-escalation attempt apart from a FK /
+            // race bug.
+            let actual: String = tx
+                .query_row(
+                    "SELECT state FROM mediation_sessions WHERE session_id = ?1",
+                    params![sid],
+                    |r| r.get::<_, String>(0),
+                )
+                .unwrap_or_else(|_| "<session row missing>".to_string());
+            return Err(Error::InvalidStateTransition {
+                from: actual,
+                to: "escalation_recommended".to_string(),
+            });
+        }
     }
 
+    // Both events carry `dispute_id` in the payload so consumers
+    // can always navigate back to the dispute even when
+    // `session_id` is NULL (dispute-scoped shape).
     let escalation_payload = serde_json::json!({
+        "dispute_id": dispute_id,
         "trigger": trigger.to_string(),
         "evidence_refs": evidence_refs,
         "rationale_refs": rationale_refs,
@@ -211,7 +261,7 @@ pub async fn recommend(params: RecommendParams<'_>) -> Result<()> {
     db::mediation_events::record_event(
         &tx,
         MediationEventKind::EscalationRecommended,
-        Some(session_id),
+        session_id,
         &escalation_payload,
         None,
         Some(prompt_bundle_id),
@@ -220,8 +270,8 @@ pub async fn recommend(params: RecommendParams<'_>) -> Result<()> {
     )?;
 
     let package = HandoffPackage {
-        dispute_id: dispute_id.clone(),
-        session_id: session_id.to_string(),
+        dispute_id: dispute_id.to_string(),
+        session_id: session_id.map(|s| s.to_string()),
         trigger: trigger.to_string(),
         evidence_refs,
         prompt_bundle_id: prompt_bundle_id.to_string(),
@@ -237,7 +287,7 @@ pub async fn recommend(params: RecommendParams<'_>) -> Result<()> {
     db::mediation_events::record_event(
         &tx,
         MediationEventKind::HandoffPrepared,
-        Some(session_id),
+        session_id,
         &handoff_payload,
         None,
         Some(prompt_bundle_id),
@@ -249,12 +299,16 @@ pub async fn recommend(params: RecommendParams<'_>) -> Result<()> {
     drop(guard);
 
     warn!(
-        session_id = %session_id,
-        trigger = %trigger,
+        session_id = session_id.unwrap_or("<none>"),
         dispute_id = %dispute_id,
+        trigger = %trigger,
         "escalation_recommended"
     );
-    info!(session_id = %session_id, "handoff_prepared");
+    info!(
+        session_id = session_id.unwrap_or("<none>"),
+        dispute_id = %dispute_id,
+        "handoff_prepared"
+    );
 
     Ok(())
 }
@@ -338,7 +392,8 @@ mod tests {
         let conn = fresh_conn();
         recommend(RecommendParams {
             conn: &conn,
-            session_id: "sess-esc",
+            session_id: Some("sess-esc"),
+            dispute_id: "d-esc",
             trigger: EscalationTrigger::LowConfidence,
             evidence_refs: Vec::new(),
             rationale_refs: Vec::new(),
@@ -355,7 +410,8 @@ mod tests {
         // tx rolls back, and no additional event rows land.
         let err = recommend(RecommendParams {
             conn: &conn,
-            session_id: "sess-esc",
+            session_id: Some("sess-esc"),
+            dispute_id: "d-esc",
             trigger: EscalationTrigger::RoundLimit,
             evidence_refs: Vec::new(),
             rationale_refs: Vec::new(),
@@ -396,7 +452,8 @@ mod tests {
         let rationale_id = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
         recommend(RecommendParams {
             conn: &conn,
-            session_id: "sess-esc",
+            session_id: Some("sess-esc"),
+            dispute_id: "d-esc",
             trigger: EscalationTrigger::ConflictingClaims,
             evidence_refs: vec![event_id.into()],
             rationale_refs: vec![rationale_id.into()],

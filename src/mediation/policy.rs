@@ -433,6 +433,237 @@ pub(crate) fn classify_to_decision(
     }
 }
 
+/// Rationale audit handle returned by [`classify_for_start`] so the
+/// caller can re-bind the rationale row to the session after the
+/// take-dispute step succeeds, without having to re-supply the
+/// classification label / confidence to the audit writer.
+#[derive(Debug, Clone)]
+pub struct RationaleAudit {
+    /// SHA-256 content hash of the rationale text, matching the
+    /// `rationale_id` primary key in `reasoning_rationales`.
+    pub rationale_id: String,
+    /// Persisted alongside `rationale_id` so
+    /// [`record_classification_for_session`] can emit the
+    /// `classification_produced` event without the caller holding
+    /// onto the full [`ClassificationResponse`].
+    pub classification: crate::models::mediation::ClassificationLabel,
+    pub confidence: f64,
+}
+
+/// Outcome of the opening-call reasoning step (FR-122 step 2).
+///
+/// `decision` drives the next step of `open_session`:
+/// - `AskClarification` / `Summarize` → proceed to `TakeDispute`
+///   (the take is strictly gated on this positive verdict).
+/// - `Escalate(trigger)` → no take, no session row; the caller
+///   writes the dispute-scoped handoff via
+///   [`escalation::recommend`](super::escalation::recommend) with
+///   `session_id = None`.
+///
+/// `rationale_audit` is `None` only on the transport-error branch
+/// (provider unreachable / timeout / malformed response). In that
+/// case the decision is always `Escalate(ReasoningUnavailable)` and
+/// there is no rationale text to content-hash.
+#[derive(Debug, Clone)]
+pub struct ClassifyForStartOutcome {
+    pub decision: PolicyDecision,
+    pub rationale_audit: Option<RationaleAudit>,
+}
+
+/// FR-122 step 2: run the opening classification BEFORE any chat-
+/// transport or take step. Persists the rationale dispute-scoped
+/// (`reasoning_rationales.session_id = NULL`) and returns both the
+/// policy decision and a [`RationaleAudit`] handle the caller can
+/// pass to [`record_classification_for_session`] after the session
+/// row is committed. On a reasoning-provider error, records
+/// `reasoning_call_failed` dispute-scoped and returns
+/// `Escalate(ReasoningUnavailable)` with no audit handle.
+///
+/// Does NOT write a `classification_produced` event — that row is
+/// session-scoped by design (the kind's schema expects a non-null
+/// `session_id`) and is emitted by
+/// [`record_classification_for_session`] once the session row
+/// exists. The rationale is content-hashed so a retried call does
+/// not duplicate rows.
+#[allow(clippy::too_many_arguments)]
+pub async fn classify_for_start(
+    conn: &Arc<AsyncMutex<rusqlite::Connection>>,
+    dispute_id: &str,
+    initiator_role: InitiatorRole,
+    prompt_bundle: &Arc<PromptBundle>,
+    reasoning: &dyn ReasoningProvider,
+    provider_name: &str,
+    model_name: &str,
+) -> Result<ClassifyForStartOutcome> {
+    let request = ClassificationRequest {
+        // `ClassificationRequest` predates the split — its
+        // `session_id` field is informational and the downstream
+        // adapter only puts it in prompt metadata. Pass the
+        // dispute_id so logs are useful even before a session row
+        // exists.
+        session_id: dispute_id.to_string(),
+        dispute_id: dispute_id.to_string(),
+        initiator_role,
+        prompt_bundle: Arc::clone(prompt_bundle),
+        transcript: Vec::new(),
+        context: ReasoningContext {
+            round_count: 0,
+            last_classification: None,
+            last_confidence: None,
+        },
+    };
+
+    let classification = match reasoning.classify(request).await {
+        Ok(response) => response,
+        Err(e) => {
+            // Same dispute-scoped `reasoning_call_failed` shape as
+            // the session-scoped path in `initial_classification`,
+            // but with `session_id = None` because the session row
+            // does not exist yet on the opening reasoning-first
+            // path (FR-122).
+            let now = current_ts_secs()?;
+            let payload = serde_json::json!({
+                "dispute_id": dispute_id,
+                "provider": provider_name,
+                "model": model_name,
+                "attempt_count": 1,
+                "error_category": reasoning_error_category(&e),
+            })
+            .to_string();
+            {
+                let guard = conn.lock().await;
+                if let Err(db_err) = db::mediation_events::record_event(
+                    &guard,
+                    db::mediation_events::MediationEventKind::ReasoningCallFailed,
+                    None,
+                    &payload,
+                    None,
+                    Some(&prompt_bundle.id),
+                    Some(&prompt_bundle.policy_hash),
+                    now,
+                ) {
+                    warn!(
+                        dispute_id = %dispute_id,
+                        error = %db_err,
+                        "failed to record dispute-scoped reasoning_call_failed event"
+                    );
+                }
+            }
+            warn!(
+                dispute_id = %dispute_id,
+                error = %e,
+                "classify_for_start: reasoning.classify failed; escalating as reasoning_unavailable"
+            );
+            return Ok(ClassifyForStartOutcome {
+                decision: PolicyDecision::Escalate(EscalationTrigger::ReasoningUnavailable),
+                rationale_audit: None,
+            });
+        }
+    };
+
+    let decision = classify_to_decision(&classification, PolicyRound::Initial);
+
+    // Persist rationale dispute-scoped (`session_id = NULL`). The
+    // content-hash dedup on `reasoning_rationales` keeps retries
+    // idempotent. No `classification_produced` event here — it
+    // belongs to the session scope and `record_classification_for_session`
+    // writes it after the session row exists.
+    let now = current_ts_secs()?;
+    let rationale_id = {
+        let guard = conn.lock().await;
+        db::rationales::insert_rationale(
+            &guard,
+            None,
+            provider_name,
+            model_name,
+            &prompt_bundle.id,
+            &prompt_bundle.policy_hash,
+            &classification.rationale.0,
+            now,
+        )?
+    };
+
+    debug!(
+        dispute_id = %dispute_id,
+        classification = %classification.classification,
+        confidence = classification.confidence,
+        rationale_id = %rationale_id,
+        ?decision,
+        "classify_for_start: rationale persisted dispute-scoped"
+    );
+
+    Ok(ClassifyForStartOutcome {
+        decision,
+        rationale_audit: Some(RationaleAudit {
+            rationale_id,
+            classification: classification.classification,
+            confidence: classification.confidence,
+        }),
+    })
+}
+
+/// Bind a rationale previously persisted by [`classify_for_start`]
+/// to a freshly-committed `mediation_sessions` row, and emit the
+/// session-scoped `classification_produced` audit event.
+///
+/// One transaction: (1) UPDATE `reasoning_rationales` setting
+/// `session_id = ?1` WHERE the row still has `session_id IS NULL`
+/// (so a replay after a race is a no-op), (2) insert the
+/// `classification_produced` event with the same session_id. A
+/// crash between the two is impossible; if the tx rolls back the
+/// session ends up without a classification_produced row and the
+/// next tick will either re-classify (T121 retry path) or escalate
+/// via FR-130 after three failures.
+///
+/// The caller supplies the `RationaleAudit` it received from
+/// `classify_for_start` — the rationale id is content-addressed, so
+/// a re-bind is safe even under retry.
+pub async fn record_classification_for_session(
+    conn: &Arc<AsyncMutex<rusqlite::Connection>>,
+    session_id: &str,
+    audit: &RationaleAudit,
+    prompt_bundle: &Arc<PromptBundle>,
+) -> Result<()> {
+    let now = current_ts_secs()?;
+    let mut guard = conn.lock().await;
+    let tx = guard.transaction()?;
+
+    // Re-bind the rationale. The `AND session_id IS NULL` clause
+    // makes the UPDATE idempotent: a retry after the row has
+    // already been bound is a no-op (zero rows affected, no
+    // error). We do NOT assert the exact row count here because a
+    // legitimate retry returns 0.
+    tx.execute(
+        "UPDATE reasoning_rationales
+         SET session_id = ?1
+         WHERE rationale_id = ?2 AND session_id IS NULL",
+        rusqlite::params![session_id, &audit.rationale_id],
+    )?;
+
+    db::mediation_events::record_classification_produced(
+        &tx,
+        session_id,
+        &audit.rationale_id,
+        &audit.classification.to_string(),
+        audit.confidence,
+        Some(&prompt_bundle.id),
+        Some(&prompt_bundle.policy_hash),
+        now,
+    )?;
+
+    tx.commit()?;
+
+    debug!(
+        session_id = %session_id,
+        rationale_id = %audit.rationale_id,
+        classification = %audit.classification,
+        confidence = audit.confidence,
+        "record_classification_for_session: rationale rebound + classification_produced emitted"
+    );
+
+    Ok(())
+}
+
 /// Persist the rationale + emit the `classification_produced`
 /// audit event for one classification response inside a single
 /// transaction. Returns the content-addressed rationale id.

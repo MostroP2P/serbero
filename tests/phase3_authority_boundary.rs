@@ -176,7 +176,8 @@ async fn authority_boundary_attempt_suppresses_and_escalates() {
     //     escalation + handoff events.
     escalation::recommend(RecommendParams {
         conn: &conn,
-        session_id: "sess-ab",
+        session_id: Some("sess-ab"),
+        dispute_id: "dispute-ab",
         trigger: EscalationTrigger::AuthorityBoundaryAttempt,
         evidence_refs: Vec::new(),
         rationale_refs: Vec::new(),

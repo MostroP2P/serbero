@@ -946,46 +946,24 @@ async fn run_engine_tick(
                     "engine tick: dispute already has an open mediation session"
                 );
             }
-            start::StartOutcome::Started(session::OpenOutcome::EscalatedOnOpen {
-                session_id,
+            start::StartOutcome::Started(session::OpenOutcome::EscalatedBeforeTake {
+                dispute_id: did,
                 trigger,
             }) => {
+                // FR-122 post-T104: `open_session` already wrote
+                // the dispute-scoped handoff (reasoning_verdict,
+                // start_attempt_stopped{reason:"policy_escalate"},
+                // escalation_recommended + handoff_prepared with
+                // `session_id = NULL`). Only the solver DM fan-out
+                // is left for the engine layer. `session_id = None`
+                // tells the notifier to surface the escalation
+                // without a session reference.
                 warn!(
-                    dispute_id = %dispute_id,
-                    session_id = %session_id,
+                    dispute_id = %did,
                     trigger = %trigger,
-                    "session escalated on open"
+                    "engine: opening-call escalate — dispute-scoped handoff already recorded"
                 );
-                match escalation::recommend(escalation::RecommendParams {
-                    conn,
-                    session_id: &session_id,
-                    trigger,
-                    evidence_refs: Vec::new(),
-                    rationale_refs: Vec::new(),
-                    prompt_bundle_id: &prompt_bundle.id,
-                    policy_hash: &prompt_bundle.policy_hash,
-                })
-                .await
-                {
-                    Ok(()) => {
-                        notify_solvers_escalation(
-                            conn,
-                            client,
-                            solvers,
-                            dispute_id,
-                            &session_id,
-                            trigger,
-                        )
-                        .await;
-                    }
-                    Err(e) => {
-                        error!(
-                            session_id = %session_id,
-                            error = %e,
-                            "engine: escalation::recommend failed for EscalatedOnOpen"
-                        );
-                    }
-                }
+                notify_solvers_dispute_escalation(conn, client, solvers, &did, trigger).await;
             }
             // The three `Refused*` variants are collapsed into
             // `StoppedBeforeTake` by `try_start_for`; this arm is
@@ -1344,6 +1322,47 @@ pub(crate) async fn notify_solvers_escalation(
             notif_type: NotificationType::MediationEscalationRecommended,
             tracing_label: "solver_escalation_notified",
             lookup_log_prefix: "notify_solvers_escalation",
+        },
+    )
+    .await;
+}
+
+/// FR-122 variant of [`notify_solvers_escalation`] for the
+/// dispute-scoped handoff path. Fires when the opening-call
+/// reasoning verdict was `Escalate` and no session row was ever
+/// committed — the DM still surfaces the trigger so a solver can
+/// investigate, but the session id is omitted from the body
+/// (there isn't one) and the router targets "broadcast to all
+/// configured solvers" because there is no `assigned_solver`
+/// without a session.
+pub(crate) async fn notify_solvers_dispute_escalation(
+    conn: &Arc<AsyncMutex<rusqlite::Connection>>,
+    client: &Client,
+    solvers: &[SolverConfig],
+    dispute_id: &str,
+    trigger: EscalationTrigger,
+) {
+    let dm_body = format!(
+        "Dispute {dispute_id} escalated before mediation take — \
+         trigger: {trigger}. Serbero ran the reasoning verdict and \
+         the policy layer said this dispute is not a mediation \
+         candidate. No session was opened. Needs human judgment."
+    );
+    notify_solvers_dm(
+        conn,
+        client,
+        solvers,
+        SolverDmParams {
+            dispute_id,
+            // No session row exists for opening-call escalations.
+            // `notify_solvers_dm`'s lookup keys off dispute_id when
+            // session_id is an empty string so the broadcast path
+            // fires. See SolverDmParams.session_id.
+            session_id: "",
+            body: &dm_body,
+            notif_type: NotificationType::MediationEscalationRecommended,
+            tracing_label: "solver_dispute_escalation_notified",
+            lookup_log_prefix: "notify_solvers_dispute_escalation",
         },
     )
     .await;
@@ -1803,9 +1822,32 @@ async fn run_ingest_tick(
                             max_rounds = mediation_cfg.max_rounds,
                             "round_limit_escalation"
                         );
+                        // `recommend` now requires `dispute_id` up
+                        // front (post-T104c). Do the SQL hop once,
+                        // BEFORE the escalation call, and reuse the
+                        // value for the solver notification below.
+                        let dispute_id: Option<String> = {
+                            let g = conn.lock().await;
+                            g.query_row(
+                                "SELECT dispute_id FROM mediation_sessions \
+                                 WHERE session_id = ?1",
+                                rusqlite::params![session_id],
+                                |r| r.get::<_, String>(0),
+                            )
+                            .ok()
+                        };
+                        let Some(did) = dispute_id else {
+                            warn!(
+                                session_id = %session_id,
+                                "round_limit_escalation: dispute_id lookup failed; \
+                                 skipping escalation attempt"
+                            );
+                            break;
+                        };
                         match escalation::recommend(escalation::RecommendParams {
                             conn,
-                            session_id: &session_id,
+                            session_id: Some(&session_id),
+                            dispute_id: &did,
                             trigger: EscalationTrigger::RoundLimit,
                             evidence_refs: vec![env.inner_event_id.clone()],
                             rationale_refs: Vec::new(),
@@ -1815,32 +1857,15 @@ async fn run_ingest_tick(
                         .await
                         {
                             Ok(()) => {
-                                // Look up dispute_id for the solver
-                                // notification. The JoinSet fan-out
-                                // only carried session_id through, so
-                                // the cheap SQL hop is the simplest
-                                // place to resolve it.
-                                let dispute_id: Option<String> = {
-                                    let g = conn.lock().await;
-                                    g.query_row(
-                                        "SELECT dispute_id FROM mediation_sessions \
-                                         WHERE session_id = ?1",
-                                        rusqlite::params![session_id],
-                                        |r| r.get::<_, String>(0),
-                                    )
-                                    .ok()
-                                };
-                                if let Some(did) = dispute_id {
-                                    notify_solvers_escalation(
-                                        conn,
-                                        client,
-                                        solvers,
-                                        &did,
-                                        &session_id,
-                                        EscalationTrigger::RoundLimit,
-                                    )
-                                    .await;
-                                }
+                                notify_solvers_escalation(
+                                    conn,
+                                    client,
+                                    solvers,
+                                    &did,
+                                    &session_id,
+                                    EscalationTrigger::RoundLimit,
+                                )
+                                .await;
                             }
                             Err(e) => {
                                 // Typically the session was already
@@ -2063,7 +2088,8 @@ pub async fn check_party_unresponsive_timeout(
         );
         match escalation::recommend(escalation::RecommendParams {
             conn,
-            session_id: &c.session_id,
+            session_id: Some(&c.session_id),
+            dispute_id: &c.dispute_id,
             trigger: EscalationTrigger::PartyUnresponsive,
             evidence_refs: Vec::new(),
             rationale_refs: Vec::new(),
