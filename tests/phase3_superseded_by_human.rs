@@ -297,7 +297,15 @@ async fn dispute_resolved_is_idempotent() {
 }
 
 #[tokio::test]
-async fn dispute_resolved_on_escalated_session_is_noop() {
+async fn dispute_resolved_on_escalated_session_emits_fr124_report() {
+    // FR-124 (T108/T109): a session that was already escalated
+    // still has Phase 3 context — the solver received a handoff
+    // package earlier and deserves a "dispute resolved externally"
+    // closing report. What stays a no-op is the session-state flip:
+    // `EscalationRecommended → SupersededByHuman` is NOT a legal
+    // transition, so the handler deliberately skips session
+    // closure and writes ONLY the final report + the lifecycle
+    // update.
     let harness = TestHarness::new().await;
     let solver = SolverListener::start(&harness.relay_url).await;
     let conn = fresh_conn().await;
@@ -330,7 +338,19 @@ async fn dispute_resolved_on_escalated_session_is_noop() {
     .await
     .unwrap();
 
-    let (session_state, lifecycle_state, event_count, notif_count) = {
+    assert!(
+        solver.wait_for(1, 10).await,
+        "expected FR-124 final-report DM to assigned solver"
+    );
+
+    let (
+        session_state,
+        lifecycle_state,
+        superseded_count,
+        session_closed_count,
+        final_report_count,
+        notif_count,
+    ) = {
         let guard = conn.lock().await;
         let session_state = guard
             .query_row(
@@ -346,24 +366,61 @@ async fn dispute_resolved_on_escalated_session_is_noop() {
                 |r| r.get::<_, String>(0),
             )
             .unwrap();
-        let event_count = guard
-            .query_row("SELECT COUNT(*) FROM mediation_events", [], |r| {
-                r.get::<_, i64>(0)
-            })
+        let superseded_count = guard
+            .query_row(
+                "SELECT COUNT(*) FROM mediation_events WHERE kind = 'superseded_by_human'",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+            .unwrap();
+        let session_closed_count = guard
+            .query_row(
+                "SELECT COUNT(*) FROM mediation_events WHERE kind = 'session_closed'",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+            .unwrap();
+        let final_report_count = guard
+            .query_row(
+                "SELECT COUNT(*) FROM mediation_events \
+                 WHERE kind = 'resolved_externally_reported'",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
             .unwrap();
         let notif_count = guard
-            .query_row("SELECT COUNT(*) FROM notifications", [], |r| {
-                r.get::<_, i64>(0)
-            })
+            .query_row(
+                "SELECT COUNT(*) FROM notifications \
+                 WHERE dispute_id = 'dispute-us6-4' \
+                   AND notif_type = 'mediation_resolution_report' \
+                   AND status = 'sent'",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
             .unwrap();
-        (session_state, lifecycle_state, event_count, notif_count)
+        (
+            session_state,
+            lifecycle_state,
+            superseded_count,
+            session_closed_count,
+            final_report_count,
+            notif_count,
+        )
     };
 
     assert_eq!(session_state, "escalation_recommended");
     assert_eq!(lifecycle_state, "resolved");
-    assert_eq!(event_count, 0);
-    assert_eq!(notif_count, 0);
-    assert_eq!(solver.count().await, 0);
+    assert_eq!(superseded_count, 0, "must NOT close an escalated session");
+    assert_eq!(session_closed_count, 0, "must NOT close an escalated session");
+    assert_eq!(final_report_count, 1, "FR-124 report event expected");
+    assert_eq!(notif_count, 1);
+
+    let messages = solver.messages().await;
+    assert_eq!(messages.len(), 1);
+    assert!(messages[0].starts_with("mediation_resolution_report/v1"));
+    assert!(messages[0].contains("dispute-us6-4"));
+    assert!(messages[0].contains("sess-us6-4"));
+    assert!(messages[0].contains("settled"));
 }
 
 #[tokio::test]

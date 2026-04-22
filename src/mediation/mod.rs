@@ -23,6 +23,7 @@ pub mod eligibility;
 pub mod escalation;
 pub mod follow_up;
 pub mod policy;
+pub mod report;
 pub mod router;
 pub mod session;
 pub mod start;
@@ -1368,40 +1369,40 @@ pub(crate) async fn notify_solvers_dispute_escalation(
     .await;
 }
 
-/// US6 (T092) — informational "dispute resolved externally" DM to the
-/// configured solver(s).
+/// FR-124 (T109) final-resolution report delivery.
 ///
-/// Mirrors the shape of [`notify_solvers_escalation`] so the routing,
-/// clock guard, and per-recipient failure handling stay consistent,
-/// but the DM is a RESOLUTION REPORT — not an escalation. The dispute
-/// is already resolved via Mostro; this is a "for your records"
-/// notification so the solver knows the session closed cleanly and no
-/// further mediation action is needed. Per FR-120 the body contains
-/// no rationale text.
-pub(crate) async fn notify_solvers_resolution_report(
+/// Replaces the original US6 `notify_solvers_resolution_report`: the
+/// router, clock guard, and per-recipient failure handling paths are
+/// unchanged, but the signature accepts `session_id: Option<&str>` so
+/// the dispute-scoped handoff shape (FR-122, session never opened)
+/// can still fire the DM. The body is built by
+/// [`super::report::build_report_body`] so the payload shape is
+/// pinned in the `report` module's unit tests. Per FR-120 the body
+/// contains no rationale text.
+pub(crate) async fn notify_solvers_final_resolution_report(
     conn: &Arc<AsyncMutex<rusqlite::Connection>>,
     client: &Client,
     solvers: &[SolverConfig],
     dispute_id: &str,
-    session_id: &str,
-    resolution_status: &str,
+    session_id: Option<&str>,
+    body: &str,
 ) {
-    let dm_body = format!(
-        "Mediation session {session_id} (dispute {dispute_id}) closed — \
-         the dispute was resolved externally ({resolution_status}). \
-         No further mediation action needed."
-    );
+    // `notify_solvers_dm` still keys off a `&str` session_id for
+    // the routing / log lines; supply the empty string when there
+    // is no session so the broadcast path fires and log lines read
+    // `session_id=""`. The `session_id` in the DM body itself
+    // already handles the "<none>" user-visible rendering.
     notify_solvers_dm(
         conn,
         client,
         solvers,
         SolverDmParams {
             dispute_id,
-            session_id,
-            body: &dm_body,
+            session_id: session_id.unwrap_or(""),
+            body,
             notif_type: NotificationType::MediationResolutionReport,
-            tracing_label: "solver_resolution_report_sent",
-            lookup_log_prefix: "notify_solvers_resolution_report",
+            tracing_label: "solver_final_resolution_report_sent",
+            lookup_log_prefix: "notify_solvers_final_resolution_report",
         },
     )
     .await;

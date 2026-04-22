@@ -202,6 +202,28 @@ impl fmt::Display for ClassificationLabel {
     }
 }
 
+impl std::str::FromStr for ClassificationLabel {
+    type Err = crate::error::Error;
+    /// Inverse of [`fmt::Display`]. Accepts the snake_case wire
+    /// tokens the OpenAI adapter writes to audit rows. Reserved
+    /// for code paths that read back the label from a
+    /// `mediation_events.payload_json` — all in-process
+    /// construction should use the enum variant directly.
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        use ClassificationLabel::*;
+        match s {
+            "coordination_failure_resolvable" => Ok(CoordinationFailureResolvable),
+            "conflicting_claims" => Ok(ConflictingClaims),
+            "suspected_fraud" => Ok(SuspectedFraud),
+            "unclear" => Ok(Unclear),
+            "not_suitable_for_mediation" => Ok(NotSuitableForMediation),
+            other => Err(crate::error::Error::InvalidEvent(format!(
+                "unknown classification label token: {other}"
+            ))),
+        }
+    }
+}
+
 /// Flags surfaced alongside a classification. Every flag carries a
 /// policy meaning — see `contracts/reasoning-provider.md`
 /// §Policy-Layer Validation.
