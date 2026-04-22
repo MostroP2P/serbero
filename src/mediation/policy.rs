@@ -1067,12 +1067,7 @@ mod tests {
         // that don't care about the bypass still exercise the
         // escalation path by default. Tests that DO care about the
         // bypass use `run_evaluate_at` directly.
-        run_evaluate_at(
-            conn,
-            classification,
-            EARLY_MIDSESSION_BYPASS_FOLLOWUPS + 1,
-        )
-        .await
+        run_evaluate_at(conn, classification, EARLY_MIDSESSION_BYPASS_FOLLOWUPS + 1).await
     }
 
     async fn run_evaluate_at(

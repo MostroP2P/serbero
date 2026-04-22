@@ -113,9 +113,7 @@ async fn seed_classification_event(
     confidence: f64,
 ) {
     let guard = conn.lock().await;
-    let payload = format!(
-        r#"{{"classification":"{classification}","confidence":{confidence}}}"#,
-    );
+    let payload = format!(r#"{{"classification":"{classification}","confidence":{confidence}}}"#,);
     db::mediation_events::record_event(
         &guard,
         db::mediation_events::MediationEventKind::ClassificationProduced,
@@ -579,7 +577,9 @@ async fn idempotency_no_double_send() {
     );
 
     // First delivery — DM fires, event row written.
-    dispute_resolved::handle(&handler_ctx, &event).await.unwrap();
+    dispute_resolved::handle(&handler_ctx, &event)
+        .await
+        .unwrap();
     assert!(solver.wait_for(1, 10).await);
     assert_eq!(final_report_event_count(&conn).await, 1);
     assert_eq!(notif_count(&conn, "dispute-fr124-idem").await, 1);
@@ -587,7 +587,9 @@ async fn idempotency_no_double_send() {
     // Replay: same event body, same dispute id, already at
     // `LifecycleState::Resolved` from the first call. The outer
     // handler short-circuits before the report path runs.
-    dispute_resolved::handle(&handler_ctx, &event).await.unwrap();
+    dispute_resolved::handle(&handler_ctx, &event)
+        .await
+        .unwrap();
 
     // Give the relay a brief window to surface any accidental DM.
     tokio::time::sleep(std::time::Duration::from_millis(300)).await;

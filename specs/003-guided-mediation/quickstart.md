@@ -117,9 +117,22 @@ per attempt). Phase 1/2 continues unaffected.
    coordination failure — e.g. payment delay).
 2. Phases 1 / 2 detect + notify solvers (already covered by the
    earlier quickstart).
-3. Phase 3 enters the mediation-eligibility evaluator. If the
-   classification policy tags it as `coordination_failure_resolvable`,
-   the mediation engine:
+3. **Event-driven start (FR-121).** Phase 3 evaluates the
+   dispute on the SAME task that persisted the detection — not on
+   a later engine tick. On the cooperative path you should see
+   the first outbound clarifying messages within a few seconds of
+   the dispute hitting the `disputes` table, independent of the
+   engine-tick interval. The engine tick remains as a safety net
+   for retries and resumption after restart, but it is no longer
+   the trigger for opening sessions. **Reasoning-before-take
+   (FR-122) is strict**: reasoning runs first; only on a positive
+   verdict does Serbero issue `TakeDispute` and commit a
+   `mediation_sessions` row. A negative verdict writes the
+   dispute-scoped handoff package (`session_id = NULL`) and stops
+   — no session row, no `TakeDispute`.
+
+   If the classification policy tags the dispute as
+   `coordination_failure_resolvable`, the mediation engine then:
    - performs the dispute-chat interaction flow required by the
      current Mostro / Mostrix implementation (verified at
      implementation time, not assumed from the public spec alone),
@@ -174,6 +187,49 @@ per attempt). Phase 1/2 continues unaffected.
 3. Solver notifications surface a "needs human judgment" message via
    the Phase 1/2 notifier. Phase 4 (not yet implemented) will
    consume the handoff package.
+
+## Verify external resolution report (US6 / FR-124)
+
+Any dispute Serbero touched that later resolves OUTSIDE Serbero
+(a human solver runs `admin-settle`, a seller-refund closes the
+escrow, etc.) still produces a closing DM to the configured
+solver(s) so the audit trail has a single entry-point for every
+resolved dispute.
+
+1. With a Phase 3 session open (or even just the FR-122 handoff
+   path where reasoning ran and produced a dispute-scoped
+   verdict with no session), have a human solver resolve the
+   dispute through Mostro. Serbero observes the terminal
+   `DisputeStatus` on the kind-38386 replaceable event.
+2. Within a few seconds you should see a single gift-wrapped DM
+   arrive at each configured solver's inbox. The body starts
+   with a versioned prefix so log parsers can evolve safely:
+
+   ```text
+   mediation_resolution_report/v1
+   Dispute: <dispute_id>
+   Session: <session_id or "<none — dispute-scoped handoff>">
+   Classification: <label> (confidence 0.88)    # or "<none recorded>"
+   Outbound party messages: 2                   # distinct parties messaged
+   Final dispute status: seller-refunded
+
+   Dispute closed with final status `seller-refunded`. Session …
+   ```
+
+   FR-120 still applies: the body NEVER embeds the full
+   rationale text. Only the classification label / confidence
+   appear, and only when they were recorded.
+
+3. `mediation_events` gains exactly one
+   `resolved_externally_reported` row summarizing the payload.
+   A replay of the same resolved event is idempotent: the outer
+   handler short-circuits on
+   `disputes.lifecycle_state = 'resolved'` before re-emitting.
+4. For disputes Phase 1/2 detected but which never reached Phase
+   3 (no session, no reasoning verdict, no Phase 3 audit row),
+   FR-124 deliberately does NOT fire — the Phase 1/2 notifier
+   already closed the loop. `has_any_mediation_context` returns
+   false in that case and the handler returns early.
 
 ## Verify provider swap (US5)
 

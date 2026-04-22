@@ -411,7 +411,10 @@ async fn dispute_resolved_on_escalated_session_emits_fr124_report() {
     assert_eq!(session_state, "escalation_recommended");
     assert_eq!(lifecycle_state, "resolved");
     assert_eq!(superseded_count, 0, "must NOT close an escalated session");
-    assert_eq!(session_closed_count, 0, "must NOT close an escalated session");
+    assert_eq!(
+        session_closed_count, 0,
+        "must NOT close an escalated session"
+    );
     assert_eq!(final_report_count, 1, "FR-124 report event expected");
     assert_eq!(notif_count, 1);
 

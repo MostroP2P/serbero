@@ -280,8 +280,9 @@ fn build_narrative(
     let outbound_clause = match outbound_party_messages_count {
         0 => "No outbound party-facing messages were dispatched.".to_string(),
         1 => "Serbero messaged one party before the dispute was resolved externally.".to_string(),
-        _ => "Serbero messaged both parties before the dispute was resolved externally."
-            .to_string(),
+        _ => {
+            "Serbero messaged both parties before the dispute was resolved externally.".to_string()
+        }
     };
     format!(
         "Dispute closed with final status `{final_dispute_status}`. \
@@ -494,7 +495,9 @@ mod tests {
             )
             .unwrap();
         }
-        let payload = build_payload(&conn, "d-r", "seller-refunded").await.unwrap();
+        let payload = build_payload(&conn, "d-r", "seller-refunded")
+            .await
+            .unwrap();
         assert_eq!(payload.session_id, None);
         assert_eq!(
             payload.classification,
@@ -502,7 +505,9 @@ mod tests {
         );
         assert_eq!(payload.outbound_party_messages_count, 0);
         assert!(
-            payload.narrative.contains("No mediation session was opened"),
+            payload
+                .narrative
+                .contains("No mediation session was opened"),
             "narrative should say no session; got: {}",
             payload.narrative
         );

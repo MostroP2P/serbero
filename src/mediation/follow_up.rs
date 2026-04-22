@@ -710,7 +710,9 @@ mod tests {
         let party_s = match party {
             TranscriptParty::Buyer => "buyer",
             TranscriptParty::Seller => "seller",
-            TranscriptParty::Serbero => panic!("Serbero is outbound-only; not valid for inbound seed"),
+            TranscriptParty::Serbero => {
+                panic!("Serbero is outbound-only; not valid for inbound seed")
+            }
         };
         guard
             .execute(
@@ -826,5 +828,4 @@ mod tests {
             "missing-cache gate must block classify when material is absent"
         );
     }
-
 }

@@ -252,4 +252,52 @@ async fn detected_handler_opens_session_without_engine_tick() {
         "no tick_retry start_attempt_started row should exist — \
          the engine task never ran in this test (SC-109)"
     );
+
+    // (4) SC-110 ordering audit trail — FR-122 enforces a strict
+    // event-id ordering for the opening flow:
+    //   start_attempt_started < reasoning_verdict <
+    //   take_dispute_issued{outcome:success} < session_opened <
+    //   classification_produced
+    // `mediation_events.id` is an AUTOINCREMENT primary key so it is
+    // a monotonic clock within one daemon run. The three dispute-
+    // scoped rows (start_attempt_started, reasoning_verdict,
+    // take_dispute_issued) precede the session-scoped session_opened
+    // + classification_produced rows. This assertion is the
+    // empirical proof that no `mediation_sessions` row was committed
+    // pre-take.
+    let ordering: Vec<(String, i64)> = {
+        let c = conn.lock().await;
+        let mut stmt = c
+            .prepare(
+                "SELECT kind, id FROM mediation_events \
+                 WHERE kind IN ('start_attempt_started', 'reasoning_verdict', \
+                                'take_dispute_issued', 'session_opened', \
+                                'classification_produced') \
+                 ORDER BY id ASC",
+            )
+            .unwrap();
+        stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))
+            .unwrap()
+            .collect::<std::result::Result<_, _>>()
+            .unwrap()
+    };
+    let kinds: Vec<&str> = ordering.iter().map(|(k, _)| k.as_str()).collect();
+    assert_eq!(
+        kinds,
+        vec![
+            "start_attempt_started",
+            "reasoning_verdict",
+            "take_dispute_issued",
+            "session_opened",
+            "classification_produced",
+        ],
+        "FR-122 ordering invariant violated: {ordering:?}"
+    );
+    for pair in ordering.windows(2) {
+        assert!(
+            pair[0].1 < pair[1].1,
+            "event id must be strictly increasing: {:?}",
+            pair
+        );
+    }
 }

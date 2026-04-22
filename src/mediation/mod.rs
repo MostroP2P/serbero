@@ -537,25 +537,37 @@ async fn record_outbound_sent_audit(
     Ok(())
 }
 
-/// Engine background task (T040).
+/// Engine background task.
 ///
-/// Every [`ENGINE_TICK_INTERVAL`] seconds, scan Phase 2 disputes in
-/// `lifecycle_state = 'notified'` that do not already carry an open
-/// mediation session, and call [`session::open_session`] for each.
-/// Each tick also yields to the tokio scheduler so a slow tick never
-/// starves other tasks on the same runtime.
+/// Under FR-121 the primary session-open trigger is event-driven:
+/// `handlers::dispute_detected` runs [`mediation::start::try_start_for`]
+/// on the same task that persisted the dispute. This background
+/// loop is the SAFETY NET for the event-driven path, not the
+/// trigger:
+///
+/// - Resumption on restart (via the [`startup_resume_pass`] below).
+/// - Catch-up for disputes the event-driven path missed because the
+///   daemon was down when Phase 2 persisted them, or because the
+///   per-task call was interrupted before it reached the eligibility
+///   predicate.
+/// - The ingest tick (second half of each cycle) still drives
+///   inbound fetch and mid-session classification.
+///
+/// Every [`ENGINE_TICK_INTERVAL`] seconds, the session-open half of
+/// the tick walks every dispute [`eligibility::list_mediation_eligible`]
+/// returns (FR-123 composed predicate) and calls
+/// [`session::open_session`] for each. Each tick also yields to the
+/// tokio scheduler so a slow tick never starves other tasks on the
+/// same runtime.
 ///
 /// Resilience discipline:
 /// - The loop NEVER panics: every error path logs and continues with
 ///   the next dispute.
-/// - The tick interval is hardcoded for US1 (configurable is US2+).
-/// - The engine owns no cached reasoning-health state for US1 — the
-///   per-call gate inside `open_session` (T044) is the only check.
+/// - The engine owns no cached reasoning-health state — the
+///   per-call gate inside `open_session` is the only check.
 /// - Shutdown is not handled here: the daemon wraps the returned
 ///   future in a `tokio::select!` with its shutdown signal and
-///   `abort()`s on shutdown. Keeping the function simple (no
-///   shutdown channel parameter) mirrors the shape `renotif_handle`
-///   uses today.
+///   `abort()`s on shutdown.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_engine(
     conn: Arc<AsyncMutex<rusqlite::Connection>>,
