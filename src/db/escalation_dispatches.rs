@@ -137,33 +137,38 @@ pub fn find_dispatch_by_handoff_event_id(
     conn: &Connection,
     handoff_event_id: i64,
 ) -> Result<Option<EscalationDispatch>> {
-    let row = conn
-        .query_row(
-            "SELECT dispatch_id, dispute_id, session_id, handoff_event_id,
-                    target_solver, dispatched_at, created_at, status, fallback_broadcast
-             FROM escalation_dispatches
-             WHERE handoff_event_id = ?1
-             LIMIT 1",
-            params![handoff_event_id],
-            |r| {
-                let status_s: String = r.get(7)?;
-                Ok((
-                    r.get::<_, String>(0)?,
-                    r.get::<_, String>(1)?,
-                    r.get::<_, Option<String>>(2)?,
-                    r.get::<_, i64>(3)?,
-                    r.get::<_, String>(4)?,
-                    r.get::<_, i64>(5)?,
-                    r.get::<_, i64>(6)?,
-                    status_s,
-                    r.get::<_, i64>(8)? != 0,
-                ))
-            },
-        )
-        .ok();
-
-    let Some(tuple) = row else {
-        return Ok(None);
+    // Only `QueryReturnedNoRows` maps to the `Ok(None)` "not
+    // dispatched yet" case. Every other rusqlite error — missing
+    // table, lock contention, row decoding failure — MUST propagate
+    // so the dispatch consumer loop surfaces real storage failures
+    // instead of silently bypassing the dedup probe and risking a
+    // duplicate send. `.ok()` would flatten them all to `None`; we
+    // match explicitly instead.
+    let tuple = match conn.query_row(
+        "SELECT dispatch_id, dispute_id, session_id, handoff_event_id,
+                target_solver, dispatched_at, created_at, status, fallback_broadcast
+         FROM escalation_dispatches
+         WHERE handoff_event_id = ?1
+         LIMIT 1",
+        params![handoff_event_id],
+        |r| {
+            let status_s: String = r.get(7)?;
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, Option<String>>(2)?,
+                r.get::<_, i64>(3)?,
+                r.get::<_, String>(4)?,
+                r.get::<_, i64>(5)?,
+                r.get::<_, i64>(6)?,
+                status_s,
+                r.get::<_, i64>(8)? != 0,
+            ))
+        },
+    ) {
+        Ok(tuple) => tuple,
+        Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(None),
+        Err(e) => return Err(e.into()),
     };
 
     let status = DispatchStatus::from_str(&tuple.7)?;
@@ -302,5 +307,40 @@ mod tests {
 
         let got = find_dispatch_by_handoff_event_id(&conn, handoff_event_id).unwrap();
         assert!(got.is_none(), "no row should exist before insert");
+    }
+
+    #[test]
+    fn lookup_propagates_db_errors_instead_of_swallowing_them() {
+        // Regression guard: the consumer path relies on this probe
+        // to prevent duplicate dispatches. If the probe flattened
+        // every rusqlite error to `Ok(None)` (for example via a
+        // naive `.ok()`), a missing table or a lock/busy failure
+        // would look exactly like "no dispatch exists" and the
+        // caller would re-send the DM. We exercise the "missing
+        // table" shape by calling the probe on a connection that
+        // never ran migration v5.
+        let conn = open_in_memory().unwrap();
+        // No run_migrations here — the `escalation_dispatches`
+        // table does not exist, so SQLite errors with "no such
+        // table".
+        let err = find_dispatch_by_handoff_event_id(&conn, 42)
+            .expect_err("missing table must surface as Err, not Ok(None)");
+        match err {
+            Error::Db(rusqlite::Error::SqliteFailure(_, Some(msg))) => {
+                assert!(
+                    msg.contains("no such table"),
+                    "expected 'no such table' SQLite failure; got {msg}"
+                );
+            }
+            Error::Db(rusqlite::Error::SqlInputError { msg, .. }) => {
+                assert!(
+                    msg.contains("no such table"),
+                    "expected 'no such table' in SQL input error; got {msg}"
+                );
+            }
+            other => panic!(
+                "expected Error::Db(SqliteFailure | SqlInputError) for missing table, got {other:?}"
+            ),
+        }
     }
 }
