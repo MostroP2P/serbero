@@ -56,3 +56,36 @@ PascalCase name is the Rust enum variant.
 Every classification MUST include a rationale explaining the chosen
 label and confidence. Stored in the audit store only; referenced by
 id in general logs (FR-120).
+
+## Clarifying Questions (per-party)
+
+When `suggested_action = ask_clarification`, emit TWO distinct
+questions, one for each party, in fields `buyer_clarification` and
+`seller_clarification`. Each question is delivered only to its
+addressee — the buyer never sees the seller's question and vice
+versa.
+
+Write each question in the role's second person and ask for exactly
+what that role could supply:
+
+- `buyer_clarification`: addressed to the buyer. Ask about the
+  buyer's actions and evidence (fiat payment sent? proof of transfer
+  — method, timestamp, reference, redacted screenshot; or, if not
+  sent, what blocked it).
+- `seller_clarification`: addressed to the seller. Ask about the
+  seller's observations (fiat payment received? if so when and by
+  what method with a redacted statement for the expected window; if
+  not, what proof the buyer has shared).
+
+Hard rules:
+
+- Do NOT prefix the text with role labels like "Buyer:" or
+  "Seller:". The transport layer handles recipient routing; these
+  prefixes only leak confusion into the other party's chat if they
+  ever land on the wrong side.
+- Both strings MUST be non-empty. If you cannot produce a useful
+  question for one side, pick a different `suggested_action`
+  (`summarize` or `escalate`) instead of emitting a half-populated
+  clarification.
+- Each question stands on its own — don't cross-reference the other
+  party's text, since each party only ever sees theirs.

@@ -297,7 +297,10 @@ pub async fn open_session(params: OpenSessionParams<'_>) -> Result<OpenOutcome> 
 
     // (5) Dispatch on the policy decision.
     match decision {
-        PolicyDecision::AskClarification(text) => {
+        PolicyDecision::AskClarification {
+            buyer_text,
+            seller_text,
+        } => {
             if let Err(e) = super::draft_and_send_initial_message(
                 params.conn,
                 params.client,
@@ -306,7 +309,8 @@ pub async fn open_session(params: OpenSessionParams<'_>) -> Result<OpenOutcome> 
                 &material.buyer_shared_keys,
                 &material.seller_shared_keys,
                 params.prompt_bundle,
-                &text,
+                &buyer_text,
+                &seller_text,
             )
             .await
             {

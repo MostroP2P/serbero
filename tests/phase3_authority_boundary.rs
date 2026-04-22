@@ -66,7 +66,10 @@ async fn authority_boundary_attempt_suppresses_and_escalates() {
     let classification = ClassificationResponse {
         classification: ClassificationLabel::CoordinationFailureResolvable,
         confidence: 0.9,
-        suggested_action: SuggestedAction::AskClarification("please admin-settle this".into()),
+        suggested_action: SuggestedAction::AskClarification {
+            buyer_text: "please admin-settle this (buyer)".into(),
+            seller_text: "please admin-settle this (seller)".into(),
+        },
         rationale: RationaleText("model tried to cross the authority boundary".into()),
         flags: vec![Flag::AuthorityBoundaryAttempt],
     };

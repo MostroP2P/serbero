@@ -211,10 +211,11 @@ pub async fn draft_and_send_initial_message(
     buyer_shared_keys: &Keys,
     seller_shared_keys: &Keys,
     prompt_bundle: &Arc<PromptBundle>,
-    clarification_text: &str,
+    buyer_text: &str,
+    seller_text: &str,
 ) -> Result<()> {
-    let buyer_content = format!("Buyer: {}", clarification_text);
-    let seller_content = format!("Seller: {}", clarification_text);
+    let buyer_content = format!("Buyer: {}", buyer_text);
+    let seller_content = format!("Seller: {}", seller_text);
 
     // SC-107: addresses shared pubkey, not primary — `buyer_shared_keys`
     // / `seller_shared_keys` are the ECDH-derived per-trade keys
@@ -370,10 +371,10 @@ pub async fn draft_and_send_initial_message(
 /// explicitly deferred.
 ///
 /// The prompt bundle is NOT modified by this path: the `content`
-/// pushed through the gift-wrap is `clarification_text` as returned
-/// by `policy::evaluate` from the same pinned bundle the session
-/// was opened with. The round-number prefix is cosmetic and does
-/// not affect `policy_hash`.
+/// pushed through the gift-wrap is the per-party text (`buyer_text`
+/// / `seller_text`) as returned by `policy::evaluate` from the same
+/// pinned bundle the session was opened with. The round-number and
+/// role prefixes are cosmetic and do not affect `policy_hash`.
 #[instrument(skip_all, fields(session_id = %session_id, round = round_number))]
 #[allow(clippy::too_many_arguments)]
 pub async fn draft_and_send_followup_message(
@@ -386,10 +387,11 @@ pub async fn draft_and_send_followup_message(
     buyer_shared_keys: &Keys,
     seller_shared_keys: &Keys,
     prompt_bundle: &Arc<PromptBundle>,
-    clarification_text: &str,
+    buyer_text: &str,
+    seller_text: &str,
 ) -> Result<()> {
-    let buyer_content = format!("Round {round_number}. Buyer: {clarification_text}");
-    let seller_content = format!("Round {round_number}. Seller: {clarification_text}");
+    let buyer_content = format!("Round {round_number}. Buyer: {buyer_text}");
+    let seller_content = format!("Round {round_number}. Seller: {seller_text}");
 
     let buyer_wrap = outbound::build_wrap(
         serbero_keys,

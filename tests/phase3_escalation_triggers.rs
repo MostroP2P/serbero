@@ -50,7 +50,10 @@ fn base_response() -> ClassificationResponse {
     ClassificationResponse {
         classification: ClassificationLabel::CoordinationFailureResolvable,
         confidence: 0.9,
-        suggested_action: SuggestedAction::AskClarification("please confirm X".into()),
+        suggested_action: SuggestedAction::AskClarification {
+            buyer_text: "please confirm X (buyer)".into(),
+            seller_text: "please confirm X (seller)".into(),
+        },
         rationale: RationaleText("rationale body".into()),
         flags: Vec::new(),
     }

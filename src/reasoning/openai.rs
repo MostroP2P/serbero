@@ -143,8 +143,23 @@ struct ClassificationJson {
     confidence: f64,
     #[serde(default)]
     suggested_action: String,
+    /// Free-form detail field. Still used for the `escalate`
+    /// suggested_action to carry the escalation reason. For
+    /// `ask_clarification` the per-party fields below take precedence
+    /// and `suggested_action_detail` is ignored.
     #[serde(default)]
     suggested_action_detail: Option<String>,
+    /// Buyer-addressed clarification text when
+    /// `suggested_action = "ask_clarification"`. Required for that
+    /// action — the adapter raises `MalformedResponse` if it is
+    /// missing or blank. The separation exists because broadcasting
+    /// a single string to both parties produced messages obviously
+    /// addressed to only one role (observed 2026-04-21 Alice/Bob run).
+    #[serde(default)]
+    buyer_clarification: Option<String>,
+    /// Seller-addressed clarification text. Same rules as above.
+    #[serde(default)]
+    seller_clarification: Option<String>,
     #[serde(default)]
     rationale: String,
     #[serde(default)]
@@ -347,9 +362,20 @@ fn build_classification_prompt(r: &ClassificationRequest) -> String {
          Return JSON with keys: classification (one of coordination_failure_resolvable, \
          conflicting_claims, suspected_fraud, unclear, not_suitable_for_mediation), \
          confidence (0..1), suggested_action (ask_clarification|summarize|escalate), \
-         suggested_action_detail (string, optional), rationale (string), \
-         flags (array of fraud_risk|conflicting_claims|low_info|unresponsive_party|\
-         authority_boundary_attempt).",
+         rationale (string), flags (array of fraud_risk|conflicting_claims|low_info|\
+         unresponsive_party|authority_boundary_attempt).\n\
+         When suggested_action = ask_clarification you MUST also return \
+         buyer_clarification (string, addressed to the buyer, asking what you need \
+         from the buyer to advance the case) and seller_clarification (string, \
+         addressed to the seller, asking what you need from the seller). Each text \
+         goes only to its intended party — do NOT prefix with labels like \
+         \"Buyer:\" or \"Seller:\"; the transport layer handles routing. Tailor \
+         each question to that party's role (buyer = did you send fiat? proof; \
+         seller = did you receive fiat? proof). Both strings must be non-empty; \
+         if you cannot produce a useful question for one side, pick a different \
+         suggested_action (summarize or escalate). suggested_action_detail is \
+         optional and only used to carry the escalation reason when \
+         suggested_action = escalate.",
         sid = r.session_id,
         did = r.dispute_id,
         init = r.initiator_role,
@@ -419,9 +445,38 @@ fn parse_classification(raw: &str) -> std::result::Result<ClassificationResponse
         }
     };
     let suggested_action = match parsed.suggested_action.as_str() {
-        "ask_clarification" => SuggestedAction::AskClarification(
-            parsed.suggested_action_detail.clone().unwrap_or_default(),
-        ),
+        "ask_clarification" => {
+            // Per-party texts are mandatory for this action. Both
+            // must be non-empty; the policy layer also rejects blank
+            // text, but raising MalformedResponse here gives a
+            // clearer audit trail (adapter-level vs policy-level).
+            let buyer_text = parsed
+                .buyer_clarification
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| {
+                    ReasoningError::MalformedResponse(
+                        "ask_clarification requires non-empty buyer_clarification".into(),
+                    )
+                })?
+                .to_string();
+            let seller_text = parsed
+                .seller_clarification
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| {
+                    ReasoningError::MalformedResponse(
+                        "ask_clarification requires non-empty seller_clarification".into(),
+                    )
+                })?
+                .to_string();
+            SuggestedAction::AskClarification {
+                buyer_text,
+                seller_text,
+            }
+        }
         "summarize" => SuggestedAction::Summarize,
         "escalate" => SuggestedAction::Escalate(EscalationReason(
             parsed.suggested_action_detail.clone().unwrap_or_default(),

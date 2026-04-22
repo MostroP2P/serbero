@@ -265,7 +265,10 @@ pub async fn advance_session_round(
 
     // (7) Dispatch.
     match decision {
-        policy::PolicyDecision::AskClarification(text) => {
+        policy::PolicyDecision::AskClarification {
+            buyer_text,
+            seller_text,
+        } => {
             let new_marker = total_fresh_inbounds;
             let round_number = round_number_for_followup(info.round_count_last_evaluated);
             if let Err(e) = draft_and_send_followup_message(
@@ -278,7 +281,8 @@ pub async fn advance_session_round(
                 &material.buyer_shared_keys,
                 &material.seller_shared_keys,
                 prompt_bundle,
-                &text,
+                &buyer_text,
+                &seller_text,
             )
             .await
             {

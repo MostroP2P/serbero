@@ -52,10 +52,15 @@ const LOW_CONFIDENCE_THRESHOLD: f64 = 0.5;
 /// module — the engine only ever sees a validated decision.
 #[derive(Debug, Clone, PartialEq)]
 pub enum PolicyDecision {
-    /// Ask both parties a clarifying question. The inner string is
-    /// the validated clarification text the draft path will wrap in
-    /// the per-party outbound messages.
-    AskClarification(String),
+    /// Ask each party a clarifying question. The two inner strings
+    /// are the validated clarification texts the draft path will
+    /// send to the buyer and seller respectively — one each, not
+    /// broadcast. See [`SuggestedAction::AskClarification`] for the
+    /// rationale behind per-party texts.
+    AskClarification {
+        buyer_text: String,
+        seller_text: String,
+    },
     /// Cooperative resolution path (US3). Carries the classification
     /// label and confidence so the engine can call the summarizer
     /// without having to re-read the classification_produced event.
@@ -359,7 +364,7 @@ pub(crate) fn classify_to_decision(
     let passthrough_low_confidence_ask_clarification = in_bypass_window
         && matches!(
             classification.suggested_action,
-            SuggestedAction::AskClarification(_)
+            SuggestedAction::AskClarification { .. }
         );
     if classification.confidence < LOW_CONFIDENCE_THRESHOLD
         && !passthrough_low_confidence_ask_clarification
@@ -376,17 +381,26 @@ pub(crate) fn classify_to_decision(
 
     // Pass-through: map the suggested action to the decision.
     match &classification.suggested_action {
-        SuggestedAction::AskClarification(text) => {
+        SuggestedAction::AskClarification {
+            buyer_text,
+            seller_text,
+        } => {
             // Reject empty / whitespace-only clarifications — the
             // session-open draft path cannot build a meaningful
             // gift-wrap from them, and letting the outbound message
             // go as literal "Buyer: " / "Seller: " would be worse
             // than escalating. Treated the same as a malformed
-            // provider response (rule 6 in the contract).
-            if text.trim().is_empty() {
+            // provider response (rule 6 in the contract). Either
+            // side being blank is enough to escalate: we cannot
+            // silently drop one party for the round because the
+            // session bookkeeping assumes both outbound rows land.
+            if buyer_text.trim().is_empty() || seller_text.trim().is_empty() {
                 return PolicyDecision::Escalate(EscalationTrigger::ReasoningUnavailable);
             }
-            PolicyDecision::AskClarification(text.clone())
+            PolicyDecision::AskClarification {
+                buyer_text: buyer_text.clone(),
+                seller_text: seller_text.clone(),
+            }
         }
         SuggestedAction::Summarize => {
             // Cross-check the classification label before trusting
@@ -518,7 +532,10 @@ mod tests {
         ClassificationResponse {
             classification: ClassificationLabel::CoordinationFailureResolvable,
             confidence: 0.9,
-            suggested_action: SuggestedAction::AskClarification("please confirm X".into()),
+            suggested_action: SuggestedAction::AskClarification {
+                buyer_text: "please confirm X (buyer)".into(),
+                seller_text: "please confirm X (seller)".into(),
+            },
             rationale: RationaleText("rationale body".into()),
             flags: Vec::new(),
         }
@@ -660,7 +677,10 @@ mod tests {
         let decision = run_initial(&conn, &provider).await.unwrap();
         assert_eq!(
             decision,
-            PolicyDecision::AskClarification("please confirm X".into())
+            PolicyDecision::AskClarification {
+                buyer_text: "please confirm X (buyer)".into(),
+                seller_text: "please confirm X (seller)".into(),
+            }
         );
     }
 
@@ -706,7 +726,10 @@ mod tests {
         let decision = run_initial(&conn, &provider).await.unwrap();
         assert_eq!(
             decision,
-            PolicyDecision::AskClarification("please confirm X".into())
+            PolicyDecision::AskClarification {
+                buyer_text: "please confirm X (buyer)".into(),
+                seller_text: "please confirm X (seller)".into(),
+            }
         );
         let (rat_count, evt_count): (i64, i64) = {
             let guard = conn.lock().await;
@@ -762,10 +785,32 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn empty_clarification_text_escalates_as_malformed() {
+    async fn empty_buyer_clarification_text_escalates_as_malformed() {
         let conn = fresh_conn();
         let mut resp = base_response();
-        resp.suggested_action = SuggestedAction::AskClarification("   \n\t".into());
+        resp.suggested_action = SuggestedAction::AskClarification {
+            buyer_text: "   \n\t".into(),
+            seller_text: "please confirm X (seller)".into(),
+        };
+        let provider = ScriptedProvider::ok(resp);
+        let decision = run_initial(&conn, &provider).await.unwrap();
+        assert_eq!(
+            decision,
+            PolicyDecision::Escalate(EscalationTrigger::ReasoningUnavailable)
+        );
+    }
+
+    #[tokio::test]
+    async fn empty_seller_clarification_text_escalates_as_malformed() {
+        // Either side being blank is sufficient to reject the whole
+        // clarification — the drafter commits two rows atomically and
+        // silently dropping one party would break that invariant.
+        let conn = fresh_conn();
+        let mut resp = base_response();
+        resp.suggested_action = SuggestedAction::AskClarification {
+            buyer_text: "please confirm X (buyer)".into(),
+            seller_text: "".into(),
+        };
         let provider = ScriptedProvider::ok(resp);
         let decision = run_initial(&conn, &provider).await.unwrap();
         assert_eq!(
@@ -842,6 +887,35 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn evaluate_passes_buyer_and_seller_texts_through_distinctly() {
+        // Regression for the 2026-04-21 Alice/Bob run where a single
+        // broadcast string leaked a buyer-directed question to the
+        // seller. The policy layer MUST preserve both texts without
+        // mixing or dropping either side.
+        let conn = fresh_conn();
+        let mut resp = base_response();
+        resp.suggested_action = SuggestedAction::AskClarification {
+            buyer_text: "BUYER-ONLY-QUESTION".into(),
+            seller_text: "SELLER-ONLY-QUESTION".into(),
+        };
+        let decision = run_evaluate(&conn, resp).await.unwrap();
+        match decision {
+            PolicyDecision::AskClarification {
+                buyer_text,
+                seller_text,
+            } => {
+                assert_eq!(buyer_text, "BUYER-ONLY-QUESTION");
+                assert_eq!(seller_text, "SELLER-ONLY-QUESTION");
+                assert_ne!(
+                    buyer_text, seller_text,
+                    "per-party texts must survive as separate strings"
+                );
+            }
+            other => panic!("expected AskClarification, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
     async fn evaluate_low_confidence_escalates() {
         // Default `run_evaluate` runs past the bypass window (follow-up
         // N+1), so a low-confidence response still escalates as before.
@@ -870,7 +944,10 @@ mod tests {
         let decision = run_evaluate_at(&conn, resp, 1).await.unwrap();
         assert_eq!(
             decision,
-            PolicyDecision::AskClarification("please confirm X".into())
+            PolicyDecision::AskClarification {
+                buyer_text: "please confirm X (buyer)".into(),
+                seller_text: "please confirm X (seller)".into(),
+            }
         );
     }
 
@@ -886,7 +963,10 @@ mod tests {
             .unwrap();
         assert_eq!(
             decision,
-            PolicyDecision::AskClarification("please confirm X".into())
+            PolicyDecision::AskClarification {
+                buyer_text: "please confirm X (buyer)".into(),
+                seller_text: "please confirm X (seller)".into(),
+            }
         );
     }
 
@@ -930,7 +1010,10 @@ mod tests {
         let decision = run_evaluate(&conn, base_response()).await.unwrap();
         assert_eq!(
             decision,
-            PolicyDecision::AskClarification("please confirm X".into())
+            PolicyDecision::AskClarification {
+                buyer_text: "please confirm X (buyer)".into(),
+                seller_text: "please confirm X (seller)".into(),
+            }
         );
         let (rat_count, evt_count): (i64, i64) = {
             let guard = conn.lock().await;
