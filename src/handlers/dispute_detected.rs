@@ -278,20 +278,33 @@ async fn try_start_mediation(
                  engine tick will deliver the summary"
             );
         }
-        StartOutcome::Started(OpenOutcome::EscalatedOnOpen {
-            session_id,
+        StartOutcome::Started(OpenOutcome::EscalatedBeforeTake {
+            dispute_id: did,
             trigger,
         }) => {
-            // Escalation fanout (the session-scoped `escalation_recommended`
-            // + `handoff_prepared` audit rows plus the solver DM)
-            // runs on the engine tick when it observes the
-            // session in `escalation_recommended` state.
+            // FR-122 post-T104: opening-call Escalate means no take
+            // was issued and no session row exists. The
+            // dispute-scoped handoff (escalation_recommended +
+            // handoff_prepared events with `session_id = NULL`) has
+            // already been written inside `open_session`. The
+            // solver DM fan-out fires HERE on the event-driven path:
+            // the engine tick's eligibility predicate excludes
+            // disputes that already carry a dispute-scoped
+            // `escalation_recommended` event, so leaving this to
+            // the tick would silently drop the notification.
             info!(
-                dispute_id = %dispute.dispute_id,
-                session_id = %session_id,
+                dispute_id = %did,
                 trigger = %trigger,
-                "event-driven start: session escalated on open; engine tick will fan out"
+                "event-driven start: escalated before take; no session row committed"
             );
+            crate::mediation::notify_solvers_dispute_escalation(
+                &ctx.conn,
+                &ctx.client,
+                &ctx.solvers,
+                &did,
+                trigger,
+            )
+            .await;
         }
         StartOutcome::Started(OpenOutcome::RefusedReasoningUnavailable { reason })
         | StartOutcome::Started(OpenOutcome::RefusedAuthPending { reason })

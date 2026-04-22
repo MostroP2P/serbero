@@ -17,13 +17,24 @@
 //!     If not, refuse deterministically — no relay I/O, no DB row
 //!     (FR-102 / SC-105).
 //! 1. Gate: is another session already open for this dispute?
-//! 2. Take-dispute exchange via `chat::dispute_chat_flow::run_take_flow`.
-//! 3. Insert the `mediation_sessions` row + `session_opened` audit
-//!    event atomically so downstream writes have a valid FK target.
-//! 4. Call [`super::policy::initial_classification`] — the *only*
-//!    place the reasoning provider is invoked on the opening path.
-//!    Policy persists the rationale in the controlled audit store
-//!    and emits `classification_produced` for this `session_id`.
+//! 2. **Reasoning verdict FIRST (FR-122).** Call
+//!    [`super::policy::classify_for_start`] — the *only* place the
+//!    reasoning provider is invoked on the opening path. The
+//!    rationale lands dispute-scoped (`session_id = NULL`); the
+//!    dispute-scoped `reasoning_verdict` event captures the decision
+//!    for audit. An `Escalate` verdict short-circuits: no take, no
+//!    session row, dispute-scoped handoff via
+//!    [`super::escalation::recommend`] with `session_id = None`.
+//! 3. Take-dispute exchange via `chat::dispute_chat_flow::run_take_flow`
+//!    — gated on the positive verdict from step 2. A take failure
+//!    lands `take_dispute_issued{outcome:"failure"}` dispute-scoped
+//!    and returns without committing a session row.
+//! 4. Insert the `mediation_sessions` row + `session_opened` audit
+//!    event atomically so downstream writes have a valid FK target,
+//!    then call
+//!    [`super::policy::record_classification_for_session`] to
+//!    rebind the rationale to the session and emit the
+//!    session-scoped `classification_produced` event.
 //! 5. Dispatch on the returned [`super::policy::PolicyDecision`]:
 //!    - `AskClarification { buyer_text, seller_text }` → call
 //!      [`super::draft_and_send_initial_message`] with the two
@@ -38,15 +49,23 @@
 //!      [`OpenOutcome::ReadyForSummary`] so the engine can call
 //!      `deliver_summary` on this same tick (US3 / T060). No
 //!      outbound clarifying message is drafted on this path.
-//!    - `Escalate(trigger)` → return
-//!      [`OpenOutcome::EscalatedOnOpen`] carrying the trigger;
-//!      the engine caller invokes `escalation::recommend`, which
-//!      owns the atomic state flip + Phase 4 handoff audit rows.
+//!    - `Escalate(trigger)` → **handled before take-dispute**, per
+//!      FR-122. `open_session` writes the reasoning verdict plus a
+//!      dispute-scoped handoff via
+//!      [`super::escalation::recommend`] with `session_id = None`
+//!      and returns [`OpenOutcome::EscalatedBeforeTake`]. No
+//!      `mediation_sessions` row is ever committed for an
+//!      Escalate verdict.
 //!
-//! Every session open therefore goes through the same audit path
-//! the engine drives on subsequent ticks, so the
-//! `reasoning_rationales` + `mediation_events` rows line up with
-//! the `mediation_sessions.policy_hash` pin (SC-103).
+//! The FR-122 ordering means the `mediation_events` audit trail
+//! for any session row shows a strict chronological sequence of
+//! `start_attempt_started` → dispute-scoped `reasoning_verdict` →
+//! `take_dispute_issued{outcome:"success"}` → `session_opened` →
+//! `classification_produced` (session-scoped, via
+//! [`super::policy::record_classification_for_session`]) → first
+//! outbound. Operators auditing "was this take gated on a positive
+//! reasoning verdict?" can walk that sequence by event id without
+//! touching any other table.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -86,20 +105,22 @@ pub enum OpenOutcome {
         classification: crate::models::mediation::ClassificationLabel,
         confidence: f64,
     },
-    /// `open_session` ran `initial_classification` and the policy
-    /// layer returned `Escalate(trigger)`. The session row was
-    /// transitioned to `escalation_recommended` inside `open_session`,
-    /// but the per-trigger audit rows (the
-    /// `escalation_recommended` + `handoff_prepared` events) have
-    /// NOT been written yet — the engine caller must call
-    /// [`super::escalation::recommend`] with the carried `trigger`.
+    /// `open_session` ran `classify_for_start` and the policy layer
+    /// returned `Escalate(trigger)` BEFORE any take-dispute step
+    /// (FR-122). No `mediation_sessions` row was ever inserted —
+    /// the dispute-scoped handoff has already been written by
+    /// `open_session` (via
+    /// [`super::escalation::recommend`] with `session_id = None`),
+    /// and the caller only needs to fan out the solver
+    /// notification (a `MediationEscalationRecommended` DM with
+    /// `session_id = None`).
     ///
-    /// The trigger is surfaced here (rather than swallowed inside
-    /// `open_session`) so the engine can emit a faithful
-    /// `handoff_prepared` payload: the caller knows exactly which
-    /// US4 trigger fired.
-    EscalatedOnOpen {
-        session_id: String,
+    /// The trigger is surfaced here so the engine's solver-DM
+    /// payload captures exactly which US4 trigger fired, and
+    /// `dispute_id` is surfaced because downstream consumers
+    /// (router, notifier) need it without having to re-hit the DB.
+    EscalatedBeforeTake {
+        dispute_id: String,
         trigger: crate::models::mediation::EscalationTrigger,
     },
     /// The reasoning provider's `health_check` failed; we refuse
@@ -227,10 +248,150 @@ pub async fn open_session(params: OpenSessionParams<'_>) -> Result<OpenOutcome> 
         }
     }
 
-    // (2) Take-dispute exchange. This is the expensive step; if it
-    //     fails we haven't written anything to the DB yet, so a
-    //     caller retry is safe.
-    let material = dispute_chat_flow::run_take_flow(dispute_chat_flow::TakeFlowParams {
+    // (2) Reasoning verdict BEFORE any chat-transport step (FR-122).
+    //     The classify_for_start helper persists the rationale
+    //     dispute-scoped (session_id = NULL) and returns the policy
+    //     decision plus a handle we'll pass to
+    //     `record_classification_for_session` once a session row
+    //     exists. A negative verdict means we must not issue
+    //     `TakeDispute` and no mediation_sessions row is ever
+    //     committed — the dispute-scoped handoff stands in for the
+    //     session-scoped one.
+    let classify_outcome = policy::classify_for_start(
+        params.conn,
+        params.dispute_id,
+        params.initiator_role,
+        params.prompt_bundle,
+        params.reasoning,
+        params.provider_name,
+        params.model_name,
+    )
+    .await?;
+
+    // (2a) Record the reasoning verdict dispute-scoped regardless
+    //      of outcome. Operators auditing a take that never
+    //      happened need to see exactly why reasoning said no.
+    {
+        let now = current_ts_secs()?;
+        let payload = match &classify_outcome.decision {
+            PolicyDecision::AskClarification { .. } => {
+                serde_json::json!({
+                    "dispute_id": params.dispute_id,
+                    "decision": "ask_clarification",
+                })
+            }
+            PolicyDecision::Summarize {
+                classification,
+                confidence,
+            } => serde_json::json!({
+                "dispute_id": params.dispute_id,
+                "decision": "summarize",
+                "classification": classification.to_string(),
+                "confidence": confidence,
+            }),
+            PolicyDecision::Escalate(trigger) => serde_json::json!({
+                "dispute_id": params.dispute_id,
+                "decision": "escalate",
+                "trigger": trigger.to_string(),
+            }),
+        };
+        let guard = params.conn.lock().await;
+        if let Err(e) = db::mediation_events::record_event(
+            &guard,
+            db::mediation_events::MediationEventKind::ReasoningVerdict,
+            None,
+            &payload.to_string(),
+            None,
+            Some(&params.prompt_bundle.id),
+            Some(&params.prompt_bundle.policy_hash),
+            now,
+        ) {
+            warn!(
+                dispute_id = %params.dispute_id,
+                error = %e,
+                "failed to record dispute-scoped reasoning_verdict event"
+            );
+        }
+    }
+
+    // (2b) Escalate branch: dispute-scoped handoff, no take, no
+    //      session row. FR-122 step 3.
+    if let PolicyDecision::Escalate(trigger) = &classify_outcome.decision {
+        let trigger = *trigger;
+        // Record start_attempt_stopped for the audit trail — a
+        // dashboard reader can then tell "never took because policy
+        // said escalate" apart from "never took because reasoning
+        // was unhealthy".
+        {
+            let now = current_ts_secs()?;
+            let payload = serde_json::json!({
+                "dispute_id": params.dispute_id,
+                "reason": "policy_escalate",
+                "trigger": trigger.to_string(),
+            })
+            .to_string();
+            let guard = params.conn.lock().await;
+            if let Err(e) = db::mediation_events::record_event(
+                &guard,
+                db::mediation_events::MediationEventKind::StartAttemptStopped,
+                None,
+                &payload,
+                None,
+                Some(&params.prompt_bundle.id),
+                Some(&params.prompt_bundle.policy_hash),
+                now,
+            ) {
+                warn!(
+                    dispute_id = %params.dispute_id,
+                    error = %e,
+                    "failed to record dispute-scoped start_attempt_stopped event"
+                );
+            }
+        }
+        // Dispute-scoped handoff. `session_id = None` tells
+        // `escalation::recommend` to skip the state flip and write
+        // the escalation_recommended / handoff_prepared rows as
+        // dispute-scoped events.
+        let rationale_refs = classify_outcome
+            .rationale_audit
+            .as_ref()
+            .map(|a| vec![a.rationale_id.clone()])
+            .unwrap_or_default();
+        if let Err(e) = super::escalation::recommend(super::escalation::RecommendParams {
+            conn: params.conn,
+            session_id: None,
+            dispute_id: params.dispute_id,
+            trigger,
+            evidence_refs: Vec::new(),
+            rationale_refs,
+            prompt_bundle_id: &params.prompt_bundle.id,
+            policy_hash: &params.prompt_bundle.policy_hash,
+        })
+        .await
+        {
+            warn!(
+                dispute_id = %params.dispute_id,
+                error = %e,
+                "escalation::recommend (dispute-scoped) failed on opening-call escalate"
+            );
+            return Err(e);
+        }
+        info!(
+            dispute_id = %params.dispute_id,
+            trigger = %trigger,
+            "opening-call escalate: dispute-scoped handoff recorded, no take"
+        );
+        return Ok(OpenOutcome::EscalatedBeforeTake {
+            dispute_id: params.dispute_id.to_string(),
+            trigger,
+        });
+    }
+
+    // (3) Take-dispute exchange (positive verdict only). If it
+    //     fails we haven't committed anything else, so a caller
+    //     retry is safe. On take failure we record the outcome
+    //     dispute-scoped so the audit trail captures the reason.
+    let material = match dispute_chat_flow::run_take_flow(dispute_chat_flow::TakeFlowParams {
         client: params.client,
         serbero_keys: params.serbero_keys,
         mostro_pubkey: params.mostro_pubkey,
@@ -238,14 +399,74 @@ pub async fn open_session(params: OpenSessionParams<'_>) -> Result<OpenOutcome> 
         timeout: params.take_flow_timeout,
         poll_interval: params.take_flow_poll_interval,
     })
-    .await?;
+    .await
+    {
+        Ok(m) => {
+            // Take success — audit row precedes the session row so
+            // the event-id ordering invariant holds
+            // (start_attempt_started < reasoning_verdict <
+            // take_dispute_issued{success} < session_opened).
+            let now = current_ts_secs()?;
+            let payload = serde_json::json!({
+                "dispute_id": params.dispute_id,
+                "outcome": "success",
+            })
+            .to_string();
+            let guard = params.conn.lock().await;
+            if let Err(e) = db::mediation_events::record_event(
+                &guard,
+                db::mediation_events::MediationEventKind::TakeDisputeIssued,
+                None,
+                &payload,
+                None,
+                Some(&params.prompt_bundle.id),
+                Some(&params.prompt_bundle.policy_hash),
+                now,
+            ) {
+                warn!(
+                    dispute_id = %params.dispute_id,
+                    error = %e,
+                    "failed to record take_dispute_issued{{success}} event"
+                );
+            }
+            m
+        }
+        Err(e) => {
+            // Take failure — capture the reason dispute-scoped, no
+            // session row committed, bubble the error up for the
+            // caller to translate into StartOutcome::TakeFailed.
+            let now = current_ts_secs()?;
+            let payload = serde_json::json!({
+                "dispute_id": params.dispute_id,
+                "outcome": "failure",
+                "reason": e.to_string(),
+            })
+            .to_string();
+            let guard = params.conn.lock().await;
+            if let Err(db_err) = db::mediation_events::record_event(
+                &guard,
+                db::mediation_events::MediationEventKind::TakeDisputeIssued,
+                None,
+                &payload,
+                None,
+                Some(&params.prompt_bundle.id),
+                Some(&params.prompt_bundle.policy_hash),
+                now,
+            ) {
+                warn!(
+                    dispute_id = %params.dispute_id,
+                    error = %db_err,
+                    "failed to record take_dispute_issued{{failure}} event"
+                );
+            }
+            return Err(e);
+        }
+    };
 
-    // (3) Insert session row + `session_opened` audit atomically.
-    //     Done BEFORE the reasoning call so the rationale /
-    //     classification_produced rows the policy layer writes in
-    //     step (4) have a valid FK target on `session_id`. The
-    //     step-1 gate is re-checked under the same connection to
-    //     close the check-then-act race.
+    // (4) Insert session row + `session_opened` audit atomically.
+    //     Re-checks the step-1 gate under the same connection so a
+    //     concurrent opener cannot insert two rows for the same
+    //     dispute.
     let session_id = Uuid::new_v4().to_string();
     let now = current_ts_secs()?;
     {
@@ -282,21 +503,23 @@ pub async fn open_session(params: OpenSessionParams<'_>) -> Result<OpenOutcome> 
         tx.commit()?;
     }
 
-    // (4) Policy-validated classification. Persists the rationale
-    //     and `classification_produced` tied to the session row we
-    //     just committed. Never sees raw model output without
-    //     validation.
-    let decision = policy::initial_classification(
+    // (5) Re-bind the rationale to the session row and emit the
+    //     session-scoped `classification_produced` audit event.
+    //     Unwrap: reasoning path without a rationale only exits via
+    //     the Escalate branch above; reaching this point with
+    //     `None` would be a policy-layer bug.
+    let rationale_audit = classify_outcome
+        .rationale_audit
+        .expect("classify_for_start must return a rationale_audit on non-Escalate paths");
+    policy::record_classification_for_session(
         params.conn,
         &session_id,
-        params.dispute_id,
-        params.initiator_role,
+        &rationale_audit,
         params.prompt_bundle,
-        params.reasoning,
-        params.provider_name,
-        params.model_name,
     )
     .await?;
+
+    let decision = classify_outcome.decision;
 
     // (5) Dispatch on the policy decision.
     match decision {
@@ -396,29 +619,17 @@ pub async fn open_session(params: OpenSessionParams<'_>) -> Result<OpenOutcome> 
                 confidence,
             })
         }
-        PolicyDecision::Escalate(trigger) => {
-            // US4 / T070: a non-cooperative classification on the
-            // opening call. We do NOT pre-flip the session to
-            // `escalation_recommended` here — `escalation::recommend`
-            // performs the state transition and writes both audit
-            // rows (`escalation_recommended` + `handoff_prepared`)
-            // inside a single transaction, so the state and audit
-            // trail cannot drift. If this function returned without
-            // its caller invoking `recommend`, the session would be
-            // left at `awaiting_response`, which `list_eligible_disputes`
-            // also excludes (its live-session NOT EXISTS clause
-            // covers every non-closed state) — so the dispute is
-            // not re-picked by the next engine tick either way.
-            debug!(
-                session_id = %session_id,
-                trigger = %trigger,
-                "policy decision on opening call is Escalate; \
-                 engine will record handoff via escalation::recommend"
+        PolicyDecision::Escalate(_) => {
+            // Unreachable: the FR-122 flow above handles the
+            // Escalate verdict before the take step and returns
+            // `EscalatedBeforeTake`. We must never insert a session
+            // row for an Escalate verdict — if control reaches
+            // here, a later refactor accidentally moved the
+            // Escalate short-circuit and produced an orphan session.
+            unreachable!(
+                "Escalate must be handled in the FR-122 pre-take branch; \
+                 reaching the post-insert dispatch is a refactor bug"
             );
-            Ok(OpenOutcome::EscalatedOnOpen {
-                session_id,
-                trigger,
-            })
         }
     }
 }
@@ -601,7 +812,8 @@ pub async fn handle_authorization_lost(
     auth_handle.signal_auth_lost();
     match super::escalation::recommend(super::escalation::RecommendParams {
         conn,
-        session_id,
+        session_id: Some(session_id),
+        dispute_id,
         trigger: crate::models::mediation::EscalationTrigger::AuthorizationLost,
         evidence_refs: Vec::new(),
         rationale_refs: Vec::new(),

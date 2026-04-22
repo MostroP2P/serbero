@@ -125,7 +125,7 @@ Enumerated `kind` values:
 | `classification_produced`       | Reasoning provider returned a classification (rationale stored in audit; referenced here).         |
 | `summary_generated`             | A cooperative summary was produced (linked to a `mediation_summaries` row).                        |
 | `escalation_recommended`        | Session transitioned to `escalation_recommended` (payload: `{trigger, evidence_refs}`).            |
-| `handoff_prepared`              | Phase 4 handoff package was assembled (payload: `{handoff_ref}`).                                  |
+| `handoff_prepared`              | Phase 4 handoff package was assembled. Payload is the serialized `HandoffPackage` struct: `{dispute_id, session_id?, trigger, evidence_refs[], prompt_bundle_id, policy_hash, rationale_refs[], assembled_at}`. The `session_id` key is OMITTED (not `null`) when no session row was ever committed — the FR-122 dispute-scoped handoff shape. Phase 4 consumers MUST treat "absent `session_id` key" and "`session_id: null`" as equivalent ("no session was opened for this dispute"). |
 | `reasoning_call_failed`         | A reasoning call exhausted its retries (payload: `{provider, model, attempt_count, reason}`).      |
 | `authorization_lost`            | Mostro rejected / revoked solver authorization mid-session.                                        |
 | `auth_retry_attempt`            | Background auth-retry loop performed an attempt (payload: `{attempt, outcome}`).                   |
@@ -194,6 +194,18 @@ dispute have closed:
   (negative), `take_dispute_issued` (failure): no session row yet for
   this attempt — the `session_id` column is NULL; the payload carries
   `dispute_id` so audit queries can join through `disputes`.
+  - **Audit-completeness note on `start_attempt_stopped`**: this row
+    is written best-effort. If the wall-clock guard
+    (`current_ts_secs`) fails at the moment of write, the row is
+    skipped with a `warn!` log line and the authoritative outcome
+    stays encoded in the `StartOutcome` returned to the caller
+    (downstream audit rows — `reasoning_verdict`,
+    `take_dispute_issued{outcome:"failure"}`, or
+    `escalation_recommended` — all carry the dispute id and tell
+    the full story). Queries that expect a 1:1 pairing of
+    `start_attempt_started` → `start_attempt_stopped` for every
+    non-opened attempt MUST tolerate the missing stop row in that
+    rare clock-failure mode.
 - `resolved_externally_reported`: a session row MAY exist (closed or
   `escalation_recommended`) or MAY NOT exist (take failed, no session
   was committed). When present, `session_id` references it; when

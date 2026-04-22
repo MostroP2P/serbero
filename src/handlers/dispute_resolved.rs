@@ -25,13 +25,13 @@
 
 use nostr_sdk::Event;
 use serde_json::json;
-use tracing::{debug, error, info, instrument};
+use tracing::{debug, error, info, instrument, warn};
 
 use crate::db;
 use crate::db::mediation_events::MediationEventKind;
 use crate::error::Result;
 use crate::handlers::dispute_detected::{current_timestamp, HandlerContext};
-use crate::mediation::notify_solvers_resolution_report;
+use crate::mediation::report;
 use crate::models::mediation::MediationSessionState;
 use crate::models::LifecycleState;
 
@@ -281,29 +281,58 @@ pub async fn handle(ctx: &HandlerContext, event: &Event) -> Result<()> {
         }
     }
 
-    let Some(session_id) = closed_session_id else {
+    if let Some(session_id) = closed_session_id.as_deref() {
+        info!(
+            dispute_id = %dispute_id,
+            session_id = %session_id,
+            "mediation_session_superseded"
+        );
+    }
+
+    // FR-124 (T108/T109): the old "no active session → early return"
+    // short-circuit misses three shapes Phase 3 routinely produces —
+    // sessions already in `escalation_recommended` (terminal for the
+    // mediation layer, still relevant for Phase 4), sessions in
+    // other terminal states (`closed`, `summary_delivered`), and
+    // the FR-122 dispute-scoped handoff path where reasoning ran
+    // but no session row was ever committed. `has_any_mediation_context`
+    // covers all three. Phase 1/2-only disputes (no context)
+    // return here with a debug! line and no FR-124 DM — the Phase
+    // 1/2 notifier already handled them.
+    let has_context = match report::has_any_mediation_context(&ctx.conn, &dispute_id).await {
+        Ok(v) => v,
+        Err(e) => {
+            warn!(
+                dispute_id = %dispute_id,
+                error = %e,
+                "dispute_resolved: has_any_mediation_context query failed; skipping FR-124 DM"
+            );
+            return Ok(());
+        }
+    };
+    if !has_context {
         debug!(
             dispute_id = %dispute_id,
-            "dispute_resolved: no active mediation session to supersede"
+            "dispute_resolved: no Phase 3 context for dispute; FR-124 report skipped"
         );
         return Ok(());
-    };
+    }
 
-    info!(
-        dispute_id = %dispute_id,
-        session_id = %session_id,
-        "mediation_session_superseded"
-    );
-
-    notify_solvers_resolution_report(
+    if let Err(e) = report::emit_final_report(
         &ctx.conn,
         &ctx.client,
         &ctx.solvers,
         &dispute_id,
-        &session_id,
         &resolution_status,
     )
-    .await;
+    .await
+    {
+        warn!(
+            dispute_id = %dispute_id,
+            error = %e,
+            "dispute_resolved: emit_final_report failed"
+        );
+    }
 
     Ok(())
 }

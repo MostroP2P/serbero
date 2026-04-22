@@ -23,6 +23,7 @@ pub mod eligibility;
 pub mod escalation;
 pub mod follow_up;
 pub mod policy;
+pub mod report;
 pub mod router;
 pub mod session;
 pub mod start;
@@ -536,25 +537,37 @@ async fn record_outbound_sent_audit(
     Ok(())
 }
 
-/// Engine background task (T040).
+/// Engine background task.
 ///
-/// Every [`ENGINE_TICK_INTERVAL`] seconds, scan Phase 2 disputes in
-/// `lifecycle_state = 'notified'` that do not already carry an open
-/// mediation session, and call [`session::open_session`] for each.
-/// Each tick also yields to the tokio scheduler so a slow tick never
-/// starves other tasks on the same runtime.
+/// Under FR-121 the primary session-open trigger is event-driven:
+/// `handlers::dispute_detected` runs [`mediation::start::try_start_for`]
+/// on the same task that persisted the dispute. This background
+/// loop is the SAFETY NET for the event-driven path, not the
+/// trigger:
+///
+/// - Resumption on restart (via the [`startup_resume_pass`] below).
+/// - Catch-up for disputes the event-driven path missed because the
+///   daemon was down when Phase 2 persisted them, or because the
+///   per-task call was interrupted before it reached the eligibility
+///   predicate.
+/// - The ingest tick (second half of each cycle) still drives
+///   inbound fetch and mid-session classification.
+///
+/// Every [`ENGINE_TICK_INTERVAL`] seconds, the session-open half of
+/// the tick walks every dispute [`eligibility::list_mediation_eligible`]
+/// returns (FR-123 composed predicate) and calls
+/// [`session::open_session`] for each. Each tick also yields to the
+/// tokio scheduler so a slow tick never starves other tasks on the
+/// same runtime.
 ///
 /// Resilience discipline:
 /// - The loop NEVER panics: every error path logs and continues with
 ///   the next dispute.
-/// - The tick interval is hardcoded for US1 (configurable is US2+).
-/// - The engine owns no cached reasoning-health state for US1 — the
-///   per-call gate inside `open_session` (T044) is the only check.
+/// - The engine owns no cached reasoning-health state — the
+///   per-call gate inside `open_session` is the only check.
 /// - Shutdown is not handled here: the daemon wraps the returned
 ///   future in a `tokio::select!` with its shutdown signal and
-///   `abort()`s on shutdown. Keeping the function simple (no
-///   shutdown channel parameter) mirrors the shape `renotif_handle`
-///   uses today.
+///   `abort()`s on shutdown.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_engine(
     conn: Arc<AsyncMutex<rusqlite::Connection>>,
@@ -946,46 +959,24 @@ async fn run_engine_tick(
                     "engine tick: dispute already has an open mediation session"
                 );
             }
-            start::StartOutcome::Started(session::OpenOutcome::EscalatedOnOpen {
-                session_id,
+            start::StartOutcome::Started(session::OpenOutcome::EscalatedBeforeTake {
+                dispute_id: did,
                 trigger,
             }) => {
+                // FR-122 post-T104: `open_session` already wrote
+                // the dispute-scoped handoff (reasoning_verdict,
+                // start_attempt_stopped{reason:"policy_escalate"},
+                // escalation_recommended + handoff_prepared with
+                // `session_id = NULL`). Only the solver DM fan-out
+                // is left for the engine layer. `session_id = None`
+                // tells the notifier to surface the escalation
+                // without a session reference.
                 warn!(
-                    dispute_id = %dispute_id,
-                    session_id = %session_id,
+                    dispute_id = %did,
                     trigger = %trigger,
-                    "session escalated on open"
+                    "engine: opening-call escalate — dispute-scoped handoff already recorded"
                 );
-                match escalation::recommend(escalation::RecommendParams {
-                    conn,
-                    session_id: &session_id,
-                    trigger,
-                    evidence_refs: Vec::new(),
-                    rationale_refs: Vec::new(),
-                    prompt_bundle_id: &prompt_bundle.id,
-                    policy_hash: &prompt_bundle.policy_hash,
-                })
-                .await
-                {
-                    Ok(()) => {
-                        notify_solvers_escalation(
-                            conn,
-                            client,
-                            solvers,
-                            dispute_id,
-                            &session_id,
-                            trigger,
-                        )
-                        .await;
-                    }
-                    Err(e) => {
-                        error!(
-                            session_id = %session_id,
-                            error = %e,
-                            "engine: escalation::recommend failed for EscalatedOnOpen"
-                        );
-                    }
-                }
+                notify_solvers_dispute_escalation(conn, client, solvers, &did, trigger).await;
             }
             // The three `Refused*` variants are collapsed into
             // `StoppedBeforeTake` by `try_start_for`; this arm is
@@ -1344,33 +1335,35 @@ pub(crate) async fn notify_solvers_escalation(
             notif_type: NotificationType::MediationEscalationRecommended,
             tracing_label: "solver_escalation_notified",
             lookup_log_prefix: "notify_solvers_escalation",
+            // Session-scoped escalation preserves assignment-aware
+            // routing: if a solver is currently assigned to the
+            // dispute, they get the first ping.
+            force_broadcast: false,
         },
     )
     .await;
 }
 
-/// US6 (T092) — informational "dispute resolved externally" DM to the
-/// configured solver(s).
-///
-/// Mirrors the shape of [`notify_solvers_escalation`] so the routing,
-/// clock guard, and per-recipient failure handling stay consistent,
-/// but the DM is a RESOLUTION REPORT — not an escalation. The dispute
-/// is already resolved via Mostro; this is a "for your records"
-/// notification so the solver knows the session closed cleanly and no
-/// further mediation action is needed. Per FR-120 the body contains
-/// no rationale text.
-pub(crate) async fn notify_solvers_resolution_report(
+/// FR-122 variant of [`notify_solvers_escalation`] for the
+/// dispute-scoped handoff path. Fires when the opening-call
+/// reasoning verdict was `Escalate` and no session row was ever
+/// committed — the DM still surfaces the trigger so a solver can
+/// investigate, but the session id is omitted from the body
+/// (there isn't one) and the router targets "broadcast to all
+/// configured solvers" because there is no `assigned_solver`
+/// without a session.
+pub(crate) async fn notify_solvers_dispute_escalation(
     conn: &Arc<AsyncMutex<rusqlite::Connection>>,
     client: &Client,
     solvers: &[SolverConfig],
     dispute_id: &str,
-    session_id: &str,
-    resolution_status: &str,
+    trigger: EscalationTrigger,
 ) {
     let dm_body = format!(
-        "Mediation session {session_id} (dispute {dispute_id}) closed — \
-         the dispute was resolved externally ({resolution_status}). \
-         No further mediation action needed."
+        "Dispute {dispute_id} escalated before mediation take — \
+         trigger: {trigger}. Serbero ran the reasoning verdict and \
+         the policy layer said this dispute is not a mediation \
+         candidate. No session was opened. Needs human judgment."
     );
     notify_solvers_dm(
         conn,
@@ -1378,11 +1371,60 @@ pub(crate) async fn notify_solvers_resolution_report(
         solvers,
         SolverDmParams {
             dispute_id,
-            session_id,
+            // No session row exists for opening-call escalations.
+            session_id: "",
             body: &dm_body,
+            notif_type: NotificationType::MediationEscalationRecommended,
+            tracing_label: "solver_dispute_escalation_notified",
+            lookup_log_prefix: "notify_solvers_dispute_escalation",
+            // FR-122 dispute-scoped handoff: every configured solver
+            // sees the "needs human judgment" DM, not just whoever
+            // happens to be assigned — assignment is not meaningful
+            // when no session was opened.
+            force_broadcast: true,
+        },
+    )
+    .await;
+}
+
+/// FR-124 (T109) final-resolution report delivery.
+///
+/// Replaces the original US6 `notify_solvers_resolution_report`: the
+/// router, clock guard, and per-recipient failure handling paths are
+/// unchanged, but the signature accepts `session_id: Option<&str>` so
+/// the dispute-scoped handoff shape (FR-122, session never opened)
+/// can still fire the DM. The body is built by
+/// [`super::report::build_report_body`] so the payload shape is
+/// pinned in the `report` module's unit tests. Per FR-120 the body
+/// contains no rationale text.
+pub(crate) async fn notify_solvers_final_resolution_report(
+    conn: &Arc<AsyncMutex<rusqlite::Connection>>,
+    client: &Client,
+    solvers: &[SolverConfig],
+    dispute_id: &str,
+    session_id: Option<&str>,
+    body: &str,
+) {
+    // `notify_solvers_dm` takes `session_id` as a `&str` for log
+    // lines; supply the empty string when there is no session. The
+    // `session_id` in the DM body itself already handles the
+    // "<none>" user-visible rendering. `force_broadcast: true` is
+    // what actually selects the broadcast path — otherwise an
+    // assigned solver (possibly stale from a long-closed session)
+    // would be the sole recipient, contrary to FR-124's "for your
+    // records" shape.
+    notify_solvers_dm(
+        conn,
+        client,
+        solvers,
+        SolverDmParams {
+            dispute_id,
+            session_id: session_id.unwrap_or(""),
+            body,
             notif_type: NotificationType::MediationResolutionReport,
-            tracing_label: "solver_resolution_report_sent",
-            lookup_log_prefix: "notify_solvers_resolution_report",
+            tracing_label: "solver_final_resolution_report_sent",
+            lookup_log_prefix: "notify_solvers_final_resolution_report",
+            force_broadcast: true,
         },
     )
     .await;
@@ -1395,6 +1437,14 @@ struct SolverDmParams<'a> {
     notif_type: NotificationType,
     tracing_label: &'static str,
     lookup_log_prefix: &'static str,
+    /// When `true`, skip the `assigned_solver` lookup entirely and
+    /// broadcast to every configured solver regardless of
+    /// assignment. Used by the FR-122 dispute-scoped escalation DM
+    /// and the FR-124 resolution-report DM — both are "for your
+    /// records" notifications whose spec says every configured
+    /// solver receives a copy, not just the currently assigned one
+    /// (which may be stale or NULL for session-less shapes).
+    force_broadcast: bool,
 }
 
 async fn notify_solvers_dm(
@@ -1403,7 +1453,12 @@ async fn notify_solvers_dm(
     solvers: &[SolverConfig],
     params: SolverDmParams<'_>,
 ) {
-    let assigned_solver: Option<String> = {
+    let assigned_solver: Option<String> = if params.force_broadcast {
+        // FR-122 / FR-124 broadcast shapes: every configured solver
+        // receives a copy. Skip the assignment lookup so the router
+        // always picks `Recipients::Broadcast` below.
+        None
+    } else {
         let guard = conn.lock().await;
         match guard.query_row(
             "SELECT assigned_solver FROM disputes WHERE dispute_id = ?1",
@@ -1803,9 +1858,32 @@ async fn run_ingest_tick(
                             max_rounds = mediation_cfg.max_rounds,
                             "round_limit_escalation"
                         );
+                        // `recommend` now requires `dispute_id` up
+                        // front (post-T104c). Do the SQL hop once,
+                        // BEFORE the escalation call, and reuse the
+                        // value for the solver notification below.
+                        let dispute_id: Option<String> = {
+                            let g = conn.lock().await;
+                            g.query_row(
+                                "SELECT dispute_id FROM mediation_sessions \
+                                 WHERE session_id = ?1",
+                                rusqlite::params![session_id],
+                                |r| r.get::<_, String>(0),
+                            )
+                            .ok()
+                        };
+                        let Some(did) = dispute_id else {
+                            warn!(
+                                session_id = %session_id,
+                                "round_limit_escalation: dispute_id lookup failed; \
+                                 skipping escalation attempt"
+                            );
+                            break;
+                        };
                         match escalation::recommend(escalation::RecommendParams {
                             conn,
-                            session_id: &session_id,
+                            session_id: Some(&session_id),
+                            dispute_id: &did,
                             trigger: EscalationTrigger::RoundLimit,
                             evidence_refs: vec![env.inner_event_id.clone()],
                             rationale_refs: Vec::new(),
@@ -1815,32 +1893,15 @@ async fn run_ingest_tick(
                         .await
                         {
                             Ok(()) => {
-                                // Look up dispute_id for the solver
-                                // notification. The JoinSet fan-out
-                                // only carried session_id through, so
-                                // the cheap SQL hop is the simplest
-                                // place to resolve it.
-                                let dispute_id: Option<String> = {
-                                    let g = conn.lock().await;
-                                    g.query_row(
-                                        "SELECT dispute_id FROM mediation_sessions \
-                                         WHERE session_id = ?1",
-                                        rusqlite::params![session_id],
-                                        |r| r.get::<_, String>(0),
-                                    )
-                                    .ok()
-                                };
-                                if let Some(did) = dispute_id {
-                                    notify_solvers_escalation(
-                                        conn,
-                                        client,
-                                        solvers,
-                                        &did,
-                                        &session_id,
-                                        EscalationTrigger::RoundLimit,
-                                    )
-                                    .await;
-                                }
+                                notify_solvers_escalation(
+                                    conn,
+                                    client,
+                                    solvers,
+                                    &did,
+                                    &session_id,
+                                    EscalationTrigger::RoundLimit,
+                                )
+                                .await;
                             }
                             Err(e) => {
                                 // Typically the session was already
@@ -2063,7 +2124,8 @@ pub async fn check_party_unresponsive_timeout(
         );
         match escalation::recommend(escalation::RecommendParams {
             conn,
-            session_id: &c.session_id,
+            session_id: Some(&c.session_id),
+            dispute_id: &c.dispute_id,
             trigger: EscalationTrigger::PartyUnresponsive,
             evidence_refs: Vec::new(),
             rationale_refs: Vec::new(),

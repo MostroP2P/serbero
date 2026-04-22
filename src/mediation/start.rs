@@ -57,7 +57,7 @@ impl StartTrigger {
 /// The shape intentionally surfaces the full [`session::OpenOutcome`]
 /// on the happy path so the caller can still dispatch post-session
 /// work (cooperative summary delivery on `ReadyForSummary`,
-/// escalation fan-out on `EscalatedOnOpen`, etc.). The goal of
+/// escalation fan-out on `EscalatedBeforeTake`, etc.). The goal of
 /// `try_start_for` is to own the start-flow gates and the audit
 /// trail, not to subsume every consumer of `OpenOutcome`.
 #[derive(Debug)]
@@ -187,7 +187,7 @@ pub async fn try_start_for(params: StartParams<'_>) -> StartOutcome {
             session::OpenOutcome::Opened { .. }
             | session::OpenOutcome::AlreadyOpen { .. }
             | session::OpenOutcome::ReadyForSummary { .. }
-            | session::OpenOutcome::EscalatedOnOpen { .. } => StartOutcome::Started(outcome),
+            | session::OpenOutcome::EscalatedBeforeTake { .. } => StartOutcome::Started(outcome),
         },
         Err(e) => {
             warn!(error = %e, "try_start_for: open_session returned error");
