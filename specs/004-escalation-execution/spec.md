@@ -22,7 +22,7 @@ X. Trigger: conflicting_claims. Please run `TakeDispute` for dispute X to
 review the full context.") plus a machine-readable handoff payload carrying
 every datum Phase 3 collected (dispute id, session id if any, escalation
 trigger, evidence references, rationale references, prompt bundle id, policy
-hash). The solver reads the summary, runs `TakeDispute` on their Mostro
+hash, and the assembled-at timestamp). The solver reads the summary, runs `TakeDispute` on their Mostro
 instance, and works the case with full context in hand.
 
 **Why this priority**: Every other Phase 4 capability exists to make this
@@ -93,8 +93,8 @@ and an `escalation_superseded` audit event records the skip.
 **Acceptance Scenarios**:
 
 1. **Given** a `handoff_prepared` event for a dispute whose
-   `lifecycle_state = 'resolved'` at the moment the dispatcher
-   examines it, **when** the dispatcher cycle runs, **then** no DM is
+   `lifecycle_state = 'resolved'` when the dispatcher examines it,
+   **when** the dispatcher cycle runs, **then** no DM is
    sent, no `escalation_dispatched` row is written, and an
    `escalation_superseded` audit event (dispute-scoped when no
    session, session-scoped otherwise) records the skip with the
@@ -183,10 +183,15 @@ solver with the audit event's `target_solver` listing all of them.
   intervention.
 
 - **Handoff_prepared event references a dispute that was never
-  persisted to `disputes`**: Theoretically impossible (Phase 3's
-  write path always has a parent `disputes` row) but defensive:
-  the dispatcher logs an ERROR, records
-  `escalation_dispatch_orphan`, and skips — no DM, no retries.
+  persisted to `disputes`**: theoretically impossible (Phase 3's
+  write path always has a parent `disputes` row) but defensive.
+  This is a structural break in the handoff data just like an
+  unparseable payload, so the dispatcher reuses the same audit
+  kind: logs an ERROR, records an
+  `escalation_dispatch_parse_failed` audit row whose payload
+  carries the specific failure reason
+  (`orphan_dispute_reference` vs. `deserialize_failed`), and
+  skips — no DM, no retries.
 
 - **Gift-wrap send fails for every targeted solver** (relay down,
   all recipients unreachable): each per-recipient failure is
@@ -290,12 +295,12 @@ solver with the audit event's `target_solver` listing all of them.
   (i.e. was not superseded and was not unroutable) MUST insert
   exactly one `escalation_dispatches` row (dispatch_id,
   dispute_id, session_id optional, handoff_event_id,
-  target_solver, dispatched_at, status) and one
-  `escalation_dispatched` `mediation_events` audit row whose
-  payload carries dispatch_id, dispute_id, target_solver, and
-  the fallback flag if the fallback path was used. The
-  `status` column MUST be set according to the per-recipient
-  outcomes:
+  target_solver, dispatched_at (Unix seconds), created_at (Unix
+  seconds), status) and one `escalation_dispatched`
+  `mediation_events` audit row whose payload carries dispatch_id,
+  dispute_id, target_solver, and the fallback flag if the
+  fallback path was used. The `status` column MUST be set
+  according to the per-recipient outcomes:
   - `dispatched` when at least one recipient in the target list
     successfully received the gift-wrapped DM.
   - `send_failed` when every recipient in the target list failed
@@ -313,12 +318,17 @@ solver with the audit event's `target_solver` listing all of them.
   one ERROR-level log line. The handoff event stays unconsumed so
   a future config change can pick it up.
 
-- **FR-214**: Every malformed handoff payload (cannot deserialize
-  the JSON to `HandoffPackage`) MUST insert one
+- **FR-214**: Every structurally broken handoff MUST insert one
   `escalation_dispatch_parse_failed` audit row AND emit one
-  ERROR-level log line. The event is considered consumed (so the
-  queue moves forward) — manual operator action is required to
-  re-dispatch.
+  ERROR-level log line. Two sub-shapes fall under this kind; the
+  audit payload carries a `reason` field distinguishing them:
+  - `deserialize_failed` — the `handoff_prepared` payload does
+    not deserialize cleanly to a `HandoffPackage`.
+  - `orphan_dispute_reference` — the payload deserializes but
+    references a dispute id with no corresponding row in
+    `disputes` (theoretically impossible; defensive).
+  The event is considered consumed (so the queue moves forward)
+  — manual operator action is required to re-dispatch.
 
 **Config**
 
