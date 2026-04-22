@@ -173,7 +173,7 @@ Phase 3 specification:
 
 - **Rust toolchain**, stable, edition 2021. Install via [`rustup`](https://rustup.rs/).
 - Access to at least one Nostr relay that carries Mostro's dispute events.
-- A **hex-encoded** Nostr key pair for Serbero. If you hold your keys in Bech32 form (`nsec...`, `npub...`), convert them to hex before placing them in the config. The public key derived from this keypair is the identity Serbero uses on Nostr — you must register it as a solver on the Mostro instance before enabling Phase 3 (see [Enable Phase 3](#enable-phase-3-guided-mediation)).
+- A **hex-encoded** Nostr key pair for Serbero. You can generate one with [rana](https://github.com/grunch/rana) (a Nostr vanity pubkey miner) or any Nostr key tool. If you hold your keys in Bech32 form (`nsec...`, `npub...`), convert them to hex before placing them in the config. The public key derived from this keypair is the identity Serbero uses on Nostr — you must register it as a solver on the Mostro instance before enabling Phase 3 (see [Enable Phase 3](#enable-phase-3-guided-mediation)).
 - **Hex-encoded** Nostr public keys for the Mostro instance you monitor and for every solver you want to notify.
 
 ### Build
