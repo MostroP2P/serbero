@@ -294,3 +294,34 @@ mediation_events    0..1──1  reasoning_rationales
   is the inbound dedup primary.
 - No backfill of Phase 3 data from Phase 1/2 tables is performed.
   Phase 3 starts empty on first run of the new schema.
+
+## Migration notes (v4 — Phase 11 mid-session follow-up loop)
+
+Adds two columns to `mediation_sessions` so the ingest tick can drive
+the mid-session evaluator idempotently and track bounded failure.
+
+- `round_count_last_evaluated INTEGER NOT NULL DEFAULT 0` — the
+  `round_count` value the last successful `advance_session_round`
+  call committed for. The evaluator gates on `round_count >
+  round_count_last_evaluated` to avoid re-evaluating the same round
+  on every tick (FR-127). Backfilled to `0` for existing rows, which
+  forces any in-flight Phase 3 session to be re-evaluated once after
+  the daemon restarts — acceptable because the alternative is *no*
+  evaluation.
+
+- `consecutive_eval_failures INTEGER NOT NULL DEFAULT 0` — monotonic
+  counter of back-to-back reasoning-call or commit failures for the
+  mid-session evaluator (FR-130). Incremented on failure, reset to
+  `0` on any successful evaluation. At value `3` the session
+  escalates with `EscalationTrigger::ReasoningUnavailable` and the
+  counter is reset by the escalation path.
+
+Both columns use `ALTER TABLE mediation_sessions ADD COLUMN ...` in
+the v4 migration body; SQLite supports adding columns with a default
+value and rewrites the page lazily. The migration guard (`schema_version
+> 3`) protects re-runs. No data backfill from other tables is
+performed.
+
+The `follow_up_pending` state in `mediation_sessions.state` remains
+defined for now but is NOT written by the Phase 11 loop; a later
+housekeeping PR may remove it.

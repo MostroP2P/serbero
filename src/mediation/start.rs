@@ -295,14 +295,8 @@ mod tests {
         // no meaningful coverage beyond the T103 integration test.
         let conn = ineligible_fixture();
         assert!(!eligibility::is_mediation_eligible(&conn, "d-resolved").unwrap());
-        mediation_events::record_start_attempt_stopped(
-            &conn,
-            None,
-            "d-resolved",
-            "ineligible",
-            42,
-        )
-        .unwrap();
+        mediation_events::record_start_attempt_stopped(&conn, None, "d-resolved", "ineligible", 42)
+            .unwrap();
         let (sid, payload): (Option<String>, String) = conn
             .query_row(
                 "SELECT session_id, payload_json

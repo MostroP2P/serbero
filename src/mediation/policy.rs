@@ -52,10 +52,15 @@ const LOW_CONFIDENCE_THRESHOLD: f64 = 0.5;
 /// module — the engine only ever sees a validated decision.
 #[derive(Debug, Clone, PartialEq)]
 pub enum PolicyDecision {
-    /// Ask both parties a clarifying question. The inner string is
-    /// the validated clarification text the draft path will wrap in
-    /// the per-party outbound messages.
-    AskClarification(String),
+    /// Ask each party a clarifying question. The two inner strings
+    /// are the validated clarification texts the draft path will
+    /// send to the buyer and seller respectively — one each, not
+    /// broadcast. See [`SuggestedAction::AskClarification`] for the
+    /// rationale behind per-party texts.
+    AskClarification {
+        buyer_text: String,
+        seller_text: String,
+    },
     /// Cooperative resolution path (US3). Carries the classification
     /// label and confidence so the engine can call the summarizer
     /// without having to re-read the classification_produced event.
@@ -217,6 +222,10 @@ pub async fn initial_classification(
 /// Like [`initial_classification`], `evaluate` does NOT send any
 /// outbound chat on its own — the caller dispatches on the returned
 /// [`PolicyDecision`].
+///
+/// `followup_number` is 1-based and identifies which mid-session
+/// evaluation this is for the session. It governs the low-confidence
+/// bypass window — see [`EARLY_MIDSESSION_BYPASS_FOLLOWUPS`].
 #[allow(clippy::too_many_arguments)]
 pub async fn evaluate(
     conn: &Arc<AsyncMutex<rusqlite::Connection>>,
@@ -225,8 +234,10 @@ pub async fn evaluate(
     provider_name: &str,
     model_name: &str,
     classification: ClassificationResponse,
+    followup_number: u32,
 ) -> Result<PolicyDecision> {
-    let decision = classify_to_decision(&classification, PolicyRound::MidSession);
+    let decision =
+        classify_to_decision(&classification, PolicyRound::MidSession { followup_number });
 
     let rationale_id = persist_classification_audit(
         conn,
@@ -252,18 +263,42 @@ pub async fn evaluate(
 
 /// Where in the session lifecycle a classification was produced.
 /// Drives whether low-confidence escalates on an otherwise-benign
-/// `AskClarification` suggestion: on the opening call the transcript
-/// is empty by construction, so the model has nothing to be confident
-/// about and a clarifying question is the expected next step.
-/// Escalating there produces sessions that never talk to the parties.
+/// `AskClarification` suggestion.
+///
+/// Two escalation-bypass windows exist:
+///
+/// - `Initial`: opening call, transcript is empty by construction,
+///   the model has nothing to be confident about. A clarifying
+///   question is the expected next step.
+/// - `MidSession { followup_number }` with
+///   `followup_number <= EARLY_MIDSESSION_BYPASS_FOLLOWUPS`: the first
+///   few mid-session evaluations frequently come back low-confidence
+///   because we only have one party's partial info. Escalating there
+///   hands off to a solver before Serbero has made a real attempt.
+///   After the bypass window, persistent low confidence is a genuine
+///   "we tried and can't resolve" signal — escalation is correct.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PolicyRound {
     /// Very first classification for a freshly-taken dispute. No
     /// inbound messages from either party yet.
     Initial,
-    /// Any later round. At least one inbound message is on file.
-    MidSession,
+    /// Later round. `followup_number` is 1-based: 1 = first
+    /// mid-session evaluation, 2 = second, etc.
+    MidSession { followup_number: u32 },
 }
+
+/// Number of mid-session follow-ups that bypass the low-confidence
+/// escalation rule for `AskClarification` suggestions. Follow-ups
+/// 1..=N pass through; follow-up N+1 onward escalate as before.
+///
+/// Rationale (2026-04-21 Alice/Bob run): gpt-5 returned confidence
+/// 0.31 after the first single-party reply, which escalated the
+/// session to a solver before Serbero ever asked a second clarifying
+/// question. 3 is the empirical sweet spot: enough rounds to gather
+/// both sides' stories, few enough that a session truly stuck in
+/// ambiguity still surfaces to a human within a reasonable wall-clock
+/// window.
+pub const EARLY_MIDSESSION_BYPASS_FOLLOWUPS: u32 = 3;
 
 /// Pure validation: run the contract rules against a single
 /// [`ClassificationResponse`] and return the resulting decision.
@@ -301,19 +336,35 @@ pub(crate) fn classify_to_decision(
         return PolicyDecision::Escalate(EscalationTrigger::AuthorityBoundaryAttempt);
     }
 
-    // Low-confidence gate. On the opening round a low-confidence
-    // `AskClarification` is not an escalation signal — the model has
-    // no transcript yet and a clarifying question is the cheap
-    // next step. Escalating there prevents Serbero from ever
-    // talking to the parties (observed in production with `gpt-5`
-    // returning sensibly-cautious scores on empty transcripts).
+    // Low-confidence gate. Two windows bypass this gate for
+    // `AskClarification` suggestions — see [`PolicyRound`]:
     //
-    // For every other suggested action on the opening round, and for
-    // every suggested action mid-session, the threshold still applies.
-    let passthrough_low_confidence_ask_clarification = matches!(round, PolicyRound::Initial)
+    // - Opening round: transcript is empty, the model has nothing to
+    //   anchor its confidence on. Escalating there prevents Serbero
+    //   from ever talking to the parties (observed 2026-04-21 with
+    //   `gpt-5` returning ~0.3 on empty transcripts).
+    // - First `EARLY_MIDSESSION_BYPASS_FOLLOWUPS` mid-session
+    //   evaluations: the model usually only has one party's partial
+    //   reply by then; escalating to a solver after a single follow-up
+    //   hand-offs before Serbero has actually tried to mediate
+    //   (observed 2026-04-21 Alice/Bob run, confidence 0.31 after
+    //   buyer's first reply triggered LowConfidence).
+    //
+    // Past the bypass window, sustained low confidence means
+    // "Serbero tried and cannot get traction" — escalation is the
+    // right outcome. For non-`AskClarification` actions the gate
+    // always applies: an unconfident `Summarize` is a terminal
+    // commitment Serbero must not make, even in the bypass window.
+    let in_bypass_window = match round {
+        PolicyRound::Initial => true,
+        PolicyRound::MidSession { followup_number } => {
+            followup_number <= EARLY_MIDSESSION_BYPASS_FOLLOWUPS
+        }
+    };
+    let passthrough_low_confidence_ask_clarification = in_bypass_window
         && matches!(
             classification.suggested_action,
-            SuggestedAction::AskClarification(_)
+            SuggestedAction::AskClarification { .. }
         );
     if classification.confidence < LOW_CONFIDENCE_THRESHOLD
         && !passthrough_low_confidence_ask_clarification
@@ -330,17 +381,26 @@ pub(crate) fn classify_to_decision(
 
     // Pass-through: map the suggested action to the decision.
     match &classification.suggested_action {
-        SuggestedAction::AskClarification(text) => {
+        SuggestedAction::AskClarification {
+            buyer_text,
+            seller_text,
+        } => {
             // Reject empty / whitespace-only clarifications — the
             // session-open draft path cannot build a meaningful
             // gift-wrap from them, and letting the outbound message
             // go as literal "Buyer: " / "Seller: " would be worse
             // than escalating. Treated the same as a malformed
-            // provider response (rule 6 in the contract).
-            if text.trim().is_empty() {
+            // provider response (rule 6 in the contract). Either
+            // side being blank is enough to escalate: we cannot
+            // silently drop one party for the round because the
+            // session bookkeeping assumes both outbound rows land.
+            if buyer_text.trim().is_empty() || seller_text.trim().is_empty() {
                 return PolicyDecision::Escalate(EscalationTrigger::ReasoningUnavailable);
             }
-            PolicyDecision::AskClarification(text.clone())
+            PolicyDecision::AskClarification {
+                buyer_text: buyer_text.clone(),
+                seller_text: seller_text.clone(),
+            }
         }
         SuggestedAction::Summarize => {
             // Cross-check the classification label before trusting
@@ -472,7 +532,10 @@ mod tests {
         ClassificationResponse {
             classification: ClassificationLabel::CoordinationFailureResolvable,
             confidence: 0.9,
-            suggested_action: SuggestedAction::AskClarification("please confirm X".into()),
+            suggested_action: SuggestedAction::AskClarification {
+                buyer_text: "please confirm X (buyer)".into(),
+                seller_text: "please confirm X (seller)".into(),
+            },
             rationale: RationaleText("rationale body".into()),
             flags: Vec::new(),
         }
@@ -609,12 +672,15 @@ mod tests {
         let conn = fresh_conn();
         let mut resp = base_response();
         resp.confidence = 0.3; // below LOW_CONFIDENCE_THRESHOLD
-        // base_response already sets AskClarification("please confirm X").
+                               // base_response already sets AskClarification("please confirm X").
         let provider = ScriptedProvider::ok(resp);
         let decision = run_initial(&conn, &provider).await.unwrap();
         assert_eq!(
             decision,
-            PolicyDecision::AskClarification("please confirm X".into())
+            PolicyDecision::AskClarification {
+                buyer_text: "please confirm X (buyer)".into(),
+                seller_text: "please confirm X (seller)".into(),
+            }
         );
     }
 
@@ -660,7 +726,10 @@ mod tests {
         let decision = run_initial(&conn, &provider).await.unwrap();
         assert_eq!(
             decision,
-            PolicyDecision::AskClarification("please confirm X".into())
+            PolicyDecision::AskClarification {
+                buyer_text: "please confirm X (buyer)".into(),
+                seller_text: "please confirm X (seller)".into(),
+            }
         );
         let (rat_count, evt_count): (i64, i64) = {
             let guard = conn.lock().await;
@@ -716,10 +785,32 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn empty_clarification_text_escalates_as_malformed() {
+    async fn empty_buyer_clarification_text_escalates_as_malformed() {
         let conn = fresh_conn();
         let mut resp = base_response();
-        resp.suggested_action = SuggestedAction::AskClarification("   \n\t".into());
+        resp.suggested_action = SuggestedAction::AskClarification {
+            buyer_text: "   \n\t".into(),
+            seller_text: "please confirm X (seller)".into(),
+        };
+        let provider = ScriptedProvider::ok(resp);
+        let decision = run_initial(&conn, &provider).await.unwrap();
+        assert_eq!(
+            decision,
+            PolicyDecision::Escalate(EscalationTrigger::ReasoningUnavailable)
+        );
+    }
+
+    #[tokio::test]
+    async fn empty_seller_clarification_text_escalates_as_malformed() {
+        // Either side being blank is sufficient to reject the whole
+        // clarification — the drafter commits two rows atomically and
+        // silently dropping one party would break that invariant.
+        let conn = fresh_conn();
+        let mut resp = base_response();
+        resp.suggested_action = SuggestedAction::AskClarification {
+            buyer_text: "please confirm X (buyer)".into(),
+            seller_text: "".into(),
+        };
         let provider = ScriptedProvider::ok(resp);
         let decision = run_initial(&conn, &provider).await.unwrap();
         assert_eq!(
@@ -741,6 +832,23 @@ mod tests {
         conn: &Arc<AsyncMutex<rusqlite::Connection>>,
         classification: ClassificationResponse,
     ) -> Result<PolicyDecision> {
+        // Default to a followup_number past the bypass window so tests
+        // that don't care about the bypass still exercise the
+        // escalation path by default. Tests that DO care about the
+        // bypass use `run_evaluate_at` directly.
+        run_evaluate_at(
+            conn,
+            classification,
+            EARLY_MIDSESSION_BYPASS_FOLLOWUPS + 1,
+        )
+        .await
+    }
+
+    async fn run_evaluate_at(
+        conn: &Arc<AsyncMutex<rusqlite::Connection>>,
+        classification: ClassificationResponse,
+        followup_number: u32,
+    ) -> Result<PolicyDecision> {
         let bundle = test_bundle();
         evaluate(
             conn,
@@ -749,6 +857,7 @@ mod tests {
             "openai",
             "gpt-test",
             classification,
+            followup_number,
         )
         .await
     }
@@ -778,11 +887,117 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn evaluate_passes_buyer_and_seller_texts_through_distinctly() {
+        // Regression for the 2026-04-21 Alice/Bob run where a single
+        // broadcast string leaked a buyer-directed question to the
+        // seller. The policy layer MUST preserve both texts without
+        // mixing or dropping either side.
+        let conn = fresh_conn();
+        let mut resp = base_response();
+        resp.suggested_action = SuggestedAction::AskClarification {
+            buyer_text: "BUYER-ONLY-QUESTION".into(),
+            seller_text: "SELLER-ONLY-QUESTION".into(),
+        };
+        let decision = run_evaluate(&conn, resp).await.unwrap();
+        match decision {
+            PolicyDecision::AskClarification {
+                buyer_text,
+                seller_text,
+            } => {
+                assert_eq!(buyer_text, "BUYER-ONLY-QUESTION");
+                assert_eq!(seller_text, "SELLER-ONLY-QUESTION");
+                assert_ne!(
+                    buyer_text, seller_text,
+                    "per-party texts must survive as separate strings"
+                );
+            }
+            other => panic!("expected AskClarification, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
     async fn evaluate_low_confidence_escalates() {
+        // Default `run_evaluate` runs past the bypass window (follow-up
+        // N+1), so a low-confidence response still escalates as before.
         let conn = fresh_conn();
         let mut resp = base_response();
         resp.confidence = 0.3;
         let decision = run_evaluate(&conn, resp).await.unwrap();
+        assert_eq!(
+            decision,
+            PolicyDecision::Escalate(EscalationTrigger::LowConfidence)
+        );
+    }
+
+    #[tokio::test]
+    async fn evaluate_low_confidence_ask_clarification_bypasses_in_early_mid_session() {
+        // Production case 2026-04-21 Alice/Bob: gpt-5 returned
+        // confidence 0.31 after the first single-party reply. Old
+        // policy escalated with LowConfidence and the parties never
+        // saw a second clarifying question. The bypass window
+        // (follow-ups 1..=EARLY_MIDSESSION_BYPASS_FOLLOWUPS) lets
+        // Serbero ask again before giving up.
+        let conn = fresh_conn();
+        let mut resp = base_response();
+        resp.confidence = 0.3; // below LOW_CONFIDENCE_THRESHOLD
+                               // base_response's suggested_action is AskClarification.
+        let decision = run_evaluate_at(&conn, resp, 1).await.unwrap();
+        assert_eq!(
+            decision,
+            PolicyDecision::AskClarification {
+                buyer_text: "please confirm X (buyer)".into(),
+                seller_text: "please confirm X (seller)".into(),
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn evaluate_low_confidence_ask_clarification_bypasses_at_boundary() {
+        // The bypass window is inclusive. Follow-up exactly equal to
+        // EARLY_MIDSESSION_BYPASS_FOLLOWUPS must still pass through.
+        let conn = fresh_conn();
+        let mut resp = base_response();
+        resp.confidence = 0.3;
+        let decision = run_evaluate_at(&conn, resp, EARLY_MIDSESSION_BYPASS_FOLLOWUPS)
+            .await
+            .unwrap();
+        assert_eq!(
+            decision,
+            PolicyDecision::AskClarification {
+                buyer_text: "please confirm X (buyer)".into(),
+                seller_text: "please confirm X (seller)".into(),
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn evaluate_low_confidence_ask_clarification_past_bypass_escalates() {
+        // Immediately past the bypass window, sustained low confidence
+        // is a real "tried and failed" signal — escalate as before.
+        let conn = fresh_conn();
+        let mut resp = base_response();
+        resp.confidence = 0.3;
+        let decision = run_evaluate_at(&conn, resp, EARLY_MIDSESSION_BYPASS_FOLLOWUPS + 1)
+            .await
+            .unwrap();
+        assert_eq!(
+            decision,
+            PolicyDecision::Escalate(EscalationTrigger::LowConfidence)
+        );
+    }
+
+    #[tokio::test]
+    async fn evaluate_low_confidence_summarize_escalates_inside_bypass_window() {
+        // The bypass only covers AskClarification. An unconfident
+        // Summarize is a terminal commitment Serbero must NOT make
+        // even in the early mid-session window — Summarize triggers
+        // notification-to-solvers and a state walk all the way to
+        // `closed`; getting that wrong is expensive to recover from.
+        let conn = fresh_conn();
+        let mut resp = base_response();
+        resp.confidence = 0.3;
+        resp.suggested_action = SuggestedAction::Summarize;
+        let decision = run_evaluate_at(&conn, resp, 1).await.unwrap();
         assert_eq!(
             decision,
             PolicyDecision::Escalate(EscalationTrigger::LowConfidence)
@@ -795,7 +1010,10 @@ mod tests {
         let decision = run_evaluate(&conn, base_response()).await.unwrap();
         assert_eq!(
             decision,
-            PolicyDecision::AskClarification("please confirm X".into())
+            PolicyDecision::AskClarification {
+                buyer_text: "please confirm X (buyer)".into(),
+                seller_text: "please confirm X (seller)".into(),
+            }
         );
         let (rat_count, evt_count): (i64, i64) = {
             let guard = conn.lock().await;

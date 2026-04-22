@@ -9,7 +9,7 @@
 //! US4) and the engine-driven ingest tick (T040 / T051) remain
 //! deferred.
 
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, Transaction};
 
 use crate::error::Result;
 use crate::models::mediation::{MediationSessionState, TranscriptParty};
@@ -210,6 +210,55 @@ pub fn recompute_round_count(conn: &Connection, session_id: &str) -> Result<i64>
     Ok(new_rounds)
 }
 
+/// Total number of fresh (non-stale) inbound rows for a session.
+///
+/// Phase 11's dispatch gate (FR-127) keys off "evaluated at least one
+/// new inbound since the last verdict", NOT "round_count advanced".
+/// The `round_count` min-rule from `recompute_round_count` requires
+/// BOTH parties to reply before it increments — so a single-party
+/// reply (the common mid-session case) would never cross the gate if
+/// it watched `round_count`. Instead, `advance_session_round` compares
+/// this total against `round_count_last_evaluated`, which is
+/// reinterpreted as "count of fresh inbounds already classified".
+///
+/// The column name stays `round_count_last_evaluated` for migration
+/// continuity; a rename is a future cleanup.
+pub fn count_fresh_inbounds(conn: &Connection, session_id: &str) -> Result<i64> {
+    let n: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM mediation_messages
+         WHERE session_id = ?1 AND direction = 'inbound' AND stale = 0",
+        params![session_id],
+        |r| r.get(0),
+    )?;
+    Ok(n)
+}
+
+/// Number of `classification_produced` audit rows for a session.
+///
+/// Phase 11 follow-up ordinal. The initial classification and each
+/// mid-session `policy::evaluate` write exactly one such row (inside
+/// the same transaction as the rationale), so the count is a
+/// reliable monotonic counter of evaluations already committed. The
+/// mid-session follow-up path uses it to pick `followup_number` /
+/// the "Round N" label without relying on `round_count_last_evaluated`
+/// (which now counts fresh inbounds, not evaluations, so using it
+/// for the user-visible round label skipped numbers when both
+/// parties replied in the same tick).
+///
+/// Returned as `u32` because every caller is downstream of the
+/// policy layer's bypass window (`EARLY_MIDSESSION_BYPASS_FOLLOWUPS`)
+/// which is `u32`-typed; any realistic session has far fewer than
+/// `u32::MAX` evaluations.
+pub fn count_classification_events(conn: &Connection, session_id: &str) -> Result<u32> {
+    let n: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM mediation_events
+         WHERE session_id = ?1 AND kind = 'classification_produced'",
+        params![session_id],
+        |r| r.get(0),
+    )?;
+    Ok(n.max(0) as u32)
+}
+
 /// Snapshot of a live mediation_sessions row, used by the engine's
 /// startup-resume pass and its per-tick ingest loop (T051 / T052).
 /// Only the fields both paths need — keep thin.
@@ -355,6 +404,72 @@ pub fn latest_open_session_for(
         Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
         Err(e) => Err(e.into()),
     }
+}
+
+/// Phase 11 idempotency-marker writer (FR-127).
+///
+/// Sets `round_count_last_evaluated = new_round_count` AND resets
+/// `consecutive_eval_failures = 0` in a single UPDATE. Takes a
+/// `&Transaction` so the caller can commit the marker advance
+/// atomically with whatever side effect the mid-session dispatch
+/// produced (two `mediation_messages` rows + a state transition for
+/// `AskClarification`, or a `classification_produced` event for
+/// `Summarize`). A commit of the enclosing transaction makes both
+/// visible together; a rollback loses both. That atomicity is the
+/// whole point — a crash between "dispatched outbound" and "marked
+/// the round evaluated" would otherwise re-dispatch on the next
+/// tick and double-message the parties.
+///
+/// Resetting `consecutive_eval_failures` to 0 is paired with the
+/// marker advance on purpose: any successful evaluation clears the
+/// failure streak by definition (FR-130 "Any successful evaluation
+/// resets consecutive_eval_failures to 0").
+pub fn advance_evaluator_marker(
+    tx: &Transaction<'_>,
+    session_id: &str,
+    new_round_count: i64,
+) -> Result<()> {
+    tx.execute(
+        "UPDATE mediation_sessions
+         SET round_count_last_evaluated = ?1,
+             consecutive_eval_failures = 0
+         WHERE session_id = ?2",
+        params![new_round_count, session_id],
+    )?;
+    Ok(())
+}
+
+/// Phase 11 bounded-failure counter (FR-130).
+///
+/// Increments `consecutive_eval_failures` for the session and
+/// returns the new value. The caller uses the return value to
+/// decide whether to escalate with `ReasoningUnavailable`
+/// (threshold: value `>= 3` per FR-130).
+///
+/// Takes `&Connection` (not `&Transaction`) because the failure
+/// path writes this increment OUTSIDE whatever transaction the
+/// dispatch attempted — the dispatch's transaction has already
+/// been dropped by the time we're in the error branch. The single
+/// UPDATE is still atomic (SQLite's default isolation handles it);
+/// there is no "increment + read back" race within the lock that
+/// the caller holds around `advance_session_round`.
+pub fn bump_consecutive_eval_failures(conn: &Connection, session_id: &str) -> Result<i64> {
+    // Collapsed UPDATE + SELECT into a single statement via
+    // SQLite's RETURNING clause (3.35+, available in the bundled
+    // rusqlite). Saves one round-trip and closes the window where
+    // a concurrent writer could sneak a second increment between
+    // the UPDATE and the read-back. (The caller holds the async
+    // mutex around the dispatch path, but RETURNING is the right
+    // idiom regardless.)
+    let new_value: i64 = conn.query_row(
+        "UPDATE mediation_sessions
+         SET consecutive_eval_failures = consecutive_eval_failures + 1
+         WHERE session_id = ?1
+         RETURNING consecutive_eval_failures",
+        params![session_id],
+        |r| r.get(0),
+    )?;
+    Ok(new_value)
 }
 
 #[cfg(test)]
@@ -643,5 +758,100 @@ mod tests {
             .unwrap();
         assert_eq!(state, "escalation_recommended");
         assert_eq!(ts, 555);
+    }
+
+    // ---------------------------------------------------------
+    // Phase 11 — idempotency-marker + failure-counter helpers (T118)
+    // ---------------------------------------------------------
+
+    fn read_eval_columns(conn: &Connection, session_id: &str) -> (i64, i64) {
+        conn.query_row(
+            "SELECT round_count_last_evaluated, consecutive_eval_failures
+             FROM mediation_sessions WHERE session_id = ?1",
+            params![session_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn advance_evaluator_marker_sets_marker_and_resets_failure_counter() {
+        let mut conn = fresh();
+        insert_session(&conn, &new_session("pol-adv-1")).unwrap();
+        // Seed a non-zero failure counter to prove the reset.
+        conn.execute(
+            "UPDATE mediation_sessions SET consecutive_eval_failures = 2
+             WHERE session_id = 'sess-1'",
+            [],
+        )
+        .unwrap();
+
+        let tx = conn.transaction().unwrap();
+        advance_evaluator_marker(&tx, "sess-1", 3).unwrap();
+        tx.commit().unwrap();
+
+        let (marker, failures) = read_eval_columns(&conn, "sess-1");
+        assert_eq!(marker, 3, "marker must advance to the supplied round count");
+        assert_eq!(
+            failures, 0,
+            "any successful evaluation resets the failure streak"
+        );
+    }
+
+    #[test]
+    fn advance_evaluator_marker_rolls_back_on_transaction_rollback() {
+        // FR-127: a rollback of the enclosing transaction MUST
+        // leave the marker untouched. Otherwise a crash between
+        // "dispatched outbound" and "marked evaluated" could
+        // re-dispatch — the whole point of the marker.
+        let mut conn = fresh();
+        insert_session(&conn, &new_session("pol-adv-2")).unwrap();
+
+        let tx = conn.transaction().unwrap();
+        advance_evaluator_marker(&tx, "sess-1", 7).unwrap();
+        drop(tx); // implicit rollback — no commit call
+
+        let (marker, failures) = read_eval_columns(&conn, "sess-1");
+        assert_eq!(
+            marker, 0,
+            "rollback must leave the marker at its pre-tx value"
+        );
+        assert_eq!(failures, 0);
+    }
+
+    #[test]
+    fn bump_consecutive_eval_failures_increments_and_returns_new_value() {
+        let conn = fresh();
+        insert_session(&conn, &new_session("pol-bump-1")).unwrap();
+
+        let v1 = bump_consecutive_eval_failures(&conn, "sess-1").unwrap();
+        assert_eq!(v1, 1);
+        let v2 = bump_consecutive_eval_failures(&conn, "sess-1").unwrap();
+        assert_eq!(v2, 2);
+        let v3 = bump_consecutive_eval_failures(&conn, "sess-1").unwrap();
+        assert_eq!(v3, 3, "third bump crosses the FR-130 escalation threshold");
+
+        let (_marker, failures) = read_eval_columns(&conn, "sess-1");
+        assert_eq!(failures, 3);
+    }
+
+    #[test]
+    fn advance_evaluator_marker_after_bumps_resets_failure_streak() {
+        // Lifecycle check: fail twice → succeed once → streak
+        // resets to 0. Validates the pairing FR-130 describes
+        // ("any successful evaluation resets").
+        let mut conn = fresh();
+        insert_session(&conn, &new_session("pol-reset")).unwrap();
+
+        assert_eq!(bump_consecutive_eval_failures(&conn, "sess-1").unwrap(), 1);
+        assert_eq!(bump_consecutive_eval_failures(&conn, "sess-1").unwrap(), 2);
+
+        let tx = conn.transaction().unwrap();
+        advance_evaluator_marker(&tx, "sess-1", 1).unwrap();
+        tx.commit().unwrap();
+
+        let (marker, failures) = read_eval_columns(&conn, "sess-1");
+        assert_eq!(marker, 1);
+        assert_eq!(failures, 0);
     }
 }

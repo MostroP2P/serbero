@@ -3,7 +3,7 @@ use rusqlite::{params, Connection, Transaction};
 use crate::error::Result;
 
 #[cfg(test)]
-const CURRENT_SCHEMA_VERSION: i64 = 3;
+const CURRENT_SCHEMA_VERSION: i64 = 4;
 
 pub fn run_migrations(conn: &mut Connection) -> Result<()> {
     conn.execute_batch(
@@ -28,6 +28,9 @@ pub fn run_migrations(conn: &mut Connection) -> Result<()> {
     }
     if applied < 3 {
         run_versioned(conn, 3, apply_v3)?;
+    }
+    if applied < 4 {
+        run_versioned(conn, 4, apply_v4)?;
     }
 
     Ok(())
@@ -234,6 +237,51 @@ fn apply_v3(tx: &Transaction<'_>) -> Result<()> {
     Ok(())
 }
 
+/// Migration v4 — Phase 11 mid-session follow-up loop.
+///
+/// Adds two columns to `mediation_sessions` so the ingest tick can
+/// drive the mid-session evaluator idempotently and track bounded
+/// consecutive failures:
+///
+/// - `round_count_last_evaluated` (FR-127): counts the total number
+///   of fresh (non-stale) inbound rows Serbero has already
+///   classified for this session. The column name is historical —
+///   an earlier draft stored the `round_count` min-rule value here;
+///   see the 2026-04-21 gate-fix commit for why fresh-inbound-count
+///   is the right idempotency primitive (a single-party reply
+///   never advances min-rule `round_count`, so the gate would never
+///   open in the common mid-session case). The evaluator skips
+///   when `count_fresh_inbounds &lt;= round_count_last_evaluated`, i.e.
+///   there is nothing new since the last classification. On a
+///   successful `advance_session_round` the value is rewritten to
+///   the current total-fresh-inbound count as part of the same
+///   atomic commit that writes the outbound rows (or, for the
+///   Summarize branch, as part of a short post-deliver transaction).
+///   Backfilled to `0` for existing rows, which forces any in-flight
+///   session to be re-evaluated once after the daemon restarts —
+///   acceptable because the alternative (skipping pre-existing
+///   sessions) keeps them silent.
+///
+/// - `consecutive_eval_failures` (FR-130): monotonic counter of
+///   back-to-back reasoning-call or commit failures for the
+///   mid-session evaluator. Incremented on failure, reset to `0` on
+///   any successful evaluation. At value `3` the session escalates
+///   with `ReasoningUnavailable` and the counter is reset by the
+///   escalation path.
+///
+/// SQLite's `ALTER TABLE ADD COLUMN` supports the `NOT NULL DEFAULT`
+/// combo used here and rewrites the page lazily. The version guard
+/// in `run_migrations` protects against re-application.
+fn apply_v4(tx: &Transaction<'_>) -> Result<()> {
+    tx.execute_batch(
+        "ALTER TABLE mediation_sessions
+            ADD COLUMN round_count_last_evaluated INTEGER NOT NULL DEFAULT 0;
+         ALTER TABLE mediation_sessions
+            ADD COLUMN consecutive_eval_failures INTEGER NOT NULL DEFAULT 0;",
+    )?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -364,6 +412,122 @@ mod tests {
         let version: i64 = conn
             .query_row("SELECT MAX(version) FROM schema_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 3);
+        // Running twice walks a v2 DB forward through v3 and v4 on
+        // the first pass and no-ops on the second; the final version
+        // is whatever `CURRENT_SCHEMA_VERSION` pins.
+        assert_eq!(version, CURRENT_SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn phase11_columns_present_on_mediation_sessions() {
+        // After a clean migration to the current schema, the two
+        // Phase 11 columns MUST exist on `mediation_sessions` and
+        // default to 0. The test inserts no rows and only inspects
+        // the schema — column presence plus default — because the
+        // backfill behaviour is covered by the idempotency test
+        // below.
+        let mut conn = open_in_memory().unwrap();
+        run_migrations(&mut conn).unwrap();
+        let mut stmt = conn
+            .prepare("PRAGMA table_info(mediation_sessions)")
+            .unwrap();
+        let cols: Vec<(String, String, String)> = stmt
+            .query_map([], |row| {
+                // PRAGMA table_info columns: cid, name, type,
+                // notnull, dflt_value, pk. We pick name, type,
+                // dflt_value (which is NULL-or-text).
+                Ok((
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, Option<String>>(4)?.unwrap_or_default(),
+                ))
+            })
+            .unwrap()
+            .collect::<std::result::Result<_, _>>()
+            .unwrap();
+        for col_name in ["round_count_last_evaluated", "consecutive_eval_failures"] {
+            let hit = cols
+                .iter()
+                .find(|(n, _, _)| n == col_name)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "mediation_sessions should have column {col_name} but only has {:?}",
+                        cols
+                    )
+                });
+            assert_eq!(
+                hit.1.to_uppercase(),
+                "INTEGER",
+                "column {col_name} must be INTEGER"
+            );
+            assert_eq!(hit.2, "0", "column {col_name} must default to 0");
+        }
+    }
+
+    #[test]
+    fn applying_phase11_over_existing_phase3_schema_backfills_zero() {
+        // Simulate a v3 DB with a session row already on file (an
+        // in-flight mediation) and confirm the v4 migration adds the
+        // two new columns with value `0` on that row, AND that a
+        // second pass is a no-op.
+        let mut conn = open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE schema_version (version INTEGER PRIMARY KEY);")
+            .unwrap();
+        for (v, apply) in [
+            (1_i64, apply_v1 as fn(&Transaction<'_>) -> Result<()>),
+            (2, apply_v2),
+            (3, apply_v3),
+        ] {
+            let tx = conn.transaction().unwrap();
+            apply(&tx).unwrap();
+            tx.execute(
+                "INSERT INTO schema_version (version) VALUES (?1)",
+                params![v],
+            )
+            .unwrap();
+            tx.commit().unwrap();
+        }
+
+        // Seed a minimal in-flight session + its parent dispute.
+        conn.execute(
+            "INSERT INTO disputes (
+                dispute_id, event_id, mostro_pubkey, initiator_role,
+                dispute_status, event_timestamp, detected_at, lifecycle_state
+             ) VALUES ('d-pre-v4', 'evt-pre-v4', 'mostro', 'buyer',
+                       'initiated', 10, 11, 'notified')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO mediation_sessions (
+                session_id, dispute_id, state, round_count,
+                prompt_bundle_id, policy_hash,
+                started_at, last_transition_at
+             ) VALUES ('sess-pre-v4', 'd-pre-v4', 'awaiting_response',
+                       2, 'phase3-default', 'hash-pre', 100, 200)",
+            [],
+        )
+        .unwrap();
+
+        // Walk forward to v4.
+        run_migrations(&mut conn).unwrap();
+        // Second pass should be a no-op; both columns already exist.
+        run_migrations(&mut conn).unwrap();
+
+        let version: i64 = conn
+            .query_row("SELECT MAX(version) FROM schema_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, CURRENT_SCHEMA_VERSION);
+
+        let (rcl, cef): (i64, i64) = conn
+            .query_row(
+                "SELECT round_count_last_evaluated, consecutive_eval_failures
+                 FROM mediation_sessions WHERE session_id = 'sess-pre-v4'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(rcl, 0, "backfill of round_count_last_evaluated must be 0");
+        assert_eq!(cef, 0, "backfill of consecutive_eval_failures must be 0");
     }
 }

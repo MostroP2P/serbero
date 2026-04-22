@@ -21,11 +21,13 @@
 pub mod auth_retry;
 pub mod eligibility;
 pub mod escalation;
+pub mod follow_up;
 pub mod policy;
 pub mod router;
 pub mod session;
 pub mod start;
 pub mod summarizer;
+pub mod transcript;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -209,10 +211,11 @@ pub async fn draft_and_send_initial_message(
     buyer_shared_keys: &Keys,
     seller_shared_keys: &Keys,
     prompt_bundle: &Arc<PromptBundle>,
-    clarification_text: &str,
+    buyer_text: &str,
+    seller_text: &str,
 ) -> Result<()> {
-    let buyer_content = format!("Buyer: {}", clarification_text);
-    let seller_content = format!("Seller: {}", clarification_text);
+    let buyer_content = format!("Buyer: {}", buyer_text);
+    let seller_content = format!("Seller: {}", seller_text);
 
     // SC-107: addresses shared pubkey, not primary — `buyer_shared_keys`
     // / `seller_shared_keys` are the ECDH-derived per-trade keys
@@ -325,6 +328,186 @@ pub async fn draft_and_send_initial_message(
         prompt_bundle_id = %prompt_bundle.id,
         policy_hash = %prompt_bundle.policy_hash,
         "initial clarifying message dispatched to both parties"
+    );
+    Ok(())
+}
+
+/// Phase 11 mid-session follow-up drafter (T119 / FR-126).
+///
+/// Sibling of [`draft_and_send_initial_message`] for the round-2+
+/// clarifying exchange. Differences from the initial drafter:
+///
+/// 1. **Round-number marker in the body.** Each party-facing content
+///    is prefixed with `"Round {N}. {role}: "` so parties can
+///    distinguish a follow-up question from the opening one.
+///    `round_number` is the 1-based round counter (round 1 is the
+///    first follow-up, *after* the opening round).
+///
+/// 2. **Idempotency marker.** The same transaction that commits the
+///    two `mediation_messages` rows also calls
+///    [`db::mediation::advance_evaluator_marker`] with the supplied
+///    `round_count_to_mark` — so a crash between "published
+///    outbound" and "marked round evaluated" cannot re-dispatch and
+///    double-message the parties on the next tick.
+///
+/// Unlike FR-129's original sketch, the session does NOT transition
+/// through `classified` / `follow_up_pending` during the mid-session
+/// loop. The state machine (`MediationSessionState::can_transition_to`)
+/// rejects a direct `classified → awaiting_response` step, and
+/// composing the legal `classified → follow_up_pending →
+/// awaiting_response` pair inside one transaction would be
+/// ceremonial churn for outside observers because no tick ever sees
+/// the intermediate state. The session instead stays in
+/// `awaiting_response` throughout the loop; the single authoritative
+/// gate against re-dispatch is `round_count_last_evaluated` (FR-127).
+/// This drafter's UPDATE refreshes `last_transition_at` so operators
+/// can see Serbero acted on this round, but leaves the `state`
+/// column unchanged.
+///
+/// Publish of the gift-wraps happens OUTSIDE the transaction,
+/// mirroring the initial drafter's commit-then-publish pattern. A
+/// publish failure returns `Err` with the rows already committed;
+/// see spec §"Non-Goals (Phase 11)" — partial-publish recovery is
+/// explicitly deferred.
+///
+/// The prompt bundle is NOT modified by this path: the `content`
+/// pushed through the gift-wrap is the per-party text (`buyer_text`
+/// / `seller_text`) as returned by `policy::evaluate` from the same
+/// pinned bundle the session was opened with. The round-number and
+/// role prefixes are cosmetic and do not affect `policy_hash`.
+#[instrument(skip_all, fields(session_id = %session_id, round = round_number))]
+#[allow(clippy::too_many_arguments)]
+pub async fn draft_and_send_followup_message(
+    conn: &Arc<AsyncMutex<rusqlite::Connection>>,
+    client: &Client,
+    serbero_keys: &Keys,
+    session_id: &str,
+    round_number: u32,
+    round_count_to_mark: i64,
+    buyer_shared_keys: &Keys,
+    seller_shared_keys: &Keys,
+    prompt_bundle: &Arc<PromptBundle>,
+    buyer_text: &str,
+    seller_text: &str,
+) -> Result<()> {
+    let buyer_content = format!("Round {round_number}. Buyer: {buyer_text}");
+    let seller_content = format!("Round {round_number}. Seller: {seller_text}");
+
+    let buyer_wrap = outbound::build_wrap(
+        serbero_keys,
+        &buyer_shared_keys.public_key(),
+        &buyer_content,
+    )
+    .await?;
+    let seller_wrap = outbound::build_wrap(
+        serbero_keys,
+        &seller_shared_keys.public_key(),
+        &seller_content,
+    )
+    .await?;
+
+    if buyer_wrap.inner_event_id == seller_wrap.inner_event_id {
+        return Err(Error::ChatTransport(
+            "inner event ids collided across parties on follow-up; refusing to \
+             persist rows that would violate the dedup invariant"
+                .into(),
+        ));
+    }
+
+    let buyer_shared_pubkey_hex = buyer_shared_keys.public_key().to_hex();
+    let seller_shared_pubkey_hex = seller_shared_keys.public_key().to_hex();
+    let buyer_inner_id_hex = buyer_wrap.inner_event_id.to_hex();
+    let seller_inner_id_hex = seller_wrap.inner_event_id.to_hex();
+    let now = current_ts_secs()?;
+
+    // Single transaction: both outbound rows + the state flip from
+    // `classified` back to `awaiting_response` + the evaluator
+    // marker advance (+ consecutive_eval_failures reset, also via
+    // advance_evaluator_marker). A rollback loses ALL of them —
+    // the FR-127 idempotency guarantee lives or dies on this atom.
+    {
+        let mut guard = conn.lock().await;
+        let tx = guard.transaction()?;
+        db::mediation::insert_outbound_message(
+            &tx,
+            &db::mediation::NewOutboundMessage {
+                session_id,
+                party: TranscriptParty::Buyer,
+                shared_pubkey: &buyer_shared_pubkey_hex,
+                inner_event_id: &buyer_inner_id_hex,
+                inner_event_created_at: buyer_wrap.inner_created_at,
+                outer_event_id: Some(&buyer_wrap.outer.id.to_hex()),
+                content: &buyer_content,
+                prompt_bundle_id: &prompt_bundle.id,
+                policy_hash: &prompt_bundle.policy_hash,
+                persisted_at: now,
+            },
+        )?;
+        db::mediation::insert_outbound_message(
+            &tx,
+            &db::mediation::NewOutboundMessage {
+                session_id,
+                party: TranscriptParty::Seller,
+                shared_pubkey: &seller_shared_pubkey_hex,
+                inner_event_id: &seller_inner_id_hex,
+                inner_event_created_at: seller_wrap.inner_created_at,
+                outer_event_id: Some(&seller_wrap.outer.id.to_hex()),
+                content: &seller_content,
+                prompt_bundle_id: &prompt_bundle.id,
+                policy_hash: &prompt_bundle.policy_hash,
+                persisted_at: now,
+            },
+        )?;
+        // Refresh `last_transition_at` to mark that Serbero did
+        // work on this round. The WHERE guard keeps the write
+        // honest: if the session is no longer in
+        // `awaiting_response` (something else raced us into
+        // escalation / supersession), the drafter's UPDATE is a
+        // no-op and the caller still commits the rows + marker —
+        // that's fine because the outbound is historical evidence
+        // of the attempt; the stale `last_transition_at` is a
+        // cosmetic artifact, not a state-machine violation.
+        tx.execute(
+            "UPDATE mediation_sessions
+             SET last_transition_at = ?1
+             WHERE session_id = ?2 AND state = 'awaiting_response'",
+            params![now, session_id],
+        )?;
+        db::mediation::advance_evaluator_marker(&tx, session_id, round_count_to_mark)?;
+        tx.commit()?;
+    }
+
+    // Publish + audit outside the transaction. Matches the initial
+    // drafter's pattern: failure here returns `Err` and the rows
+    // stay committed as a historical record. See FR-126 Non-Goals
+    // in spec.md.
+    session::publish_with_bounded_retry(client, &buyer_wrap.outer, "buyer").await?;
+    record_outbound_sent_audit(
+        conn,
+        session_id,
+        &buyer_shared_pubkey_hex,
+        &buyer_inner_id_hex,
+        prompt_bundle,
+    )
+    .await?;
+
+    session::publish_with_bounded_retry(client, &seller_wrap.outer, "seller").await?;
+    record_outbound_sent_audit(
+        conn,
+        session_id,
+        &seller_shared_pubkey_hex,
+        &seller_inner_id_hex,
+        prompt_bundle,
+    )
+    .await?;
+
+    info!(
+        session_id = %session_id,
+        round = round_number,
+        round_count_marked = round_count_to_mark,
+        prompt_bundle_id = %prompt_bundle.id,
+        policy_hash = %prompt_bundle.policy_hash,
+        "follow-up clarifying message dispatched to both parties"
     );
     Ok(())
 }
@@ -450,8 +633,12 @@ pub async fn run_engine(
         if let Err(e) = run_ingest_tick(
             &conn,
             &client,
+            &serbero_keys,
+            reasoning.as_ref(),
             &session_key_cache,
             &prompt_bundle,
+            &provider_name,
+            &model_name,
             &mediation_cfg,
             &solvers,
         )
@@ -1432,8 +1619,12 @@ pub(crate) fn current_ts_secs() -> Result<i64> {
 async fn run_ingest_tick(
     conn: &Arc<AsyncMutex<rusqlite::Connection>>,
     client: &Client,
+    serbero_keys: &Keys,
+    reasoning: &dyn ReasoningProvider,
     session_key_cache: &SessionKeyCache,
     prompt_bundle: &Arc<PromptBundle>,
+    provider_name: &str,
+    model_name: &str,
     mediation_cfg: &MediationConfig,
     solvers: &[SolverConfig],
 ) -> Result<()> {
@@ -1570,11 +1761,20 @@ async fn run_ingest_tick(
             }
         };
         envelopes_fetched += envelopes.len() as u64;
+        // Track whether this session received any Fresh envelope on
+        // this tick cycle. If yes, fire the Phase 11 mid-session
+        // advancement hook (T121) after the envelope loop finishes;
+        // if no, skip it — `advance_session_round`'s idempotency
+        // gate (round_count > round_count_last_evaluated) would
+        // detect nothing to do anyway, but this local flag avoids
+        // the redundant DB lookup.
+        let mut session_had_fresh = false;
 
         'envelope_loop: for env in &envelopes {
             match session::ingest_inbound(conn, &session_id, env).await {
                 Ok(session::IngestOutcome::Fresh { round_count_after }) => {
                     rows_ingested += 1;
+                    session_had_fresh = true;
                     // T068 — after each Fresh ingest, check whether
                     // the session has hit the configured round cap.
                     // If so, escalate with `RoundLimit` and STOP
@@ -1584,6 +1784,19 @@ async fn run_ingest_tick(
                     // would just add noise to an escalated transcript.
                     let rc_after: u32 = round_count_after.max(0) as u32;
                     if session::check_round_limit(rc_after, mediation_cfg.max_rounds) {
+                        // Clear the per-session "had fresh" flag
+                        // before the escalation attempt so the
+                        // post-loop Phase 11 hook
+                        // (advance_session_round) does NOT run for
+                        // this session on this tick. If
+                        // escalation::recommend succeeds, the state
+                        // gate in advance_session_round would also
+                        // skip; if it fails, the session stays in
+                        // awaiting_response and without this
+                        // explicit clear the hook would run and try
+                        // to dispatch clarifications on a session
+                        // that the tick just decided should escalate.
+                        session_had_fresh = false;
                         warn!(
                             session_id = %session_id,
                             round_count = rc_after,
@@ -1658,6 +1871,45 @@ async fn run_ingest_tick(
                     );
                 }
             }
+        }
+
+        // Phase 11 / T121 — mid-session advancement hook.
+        //
+        // Fires once per session per tick, AFTER the envelope loop,
+        // when at least one Fresh envelope landed. Reasons the call
+        // site lives here rather than inside the Fresh arm:
+        //
+        // - If both parties replied between ticks we still want
+        //   exactly one reasoning call (with the transcript that
+        //   includes both replies), not one per reply.
+        // - If the round-limit escalation above broke out of the
+        //   envelope loop and flipped the session to
+        //   `escalation_recommended`, `advance_session_round`'s
+        //   state gate short-circuits — no duplicate dispatch.
+        // - Any error inside `advance_session_round` is absorbed
+        //   there (log + failure-counter bump). The ingest tick
+        //   MUST keep processing other sessions.
+        if session_had_fresh {
+            follow_up::advance_session_round(
+                conn,
+                client,
+                serbero_keys,
+                reasoning,
+                prompt_bundle,
+                &session_id,
+                session_key_cache,
+                solvers,
+                provider_name,
+                model_name,
+            )
+            .await
+            .unwrap_or_else(|e| {
+                warn!(
+                    session_id = %session_id,
+                    error = %e,
+                    "ingest tick: advance_session_round surfaced an error (continuing tick)"
+                );
+            });
         }
     }
 

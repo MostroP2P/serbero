@@ -333,9 +333,7 @@ impl MostroChatSim {
                         let Ok((msg, _sig)) = serde_json::from_str::<(
                             Message,
                             Option<nostr_sdk::secp256k1::schnorr::Signature>,
-                        )>(
-                            &unwrapped.rumor.content
-                        ) else {
+                        )>(&unwrapped.rumor.content) else {
                             return Ok(false);
                         };
                         let kind = msg.get_inner_message_kind();
@@ -409,7 +407,11 @@ impl MostroChatSim {
 /// Scripted reasoning provider used by US1 happy-path tests.
 ///
 /// `classify` always returns `CoordinationFailureResolvable` with
-/// confidence `0.9` and `SuggestedAction::AskClarification(clarification)`.
+/// confidence `0.9` and an `AskClarification` with the same text
+/// addressed to both parties. Integration tests that care about the
+/// per-party split (the production invariant that buyer and seller
+/// get distinct messages) should construct their own provider with
+/// different `buyer_text` / `seller_text` inline.
 /// `summarize` returns `ReasoningError::Unreachable` (US3 scope).
 /// `health_check` always succeeds.
 pub struct MockReasoningProvider {
@@ -425,7 +427,10 @@ impl ReasoningProvider for MockReasoningProvider {
         Ok(ClassificationResponse {
             classification: ClassificationLabel::CoordinationFailureResolvable,
             confidence: 0.9,
-            suggested_action: SuggestedAction::AskClarification(self.clarification.clone()),
+            suggested_action: SuggestedAction::AskClarification {
+                buyer_text: self.clarification.clone(),
+                seller_text: self.clarification.clone(),
+            },
             rationale: RationaleText("both parties seem cooperative".into()),
             flags: Vec::new(),
         })

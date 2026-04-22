@@ -49,9 +49,22 @@ pub struct ClassificationRequest {
 
 /// Actions the reasoning provider may suggest. Always validated by
 /// the policy layer before any side effect.
+///
+/// `AskClarification` carries two distinct texts — one tailored for
+/// the buyer, one for the seller. A single shared text was the
+/// original shape but it broke in the wild (2026-04-21 Alice/Bob
+/// run): the model sometimes addressed one role explicitly (e.g.
+/// "Buyer: have you sent the fiat payment?") and that question went
+/// to both parties, confusing the one it wasn't aimed at. Asking the
+/// model for two messages and delivering each to its intended
+/// recipient keeps both parties in the loop with questions that
+/// make sense for their role.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SuggestedAction {
-    AskClarification(String),
+    AskClarification {
+        buyer_text: String,
+        seller_text: String,
+    },
     Summarize,
     Escalate(EscalationReason),
 }

@@ -458,10 +458,7 @@ mod tests {
                 "start_attempt_stopped",
             ),
             (MediationEventKind::ReasoningVerdict, "reasoning_verdict"),
-            (
-                MediationEventKind::TakeDisputeIssued,
-                "take_dispute_issued",
-            ),
+            (MediationEventKind::TakeDisputeIssued, "take_dispute_issued"),
             (MediationEventKind::SessionOpened, "session_opened"),
             (MediationEventKind::OutboundSent, "outbound_sent"),
             (MediationEventKind::InboundIngested, "inbound_ingested"),
@@ -672,7 +669,10 @@ mod tests {
             )
             .unwrap();
         assert_eq!(kind, "start_attempt_started");
-        assert!(sid.is_none(), "dispute-scoped row must have NULL session_id");
+        assert!(
+            sid.is_none(),
+            "dispute-scoped row must have NULL session_id"
+        );
         let parsed: serde_json::Value = serde_json::from_str(&payload).unwrap();
         assert_eq!(parsed["dispute_id"], "d-ph10");
         assert_eq!(parsed["trigger"], "detected");
@@ -681,14 +681,9 @@ mod tests {
     #[test]
     fn start_attempt_stopped_captures_stop_reason() {
         let conn = fresh_without_session();
-        let id = record_start_attempt_stopped(
-            &conn,
-            None,
-            "d-ph10",
-            "reasoning_verdict_negative",
-            150,
-        )
-        .unwrap();
+        let id =
+            record_start_attempt_stopped(&conn, None, "d-ph10", "reasoning_verdict_negative", 150)
+                .unwrap();
         let payload: String = conn
             .query_row(
                 "SELECT payload_json FROM mediation_events WHERE id = ?1",
@@ -786,7 +781,10 @@ mod tests {
             .unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&payload).unwrap();
         assert_eq!(parsed["outcome"], "success");
-        assert!(parsed.get("reason").is_none(), "success payload must omit reason");
+        assert!(
+            parsed.get("reason").is_none(),
+            "success payload must omit reason"
+        );
     }
 
     #[test]

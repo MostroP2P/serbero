@@ -731,6 +731,147 @@ required by FR-124 and "Final Solver Report on External Resolution".
   the dispute (a Phase 1/2-only case). Free-text rationale MUST follow
   FR-120 (reference id only in general logs).
 
+- **FR-125** *(event-driven mid-session advancement)*: After the
+  ingest tick persists a fresh inbound envelope for a live session
+  (`awaiting_response`) AND the existing US4 round-limit check does
+  NOT escalate, Serbero MUST evaluate whether the session can advance
+  within one ingest-tick cycle. The evaluator MUST reconstruct the
+  session transcript, call the reasoning provider's `classify` with
+  that transcript and the session's pinned prompt bundle, feed the
+  `ClassificationResponse` into `policy::evaluate`, and dispatch the
+  returned `PolicyDecision`. The evaluator MUST be invoked at most
+  once per fresh-inbound total per session (see FR-127).
+
+- **FR-126** *(dispatch on PolicyDecision mid-session)*: Given a
+  `PolicyDecision` from `policy::evaluate`, mid-session dispatch MUST
+  mirror open-time dispatch:
+
+  - `AskClarification(text)` → draft per-party outbound messages,
+    persist two `mediation_messages` rows (one per party) and the
+    state transition atomically inside one DB transaction, then
+    publish both gift-wraps. On success the session progresses to
+    `awaiting_response`. Failure handling MUST match the existing
+    open-time drafter (`draft_and_send_initial_message`): the DB
+    commit happens before publish, so a publish failure for either
+    party returns `Err` with the rows already committed and NO
+    automatic retry. The operator sees the failure via the log line
+    and (for Phase 11) via the `consecutive_eval_failures` counter;
+    the session keeps its existing drafter semantics rather than
+    inventing a new recovery path mid-session. Partial-publish
+    recovery is explicitly out of scope for Phase 11 — see "Non-Goals
+    (Phase 11)" below.
+  - `Summarize { classification, confidence }` → delegate to the
+    existing `deliver_summary` entrypoint with the mid-session
+    transcript; the session progresses `classified → summary_pending
+    → summary_delivered → closed` as it does today on the open-time
+    cooperative-summary path.
+  - `Escalate(trigger)` → delegate to `escalation::recommend(...)`
+    and transition the session to `escalation_recommended`; Phase 4
+    consumes the handoff as today.
+
+  The mid-session drafter for `AskClarification` MAY share code with
+  the open-time drafter but MUST emit a round-number marker in the
+  outbound body so parties can distinguish a follow-up question from
+  the opening one. The drafter MUST NOT quote or re-send earlier
+  Serbero outbound text in the next outbound body.
+
+- **FR-127** *(evaluation idempotency)*: `mediation_sessions` MUST
+  carry a `round_count_last_evaluated` column. The evaluator MUST
+  count the session's fresh inbound rows
+  (`direction = 'inbound' AND stale = 0`) and
+  `round_count_last_evaluated` under the session lock, skip the
+  evaluation when they are equal, and write
+  `round_count_last_evaluated = <current fresh-inbound count>`
+  atomically with the **DB commit** of the dispatched side effect
+  (inside the same transaction that writes the outbound rows or the
+  state transition). Note the column name is historical: it counts
+  "fresh inbounds already evaluated", NOT completed rounds. A
+  single-party reply is enough to cross the gate — waiting for the
+  other party before re-evaluating was the original design and
+  turned out to mis-serve the common case (one side answers first,
+  then Serbero should press the other). "Atomic with the DB commit"
+  is branch (A) of the commit-vs-publish choice: a successful
+  publish of the gift-wraps is NOT a precondition for the marker
+  advance. Rationale: mirroring the open-time drafter's
+  commit-then-publish pattern keeps the two paths symmetric and
+  keeps the DB state inspectable without cross-referencing relay
+  state. The consequence — partial-publish failures leave the
+  marker advanced and the rows committed, blocking automatic retry
+  — is a documented limitation (see "Non-Goals (Phase 11)" on
+  partial-publish recovery). A crash between the reasoning call
+  and the dispatch DB commit MUST NOT advance the marker, which
+  means the next tick retries cleanly.
+
+- **FR-128** *(transcript construction)*: The transcript passed to
+  `classify` MUST include every `mediation_messages` row for the
+  session with `direction = 'outbound'` (Serbero-authored) and
+  `direction = 'inbound'` with `stale = 0`. Rows MUST be ordered by
+  `inner_event_created_at` ascending, with a stable tie-breaker on
+  the row `id` so identical timestamps do not cause
+  non-deterministic ordering. Party role MUST be tagged from the
+  session's `buyer_shared_pubkey` / `seller_shared_pubkey` mapping;
+  an inbound whose shared pubkey matches neither side MUST be
+  excluded and logged at `warn!`. No more than the last 40 rows are
+  included (a guard against runaway token cost). Rows with
+  `stale = 1` are NEVER included — they exist for audit purposes
+  (see `phase3_stale_message` in the Phase 3 integration suite) but
+  MUST NOT participate in classification. Duplicate inbound rows
+  never land in the first place (the unique index
+  `uq_mediation_messages_inner_event` blocks them), so no separate
+  "duplicate" filter is needed.
+
+- **FR-129** *(mid-session state transitions)*: The mid-session
+  loop keeps the session in `awaiting_response` throughout. Only
+  these transitions are written — and only when the corresponding
+  decision fires, reusing the existing open-time helpers that
+  already own those state flips:
+
+  - `awaiting_response → summary_pending`: when `policy::evaluate`
+    returns `Summarize`, by the existing `deliver_summary` entry
+    point (which then progresses `summary_pending →
+    summary_delivered → closed` as it does on the open-time
+    cooperative-summary path).
+  - `awaiting_response → escalation_recommended`: when the decision
+    is `Escalate(trigger)`, by `escalation::recommend`.
+
+  When the decision is `AskClarification`, the loop does NOT
+  transition the session state at all: the follow-up drafter
+  refreshes `last_transition_at` to mark that Serbero acted on this
+  round and leaves the `state` column as `awaiting_response`. The
+  single authoritative gate against re-dispatch is
+  `round_count_last_evaluated` (FR-127).
+
+  The `classified` and `follow_up_pending` states defined in
+  `mediation_sessions.state` are NOT written by this loop. The
+  state machine (`MediationSessionState::can_transition_to`)
+  rejects the direct `classified → awaiting_response` edge, and
+  composing the legal `classified → follow_up_pending →
+  awaiting_response` pair inside a single transaction is ceremonial
+  churn for outside observers because no ingest-tick observer ever
+  sees the intermediate state. Earlier drafts of this FR called for
+  using those states; the implementation (T119 drafter + T120
+  orchestrator) drops them as a known, documented divergence. A
+  future cleanup PR may remove the two unused variants from the
+  enum; see "Non-Goals (Phase 11)".
+
+- **FR-130** *(failure isolation and bounded retry)*: A reasoning-
+  call or DB failure during mid-session evaluation MUST log at
+  `warn!`, leave `round_count_last_evaluated` unchanged, and NOT
+  block other sessions on the same tick. The next tick retries the
+  same round. Consecutive failures for the same session MUST be
+  tracked on `mediation_sessions.consecutive_eval_failures`; at the
+  third consecutive failure the session MUST escalate with
+  `EscalationTrigger::ReasoningUnavailable` using the existing
+  escalation machinery. Any successful evaluation resets
+  `consecutive_eval_failures` to 0.
+
+- **FR-131** *(concurrency guard)*: A single session's evaluator
+  MUST NOT run concurrently with another evaluation of the same
+  session. The current single-task ingest tick satisfies this by
+  construction; a regression test MUST assert that a manual second
+  invocation on the same `round_count` is rejected by the FR-127
+  marker without emitting duplicate outbounds.
+
 ### Key Entities *(include if feature involves data)*
 
 - **MediationSession**: A single mediation attempt for one dispute.
@@ -1160,6 +1301,137 @@ resolved-terminal transition is observed:
 - the report narrative MUST note that an escalation was recommended
   but the dispute resolved before Phase 4 acted on it.
 
+## Mid-Session Follow-Up Loop
+
+### Background
+
+Phase 3 US1 opens a mediation session and dispatches the first
+clarifying outbound. Phase 3 US2 ingests party replies into
+`mediation_messages` and increments `round_count`. A 2026-04-21 audit
+confirmed that the link between those two — the step that, after a
+party replies, re-classifies the transcript and dispatches the next
+side effect — is missing in `main`: `policy::evaluate` has zero
+production call sites, no code path drives `awaiting_response →
+classified` in response to an inbound, and the `follow_up_pending`
+state is never written. The runtime-observed symptom: parties reply,
+Serbero persists the replies, and then nothing happens.
+
+This section closes that loop. Scope is deliberately narrow — one
+new trigger, one idempotency marker, one bounded-failure counter,
+three new integration tests. No prompt-bundle changes, no new
+states, no transport changes.
+
+### Flow
+
+```text
+run_ingest_tick persists a fresh inbound envelope for session S
+       │
+       │ US4 round-limit check (existing) does NOT escalate
+       ▼
+┌─────────────────────────────────────────────────────────┐
+│ advance_session_round(S)                                │
+│                                                         │
+│ (1) gate: fresh_inbound_count >                         │
+│     round_count_last_evaluated — else skip              │
+│     (FR-127 idempotency; column name is historical,     │
+│     counts evaluated fresh inbounds, not rounds)        │
+│ (2) reconstruct transcript from mediation_messages      │
+│     (FR-128: ordered, annotated by party, ≤ 40 rows)    │
+│ (3) reasoning.classify(transcript, pinned_bundle)       │
+│ (4) policy::evaluate → PolicyDecision                   │
+│     (writes classification_produced in its own tx)      │
+│ (5) dispatch on decision (FR-126 + FR-129):             │
+│       AskClarification → T119 drafter:                  │
+│         - state stays `awaiting_response` throughout    │
+│           (no mid-session classified transition)        │
+│         - 2 outbound rows + advance_evaluator_marker    │
+│           committed in one tx                           │
+│         - publish gift-wraps outside the tx             │
+│       Summarize → pre-transition                        │
+│         `awaiting_response → classified`, then          │
+│         deliver_summary walks classified →              │
+│         summary_pending → summary_delivered → closed,   │
+│         then advance_evaluator_marker in a short tx     │
+│       Escalate → escalation::recommend (session →       │
+│         escalation_recommended); marker is moot         │
+│ (6) on AskClarification, the marker advanced at (5)     │
+│     and consecutive_eval_failures reset to 0 in the     │
+│     same tx that committed the outbound rows            │
+└─────────────────────────────────────────────────────────┘
+```
+
+Failure handling by step:
+
+- **(3) reasoning call** or **(4) policy evaluation** error: log at
+  `warn!`, leave `round_count_last_evaluated` unchanged, increment
+  `consecutive_eval_failures`. The next ingest tick retries the same
+  round. At the third consecutive failure the session escalates with
+  `ReasoningUnavailable` (FR-130). No partial state is written.
+- **(5) dispatch** error:
+  - For `AskClarification`, the drafter commits the two
+    `mediation_messages` rows AND `advance_evaluator_marker`
+    atomically, THEN publishes gift-wraps. Per FR-127 branch (A),
+    a publish failure returns `Err` with rows + marker already
+    committed — partial-publish recovery is a Non-Goal. The
+    dispatch-error path bumps `consecutive_eval_failures`; the
+    unified failure handler escalates with `ReasoningUnavailable`
+    on the third consecutive failure (FR-130) so persistent
+    dispatch issues eventually surface to a human.
+  - For `Summarize`, `deliver_summary` owns its own transaction and
+    state progression (`classified → summary_pending → ...`). On
+    failure the existing `deliver_summary` error path applies
+    unchanged; `advance_evaluator_marker` is called in a post-commit
+    DB op on success only.
+  - For `Escalate`, `escalation::recommend` transitions the session
+    out of `awaiting_response`; `consecutive_eval_failures` is moot
+    at that point because no further evaluations will run on this
+    session.
+
+### What this loop does NOT do
+
+- No new state definitions. `classified`, `summary_pending`,
+  `summary_delivered`, `escalation_recommended` already exist.
+  `follow_up_pending` stays unused (kept for a future cleanup PR;
+  see "Non-Goals" below).
+- No prompt-bundle changes. Uses the same `policy_hash` the session
+  was opened with.
+- No change to the transport or key lifecycle. Mid-session outbounds
+  are gift-wraps on the Mostro chat transport, keyed by the same
+  per-party shared pubkeys the session was opened with.
+- No multi-tick concurrency. Assumes single-task ingest tick (current
+  behavior).
+- No free-text escalation reasons. `escalation::recommend` receives
+  one of the existing `EscalationTrigger` variants.
+
+### Non-Goals (Phase 11)
+
+The following are deliberately out of scope. Each belongs in a
+subsequent slice with its own spec amendment.
+
+- **Partial-publish recovery.** When the mid-session `AskClarification`
+  dispatch commits both `mediation_messages` rows but the gift-wrap
+  publish for one of the two parties fails, Phase 11 returns `Err`,
+  leaves the rows committed (consistent with the open-time drafter),
+  and does NOT emit a dedicated `outbound_send_failed` audit row, does
+  NOT maintain a retry queue, and does NOT automatically republish.
+  The session keeps the same visibility / recovery posture it has
+  today when the opening drafter fails mid-publish. Known consequence:
+  the "silent" party does not receive the clarifying question and
+  will not reply; the round-limit check (US4) eventually escalates
+  that session.
+- **Removing the `follow_up_pending` enum variant + CHECK constraint.**
+  Phase 11 does not write the state and does not touch the schema
+  around it. A future housekeeping PR can remove it after confirming
+  no downstream consumer (Phase 4 handoff, analytics, replay tooling)
+  depends on the string form.
+- **Promoting the 40-row transcript cap to config.** `N = 40` stays
+  hardcoded for this increment; a later PR may expose it as
+  `[mediation].max_transcript_messages`.
+- **Multi-tick concurrency.** If future scale requires parallel
+  per-session tick workers, `round_count_last_evaluated` is the
+  correct idempotency primitive, but the concurrency harness itself
+  is out of scope here.
+
 ## Solver Identity and Authorization
 
 - Serbero MUST act under a Nostr keypair loaded from config (same
@@ -1371,6 +1643,35 @@ Environment variable overrides (including `SERBERO_PRIVATE_KEY`,
   `mediation_sessions` / `mediation_events` / `mediation_messages`
   and the notifier outbound log, and confirming no duplicates and no
   omissions.
+
+- **SC-112** *(mid-session advancement happy path)*: Given a session
+  in `awaiting_response` with one outbound on file, when a party
+  replies and the ingest tick persists the reply, within one
+  subsequent ingest-tick cycle Serbero publishes a second outbound
+  to both parties (for a happy-path `AskClarification` classification).
+  Verifiable by integration test `tests/phase3_followup_round.rs`.
+
+- **SC-113** *(mid-session idempotency)*: After SC-112 completes,
+  when the next ingest tick fires without any new inbound, Serbero
+  does NOT publish additional outbounds for the same round.
+  Verifiable by the same test (assertion on outbound row count and
+  absence of duplicate `classification_produced` rows for the same
+  `round_count`).
+
+- **SC-114** *(mid-session summarize branch)*: Given a session where
+  `policy::evaluate` returns `Summarize { classification, confidence }`
+  on a mid-session call, when the ingest tick processes the
+  triggering inbound, then `deliver_summary` fires exactly once and
+  the session ends in `closed` with a `summary_delivered` event on
+  file. Verifiable by integration test
+  `tests/phase3_followup_summary.rs`.
+
+- **SC-115** *(mid-session reasoning-failure escalation)*: Given a
+  session whose reasoning calls fail three consecutive times on the
+  mid-session path, the session MUST transition to
+  `escalation_recommended` with trigger `ReasoningUnavailable`.
+  Verifiable by integration test
+  `tests/phase3_followup_reasoning_failure.rs`.
 
 ## Assumptions
 
