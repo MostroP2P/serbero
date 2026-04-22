@@ -202,14 +202,14 @@ impl fmt::Display for ClassificationLabel {
     }
 }
 
-impl std::str::FromStr for ClassificationLabel {
-    type Err = crate::error::Error;
+impl FromStr for ClassificationLabel {
+    type Err = Error;
     /// Inverse of [`fmt::Display`]. Accepts the snake_case wire
     /// tokens the OpenAI adapter writes to audit rows. Reserved
     /// for code paths that read back the label from a
     /// `mediation_events.payload_json` — all in-process
     /// construction should use the enum variant directly.
-    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+    fn from_str(s: &str) -> Result<Self> {
         use ClassificationLabel::*;
         match s {
             "coordination_failure_resolvable" => Ok(CoordinationFailureResolvable),
@@ -217,7 +217,7 @@ impl std::str::FromStr for ClassificationLabel {
             "suspected_fraud" => Ok(SuspectedFraud),
             "unclear" => Ok(Unclear),
             "not_suitable_for_mediation" => Ok(NotSuitableForMediation),
-            other => Err(crate::error::Error::InvalidEvent(format!(
+            other => Err(Error::InvalidEvent(format!(
                 "unknown classification label token: {other}"
             ))),
         }
@@ -316,5 +316,20 @@ mod tests {
             let parsed: MediationSessionState = s.parse().unwrap();
             assert_eq!(parsed.to_string(), s);
         }
+    }
+
+    #[test]
+    fn parse_and_display_roundtrip_for_every_classification_label() {
+        for s in [
+            "coordination_failure_resolvable",
+            "conflicting_claims",
+            "suspected_fraud",
+            "unclear",
+            "not_suitable_for_mediation",
+        ] {
+            let parsed: ClassificationLabel = s.parse().unwrap();
+            assert_eq!(parsed.to_string(), s);
+        }
+        assert!("bogus_label".parse::<ClassificationLabel>().is_err());
     }
 }

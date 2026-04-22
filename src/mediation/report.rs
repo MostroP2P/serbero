@@ -13,8 +13,8 @@
 //!
 //! Two entry points:
 //!
-//! - [`has_any_mediation_context`] — boolean predicate. Cheap three-
-//!   row-count SQL that answers "did Serbero ever write anything to
+//! - [`has_any_mediation_context`] — boolean predicate. Cheap two-
+//!   branch SQL that answers "did Serbero ever write anything to
 //!   the mediation tables for this dispute?" The handler uses this
 //!   to skip disputes that were Phase 1/2-only (no session, no
 //!   dispute-scoped event). Phase 1/2 notification stays untouched
@@ -90,34 +90,40 @@ pub struct FinalReportPayload {
 /// Cheap-yet-authoritative test for "did Serbero touch this dispute
 /// at all beyond Phase 1/2 notification?".
 ///
-/// Three disjoint ways a mediation context can exist:
+/// Two disjoint ways a mediation context can exist:
 /// 1. A `mediation_sessions` row — any state, terminal or otherwise.
-/// 2. A session-scoped `mediation_events` row joining back to this
-///    dispute via `mediation_sessions.dispute_id`.
-/// 3. A dispute-scoped `mediation_events` row whose `payload_json`
-///    references this `dispute_id` — covers the FR-122 shape where
-///    reasoning ran but no take was issued.
+///    Any session-scoped `mediation_events` row implies this branch
+///    via `mediation_sessions.dispute_id`, so no separate join query
+///    is needed.
+/// 2. A dispute-scoped `mediation_events` row whose
+///    `payload_json.$.dispute_id` matches — covers the FR-122 shape
+///    where reasoning ran but no take was issued.
 ///
-/// The three checks are plain `EXISTS` probes; each uses an index so
-/// the overall cost is bounded regardless of the table size.
+/// Both checks are plain `EXISTS` probes; each uses an index so the
+/// overall cost is bounded regardless of the table size.
 #[instrument(skip(conn), fields(dispute_id = %dispute_id))]
 pub async fn has_any_mediation_context(
     conn: &Arc<AsyncMutex<rusqlite::Connection>>,
     dispute_id: &str,
 ) -> Result<bool> {
     let guard = conn.lock().await;
+    // Two branches cover the full space; the "session-scoped events
+    // joined back via mediation_sessions" branch the earlier version
+    // carried was strictly subsumed by the first (any such event
+    // requires the session row to exist, so the session-row check
+    // already fires). The dispute-scoped branch uses
+    // `json_extract` rather than a LIKE pattern so the match is
+    // exact (no false positives from a dispute id that happens to
+    // appear inside another field) and index-friendly.
     let exists: bool = guard.query_row(
         "SELECT EXISTS(
             SELECT 1 FROM mediation_sessions WHERE dispute_id = ?1
             UNION ALL
-            SELECT 1 FROM mediation_events me
-             JOIN mediation_sessions s ON me.session_id = s.session_id
-             WHERE s.dispute_id = ?1
-            UNION ALL
             SELECT 1 FROM mediation_events
-             WHERE session_id IS NULL AND payload_json LIKE ?2
+             WHERE session_id IS NULL
+               AND json_extract(payload_json, '$.dispute_id') = ?1
          )",
-        params![dispute_id, format!("%{dispute_id}%")],
+        params![dispute_id],
         |r| r.get::<_, bool>(0),
     )?;
     Ok(exists)
@@ -186,10 +192,10 @@ async fn build_payload(
             "SELECT payload_json FROM mediation_events
              WHERE session_id IS NULL
                AND kind = 'reasoning_verdict'
-               AND payload_json LIKE ?1
+               AND json_extract(payload_json, '$.dispute_id') = ?1
              ORDER BY occurred_at DESC, id DESC
              LIMIT 1",
-            params![format!("%{dispute_id}%")],
+            params![dispute_id],
             |r| r.get::<_, String>(0),
         ) {
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(&payload_json) {
@@ -235,6 +241,19 @@ async fn build_payload(
             .ok()
     });
 
+    // (5) When no session row exists, distinguish "reasoning
+    // declined to take" from "reasoning approved but the take-flow
+    // failed". Both land on the dispute-scoped event trail but
+    // produce very different operator narratives: the former means
+    // Serbero refused to open a session on purpose; the latter
+    // means Serbero wanted to but couldn't complete the Mostro
+    // handshake.
+    let no_session_reason: Option<NoSessionReason> = if session_id.is_none() {
+        Some(classify_no_session_reason(&guard, dispute_id))
+    } else {
+        None
+    };
+
     drop(guard);
 
     let narrative = build_narrative(
@@ -243,6 +262,7 @@ async fn build_payload(
         &classification,
         outbound_party_messages_count,
         final_dispute_status,
+        no_session_reason,
     );
 
     Ok(FinalReportPayload {
@@ -255,6 +275,71 @@ async fn build_payload(
     })
 }
 
+/// Why no `mediation_sessions` row exists for this dispute. Drives
+/// the operator-facing narrative below. Values are derived from the
+/// dispute-scoped event trail in [`classify_no_session_reason`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NoSessionReason {
+    /// A `reasoning_verdict` with `decision = "escalate"` (or an
+    /// `escalation_recommended` dispute-scoped event) exists — the
+    /// policy layer refused to open a session on purpose.
+    ReasoningDeclined,
+    /// A `take_dispute_issued` with `outcome = "failure"` exists —
+    /// reasoning cleared the dispute for mediation but the take
+    /// handshake with Mostro did not complete.
+    TakeFailed,
+    /// Neither marker is present. Fall back to the generic phrasing;
+    /// this is reachable when `has_any_mediation_context` matched
+    /// only on an unrelated dispute-scoped row (e.g. a
+    /// `start_attempt_started` that never produced a verdict).
+    Unknown,
+}
+
+fn classify_no_session_reason(conn: &rusqlite::Connection, dispute_id: &str) -> NoSessionReason {
+    // `take_dispute_issued{outcome:"failure"}` wins over an earlier
+    // `reasoning_verdict` because the flow is ordered
+    // reasoning → take: a positive verdict followed by a failed
+    // take both leave dispute-scoped rows, and the take-failure is
+    // the more recent and more informative signal.
+    let take_failed: bool = conn
+        .query_row(
+            "SELECT EXISTS(
+                SELECT 1 FROM mediation_events
+                 WHERE session_id IS NULL
+                   AND kind = 'take_dispute_issued'
+                   AND json_extract(payload_json, '$.dispute_id') = ?1
+                   AND json_extract(payload_json, '$.outcome') = 'failure'
+             )",
+            params![dispute_id],
+            |r| r.get::<_, bool>(0),
+        )
+        .unwrap_or(false);
+    if take_failed {
+        return NoSessionReason::TakeFailed;
+    }
+    let reasoning_declined: bool = conn
+        .query_row(
+            "SELECT EXISTS(
+                SELECT 1 FROM mediation_events
+                 WHERE session_id IS NULL
+                   AND json_extract(payload_json, '$.dispute_id') = ?1
+                   AND (
+                        (kind = 'reasoning_verdict'
+                         AND json_extract(payload_json, '$.decision') = 'escalate')
+                        OR kind = 'escalation_recommended'
+                   )
+             )",
+            params![dispute_id],
+            |r| r.get::<_, bool>(0),
+        )
+        .unwrap_or(false);
+    if reasoning_declined {
+        NoSessionReason::ReasoningDeclined
+    } else {
+        NoSessionReason::Unknown
+    }
+}
+
 /// Compose the operator-facing narrative. Kept as a small pure
 /// function so the shape is easy to pin in unit tests.
 fn build_narrative(
@@ -263,13 +348,23 @@ fn build_narrative(
     classification: &Option<(ClassificationLabel, f64)>,
     outbound_party_messages_count: u8,
     final_dispute_status: &str,
+    no_session_reason: Option<NoSessionReason>,
 ) -> String {
     let session_clause = match (session_id, session_state) {
         (Some(sid), Some(state)) => format!("Session {sid} was in state `{state}`."),
         (Some(sid), None) => format!("Session {sid} was active."),
-        (None, _) => "No mediation session was opened (Serbero evaluated the dispute and \
-                      the reasoning verdict declined to take it)."
-            .to_string(),
+        (None, _) => match no_session_reason.unwrap_or(NoSessionReason::Unknown) {
+            NoSessionReason::ReasoningDeclined => "No mediation session was opened — the \
+                reasoning verdict recommended escalation before any take was issued."
+                .to_string(),
+            NoSessionReason::TakeFailed => "No mediation session was opened — reasoning \
+                cleared the dispute for mediation but the take-dispute exchange with \
+                Mostro did not complete."
+                .to_string(),
+            NoSessionReason::Unknown => {
+                "No mediation session was opened for this dispute.".to_string()
+            }
+        },
     };
     let classification_clause = match classification {
         Some((label, conf)) => {

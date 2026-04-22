@@ -44,7 +44,7 @@ use std::sync::Arc;
 use rusqlite::params;
 use serde::Serialize;
 use tokio::sync::Mutex as AsyncMutex;
-use tracing::{info, instrument, warn};
+use tracing::{debug, info, instrument, warn};
 
 use crate::db;
 use crate::db::mediation_events::MediationEventKind;
@@ -245,6 +245,37 @@ pub async fn recommend(params: RecommendParams<'_>) -> Result<()> {
                 from: actual,
                 to: "escalation_recommended".to_string(),
             });
+        }
+    } else {
+        // Dispute-scoped shape — no session row to flip, so the
+        // session-state UPDATE's rows=0 guard above does not apply.
+        // Check for an existing dispute-scoped
+        // `escalation_recommended` event for the same dispute inside
+        // the same transaction; if one is already present, the
+        // caller has retried and we must NOT insert a duplicate pair
+        // of `escalation_recommended` + `handoff_prepared` rows.
+        // Eligibility normally prevents a second call from reaching
+        // here, but the guard is cheap and catches any future caller
+        // that bypasses the predicate.
+        let already_present: bool = tx.query_row(
+            "SELECT EXISTS(
+                SELECT 1 FROM mediation_events
+                 WHERE session_id IS NULL
+                   AND kind = 'escalation_recommended'
+                   AND json_extract(payload_json, '$.dispute_id') = ?1
+             )",
+            params![dispute_id],
+            |r| r.get::<_, bool>(0),
+        )?;
+        if already_present {
+            debug!(
+                dispute_id = %dispute_id,
+                trigger = %trigger,
+                "escalation::recommend: dispute-scoped handoff already present; \
+                 skipping duplicate event writes"
+            );
+            tx.commit()?;
+            return Ok(());
         }
     }
 

@@ -1335,6 +1335,10 @@ pub(crate) async fn notify_solvers_escalation(
             notif_type: NotificationType::MediationEscalationRecommended,
             tracing_label: "solver_escalation_notified",
             lookup_log_prefix: "notify_solvers_escalation",
+            // Session-scoped escalation preserves assignment-aware
+            // routing: if a solver is currently assigned to the
+            // dispute, they get the first ping.
+            force_broadcast: false,
         },
     )
     .await;
@@ -1368,14 +1372,16 @@ pub(crate) async fn notify_solvers_dispute_escalation(
         SolverDmParams {
             dispute_id,
             // No session row exists for opening-call escalations.
-            // `notify_solvers_dm`'s lookup keys off dispute_id when
-            // session_id is an empty string so the broadcast path
-            // fires. See SolverDmParams.session_id.
             session_id: "",
             body: &dm_body,
             notif_type: NotificationType::MediationEscalationRecommended,
             tracing_label: "solver_dispute_escalation_notified",
             lookup_log_prefix: "notify_solvers_dispute_escalation",
+            // FR-122 dispute-scoped handoff: every configured solver
+            // sees the "needs human judgment" DM, not just whoever
+            // happens to be assigned — assignment is not meaningful
+            // when no session was opened.
+            force_broadcast: true,
         },
     )
     .await;
@@ -1399,11 +1405,14 @@ pub(crate) async fn notify_solvers_final_resolution_report(
     session_id: Option<&str>,
     body: &str,
 ) {
-    // `notify_solvers_dm` still keys off a `&str` session_id for
-    // the routing / log lines; supply the empty string when there
-    // is no session so the broadcast path fires and log lines read
-    // `session_id=""`. The `session_id` in the DM body itself
-    // already handles the "<none>" user-visible rendering.
+    // `notify_solvers_dm` takes `session_id` as a `&str` for log
+    // lines; supply the empty string when there is no session. The
+    // `session_id` in the DM body itself already handles the
+    // "<none>" user-visible rendering. `force_broadcast: true` is
+    // what actually selects the broadcast path — otherwise an
+    // assigned solver (possibly stale from a long-closed session)
+    // would be the sole recipient, contrary to FR-124's "for your
+    // records" shape.
     notify_solvers_dm(
         conn,
         client,
@@ -1415,6 +1424,7 @@ pub(crate) async fn notify_solvers_final_resolution_report(
             notif_type: NotificationType::MediationResolutionReport,
             tracing_label: "solver_final_resolution_report_sent",
             lookup_log_prefix: "notify_solvers_final_resolution_report",
+            force_broadcast: true,
         },
     )
     .await;
@@ -1427,6 +1437,14 @@ struct SolverDmParams<'a> {
     notif_type: NotificationType,
     tracing_label: &'static str,
     lookup_log_prefix: &'static str,
+    /// When `true`, skip the `assigned_solver` lookup entirely and
+    /// broadcast to every configured solver regardless of
+    /// assignment. Used by the FR-122 dispute-scoped escalation DM
+    /// and the FR-124 resolution-report DM — both are "for your
+    /// records" notifications whose spec says every configured
+    /// solver receives a copy, not just the currently assigned one
+    /// (which may be stale or NULL for session-less shapes).
+    force_broadcast: bool,
 }
 
 async fn notify_solvers_dm(
@@ -1435,7 +1453,12 @@ async fn notify_solvers_dm(
     solvers: &[SolverConfig],
     params: SolverDmParams<'_>,
 ) {
-    let assigned_solver: Option<String> = {
+    let assigned_solver: Option<String> = if params.force_broadcast {
+        // FR-122 / FR-124 broadcast shapes: every configured solver
+        // receives a copy. Skip the assignment lookup so the router
+        // always picks `Recipients::Broadcast` below.
+        None
+    } else {
         let guard = conn.lock().await;
         match guard.query_row(
             "SELECT assigned_solver FROM disputes WHERE dispute_id = ?1",
