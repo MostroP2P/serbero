@@ -619,6 +619,79 @@ mod tests {
     }
 
     #[test]
+    fn parse_classification_ask_clarification_happy_path() {
+        // Per-party texts land on the right `AskClarification` fields.
+        let raw = r#"{
+            "classification":"unclear",
+            "confidence":0.42,
+            "suggested_action":"ask_clarification",
+            "buyer_clarification":"Buyer, have you sent the fiat?",
+            "seller_clarification":"Seller, have you received the fiat?",
+            "rationale":"need more info from both sides",
+            "flags":[]
+        }"#;
+        let parsed = parse_classification(raw).unwrap();
+        match parsed.suggested_action {
+            SuggestedAction::AskClarification {
+                buyer_text,
+                seller_text,
+            } => {
+                assert_eq!(buyer_text, "Buyer, have you sent the fiat?");
+                assert_eq!(seller_text, "Seller, have you received the fiat?");
+            }
+            other => panic!("expected AskClarification, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_classification_ask_clarification_rejects_blank_buyer_text() {
+        // Whitespace-only buyer_clarification must be treated as
+        // malformed; letting it through would ship an empty gift-wrap
+        // to the buyer.
+        let raw = r#"{
+            "classification":"unclear",
+            "confidence":0.6,
+            "suggested_action":"ask_clarification",
+            "buyer_clarification":"   \n\t",
+            "seller_clarification":"Seller, have you received the fiat?",
+            "rationale":"r"
+        }"#;
+        let err = parse_classification(raw).unwrap_err();
+        match err {
+            ReasoningError::MalformedResponse(msg) => {
+                assert!(
+                    msg.contains("buyer_clarification"),
+                    "error must cite the missing field: {msg}"
+                );
+            }
+            other => panic!("expected MalformedResponse, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_classification_ask_clarification_rejects_missing_seller_text() {
+        // Entirely missing seller_clarification field — adapter must
+        // reject even though JSON is otherwise well-formed.
+        let raw = r#"{
+            "classification":"unclear",
+            "confidence":0.6,
+            "suggested_action":"ask_clarification",
+            "buyer_clarification":"Buyer, did you send the fiat?",
+            "rationale":"r"
+        }"#;
+        let err = parse_classification(raw).unwrap_err();
+        match err {
+            ReasoningError::MalformedResponse(msg) => {
+                assert!(
+                    msg.contains("seller_clarification"),
+                    "error must cite the missing field: {msg}"
+                );
+            }
+            other => panic!("expected MalformedResponse, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn parse_classification_rejects_unknown_label() {
         let raw = r#"{
             "classification":"totally_made_up",

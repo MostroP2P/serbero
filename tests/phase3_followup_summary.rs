@@ -380,10 +380,8 @@ async fn summarize_branch_delivers_summary_once_and_closes_session() {
     let messages = solver.messages().await;
     assert_eq!(messages.len(), 1);
     assert!(
-        messages[0].contains(summary_text)
-            || messages[0].contains("summary")
-            || messages[0].contains("Solver"),
-        "solver DM must reference the summary; got {:?}",
+        messages[0].contains(summary_text),
+        "solver DM must contain the generated summary_text; got {:?}",
         messages[0]
     );
 

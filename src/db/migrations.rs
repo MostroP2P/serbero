@@ -243,14 +243,24 @@ fn apply_v3(tx: &Transaction<'_>) -> Result<()> {
 /// drive the mid-session evaluator idempotently and track bounded
 /// consecutive failures:
 ///
-/// - `round_count_last_evaluated` (FR-127): the `round_count` value
-///   the last successful `advance_session_round` committed for. The
-///   evaluator skips when `round_count == round_count_last_evaluated`
-///   so a tick that ingests no new inbound for a session produces no
-///   reasoning call and no outbound. Backfilled to `0` for existing
-///   rows, which forces any in-flight session to be re-evaluated
-///   once after the daemon restarts — acceptable because the
-///   alternative (skipping pre-existing sessions) keeps them silent.
+/// - `round_count_last_evaluated` (FR-127): counts the total number
+///   of fresh (non-stale) inbound rows Serbero has already
+///   classified for this session. The column name is historical —
+///   an earlier draft stored the `round_count` min-rule value here;
+///   see the 2026-04-21 gate-fix commit for why fresh-inbound-count
+///   is the right idempotency primitive (a single-party reply
+///   never advances min-rule `round_count`, so the gate would never
+///   open in the common mid-session case). The evaluator skips
+///   when `count_fresh_inbounds &lt;= round_count_last_evaluated`, i.e.
+///   there is nothing new since the last classification. On a
+///   successful `advance_session_round` the value is rewritten to
+///   the current total-fresh-inbound count as part of the same
+///   atomic commit that writes the outbound rows (or, for the
+///   Summarize branch, as part of a short post-deliver transaction).
+///   Backfilled to `0` for existing rows, which forces any in-flight
+///   session to be re-evaluated once after the daemon restarts —
+///   acceptable because the alternative (skipping pre-existing
+///   sessions) keeps them silent.
 ///
 /// - `consecutive_eval_failures` (FR-130): monotonic counter of
 ///   back-to-back reasoning-call or commit failures for the

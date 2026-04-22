@@ -233,6 +233,32 @@ pub fn count_fresh_inbounds(conn: &Connection, session_id: &str) -> Result<i64> 
     Ok(n)
 }
 
+/// Number of `classification_produced` audit rows for a session.
+///
+/// Phase 11 follow-up ordinal. The initial classification and each
+/// mid-session `policy::evaluate` write exactly one such row (inside
+/// the same transaction as the rationale), so the count is a
+/// reliable monotonic counter of evaluations already committed. The
+/// mid-session follow-up path uses it to pick `followup_number` /
+/// the "Round N" label without relying on `round_count_last_evaluated`
+/// (which now counts fresh inbounds, not evaluations, so using it
+/// for the user-visible round label skipped numbers when both
+/// parties replied in the same tick).
+///
+/// Returned as `u32` because every caller is downstream of the
+/// policy layer's bypass window (`EARLY_MIDSESSION_BYPASS_FOLLOWUPS`)
+/// which is `u32`-typed; any realistic session has far fewer than
+/// `u32::MAX` evaluations.
+pub fn count_classification_events(conn: &Connection, session_id: &str) -> Result<u32> {
+    let n: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM mediation_events
+         WHERE session_id = ?1 AND kind = 'classification_produced'",
+        params![session_id],
+        |r| r.get(0),
+    )?;
+    Ok(n.max(0) as u32)
+}
+
 /// Snapshot of a live mediation_sessions row, used by the engine's
 /// startup-resume pass and its per-tick ingest loop (T051 / T052).
 /// Only the fields both paths need — keep thin.
@@ -428,16 +454,18 @@ pub fn advance_evaluator_marker(
 /// there is no "increment + read back" race within the lock that
 /// the caller holds around `advance_session_round`.
 pub fn bump_consecutive_eval_failures(conn: &Connection, session_id: &str) -> Result<i64> {
-    conn.execute(
+    // Collapsed UPDATE + SELECT into a single statement via
+    // SQLite's RETURNING clause (3.35+, available in the bundled
+    // rusqlite). Saves one round-trip and closes the window where
+    // a concurrent writer could sneak a second increment between
+    // the UPDATE and the read-back. (The caller holds the async
+    // mutex around the dispatch path, but RETURNING is the right
+    // idiom regardless.)
+    let new_value: i64 = conn.query_row(
         "UPDATE mediation_sessions
          SET consecutive_eval_failures = consecutive_eval_failures + 1
-         WHERE session_id = ?1",
-        params![session_id],
-    )?;
-    let new_value: i64 = conn.query_row(
-        "SELECT consecutive_eval_failures
-         FROM mediation_sessions
-         WHERE session_id = ?1",
+         WHERE session_id = ?1
+         RETURNING consecutive_eval_failures",
         params![session_id],
         |r| r.get(0),
     )?;

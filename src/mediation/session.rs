@@ -25,11 +25,14 @@
 //!    Policy persists the rationale in the controlled audit store
 //!    and emits `classification_produced` for this `session_id`.
 //! 5. Dispatch on the returned [`super::policy::PolicyDecision`]:
-//!    - `AskClarification(text)` → call
-//!      [`super::draft_and_send_initial_message`], which persists
-//!      the outbound rows, publishes the gift-wraps, and records
-//!      `outbound_sent` only after each successful publish. The
-//!      session stays at `awaiting_response`.
+//!    - `AskClarification { buyer_text, seller_text }` → call
+//!      [`super::draft_and_send_initial_message`] with the two
+//!      party-specific texts, which persists the outbound rows,
+//!      publishes the gift-wraps (each addressed to its intended
+//!      recipient only — the buyer never sees the seller's text
+//!      and vice versa), and records `outbound_sent` only after
+//!      each successful publish. The session stays at
+//!      `awaiting_response`.
 //!    - `Summarize { classification, confidence }` → transition
 //!      `awaiting_response → classified` and return
 //!      [`OpenOutcome::ReadyForSummary`] so the engine can call

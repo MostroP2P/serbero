@@ -228,14 +228,21 @@ pub async fn advance_session_round(
 
     // (6) Policy layer — persists the rationale + the
     //     `classification_produced` audit row in its own tx.
-    // `followup_number` is 1-based — the count of the evaluation
-    // currently in flight, not a retrospective index. Since
-    // `round_count_last_evaluated` is the count of fresh inbounds
-    // already classified (see `db::mediation::count_fresh_inbounds`
-    // docstring), the next-to-commit evaluation is number
-    // `round_count_last_evaluated + 1`. Used by the policy layer's
-    // early-mid-session low-confidence bypass.
-    let followup_number = info.round_count_last_evaluated.max(0) as u32 + 1;
+    // `followup_number` is 1-based — the ordinal of the mid-session
+    // evaluation currently in flight. We derive it from the live
+    // count of `classification_produced` events (the initial
+    // classification counts as 1, so the first mid-session
+    // evaluation sees a count of 1 → followup_number = 1). That
+    // matches the [`PolicyRound::MidSession`] bypass-window test
+    // semantics exactly. We deliberately do NOT reuse
+    // `round_count_last_evaluated`: that column now counts fresh
+    // inbounds (since the 2026-04-21 fix), so a tick that ingests
+    // two replies at once would jump the ordinal by 2 and mislabel
+    // the visible "Round N" prefix.
+    let followup_number = {
+        let guard = conn.lock().await;
+        db::mediation::count_classification_events(&guard, session_id)?
+    };
     let decision = match policy::evaluate(
         conn,
         session_id,
@@ -270,7 +277,12 @@ pub async fn advance_session_round(
             seller_text,
         } => {
             let new_marker = total_fresh_inbounds;
-            let round_number = round_number_for_followup(info.round_count_last_evaluated);
+            // Same ordinal we used to gate the bypass window —
+            // the "Round N" body label should match "this is the
+            // N-th mid-session evaluation we've run", not the
+            // number of fresh inbounds classified (see the block
+            // above for why).
+            let round_number = followup_number;
             if let Err(e) = draft_and_send_followup_message(
                 conn,
                 client,
@@ -481,21 +493,6 @@ async fn load_initiator_role(
     }
 }
 
-/// Pure helper — the drafter receives `round_number` for the body
-/// prefix. The first follow-up is `N = 1` (the opening clarification
-/// was round 0); the second follow-up is `N = 2`, etc.
-///
-/// Computed from `round_count_last_evaluated` + 1. Post-FR-127 fix,
-/// that column counts "fresh inbounds already evaluated", not
-/// completed rounds — so `round_number` now increments once per
-/// evaluation regardless of whether both parties replied. That
-/// matches the user-visible intent ("follow-up N") better than the
-/// old min-rule did, since we only emit a follow-up when we actually
-/// run an evaluation.
-fn round_number_for_followup(round_count_last_evaluated: i64) -> u32 {
-    round_count_last_evaluated.max(0) as u32 + 1
-}
-
 /// Bump `consecutive_eval_failures` and, if it crosses the
 /// threshold, escalate the session with `ReasoningUnavailable`
 /// (FR-130). Absorbs all errors with a `warn!`; never returns
@@ -606,6 +603,7 @@ mod tests {
     use crate::db::migrations::run_migrations;
     use crate::db::open_in_memory;
     use crate::mediation::auth_retry::AuthRetryHandle;
+    use crate::models::mediation::TranscriptParty;
     use crate::models::reasoning::{
         ClassificationResponse, ReasoningError, SummaryRequest, SummaryResponse,
     };
@@ -695,6 +693,44 @@ mod tests {
             .unwrap();
     }
 
+    /// Insert one fresh (non-stale) inbound message row for the
+    /// `sess-t120` session. Used by gate tests that need
+    /// `count_fresh_inbounds` to return a specific count. The
+    /// `inner_event_created_at` disambiguates rows so the unique
+    /// index `uq_mediation_messages_inner_event` doesn't reject a
+    /// second call with the same party.
+    async fn seed_fresh_inbound(
+        conn: &Arc<AsyncMutex<rusqlite::Connection>>,
+        party: TranscriptParty,
+        inner_event_created_at: i64,
+    ) {
+        let guard = conn.lock().await;
+        let party_s = match party {
+            TranscriptParty::Buyer => "buyer",
+            TranscriptParty::Seller => "seller",
+            TranscriptParty::Serbero => panic!("Serbero is outbound-only; not valid for inbound seed"),
+        };
+        guard
+            .execute(
+                "INSERT INTO mediation_messages (
+                    session_id, direction, party, shared_pubkey,
+                    inner_event_id, inner_event_created_at,
+                    outer_event_id, content,
+                    prompt_bundle_id, policy_hash,
+                    persisted_at, stale
+                 ) VALUES ('sess-t120', 'inbound', ?1, 'sp-test',
+                           ?2, ?3, NULL, 'hello',
+                           'phase3-default', 'hash-test',
+                           200, 0)",
+                params![
+                    party_s,
+                    format!("inner-{}", inner_event_created_at),
+                    inner_event_created_at
+                ],
+            )
+            .unwrap();
+    }
+
     async fn run_once(
         conn: &Arc<AsyncMutex<rusqlite::Connection>>,
         reasoning: &dyn ReasoningProvider,
@@ -753,15 +789,23 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn skips_when_round_count_already_evaluated() {
+    async fn skips_when_fresh_inbounds_already_evaluated() {
         let conn = seeded_db().await;
-        // round_count == round_count_last_evaluated → FR-127 idempotency gate blocks.
-        seed_session(&conn, "awaiting_response", 2, 2).await;
+        // FR-127 idempotency gate: count_fresh_inbounds ==
+        // round_count_last_evaluated → skip. Seed two fresh inbound
+        // rows (one per party) and mark both as already evaluated.
+        seed_session(&conn, "awaiting_response", 1, 2).await;
+        seed_fresh_inbound(&conn, TranscriptParty::Buyer, 10).await;
+        seed_fresh_inbound(&conn, TranscriptParty::Seller, 20).await;
         let spy = SpyClassifier {
             calls: AtomicUsize::new(0),
         };
         run_once(&conn, &spy).await;
-        assert_eq!(spy.calls.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            spy.calls.load(Ordering::SeqCst),
+            0,
+            "gate must block when total fresh inbounds <= round_count_last_evaluated"
+        );
     }
 
     #[tokio::test]
@@ -781,15 +825,4 @@ mod tests {
         );
     }
 
-    #[test]
-    fn round_number_for_followup_is_one_based() {
-        // marker = 0 → the first follow-up round is N = 1.
-        assert_eq!(round_number_for_followup(0), 1);
-        // marker = 1 → the second follow-up round is N = 2.
-        assert_eq!(round_number_for_followup(1), 2);
-        // Defensive: negative markers never happen in production
-        // (the column is NOT NULL DEFAULT 0), but the helper
-        // clamps anyway.
-        assert_eq!(round_number_for_followup(-5), 1);
-    }
 }

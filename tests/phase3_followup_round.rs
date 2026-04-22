@@ -148,6 +148,23 @@ fn seed_session_with_round_zero(
         )
         .unwrap();
     }
+    // One `classification_produced` event to stand in for the
+    // round-0 initial classification. In production the initial
+    // flow writes one such row; `advance_session_round` derives
+    // `followup_number` from the count of these events (the first
+    // mid-session eval is N=1 = after 1 prior classification),
+    // so the seed must include it or the Round-N label renders
+    // as "Round 0. ...".
+    conn.execute(
+        "INSERT INTO mediation_events (
+            session_id, kind, payload_json,
+            prompt_bundle_id, policy_hash, occurred_at
+         ) VALUES (?1, 'classification_produced', '{}',
+                   ?2, ?3, 250)",
+        rusqlite::params![session_id, bundle.id, bundle.policy_hash],
+    )
+    .unwrap();
+
     // Inbound rows from the parties' replies. Inner timestamps
     // strictly after the outbounds so the transcript loader
     // preserves ordering.
@@ -379,9 +396,13 @@ async fn second_round_outbound_fires_once_and_is_idempotent() {
         )
         .unwrap()
     };
+    // 2 = the seeded initial (stand-in for round-0 classification)
+    // + the one written by the first advance_session_round via
+    // policy::evaluate. The second advance must add zero more.
     assert_eq!(
-        classification_count, 1,
-        "SC-113: second advance MUST NOT trigger another classify/evaluate (exactly one audit row)"
+        classification_count, 2,
+        "SC-113: second advance MUST NOT trigger another classify/evaluate \
+         (expected exactly 2 audit rows: seeded initial + first-follow-up)"
     );
 
     // And for belt-and-braces, the state + marker are unchanged.
