@@ -32,13 +32,13 @@ Single-project Rust daemon:
 
 **Purpose**: Schema migration and new-module scaffolding that every later phase depends on.
 
-- [ ] T001 Add migration v4 to `src/db/migrations.rs`: create table `escalation_dispatches` with columns per `specs/004-escalation-execution/data-model.md` (dispatch_id TEXT PRIMARY KEY, dispute_id TEXT NOT NULL FK, session_id TEXT NULL FK, handoff_event_id INTEGER NOT NULL FK, target_solver TEXT NOT NULL, dispatched_at INTEGER NOT NULL, created_at INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'dispatched' with CHECK constraint, fallback_broadcast INTEGER NOT NULL DEFAULT 0). Create both indexes (idx_escalation_dispatches_dispute, idx_escalation_dispatches_handoff). Bump `schema_version.version` to 4. Add assertion in the existing migration-table round-trip test that v4 creates the new table plus indexes.
+- [ ] T001 Add migration v5 to `src/db/migrations.rs`: create table `escalation_dispatches` with columns per `specs/004-escalation-execution/data-model.md` (dispatch_id TEXT PRIMARY KEY, dispute_id TEXT NOT NULL FK, session_id TEXT NULL FK, handoff_event_id INTEGER NOT NULL FK, target_solver TEXT NOT NULL, dispatched_at INTEGER NOT NULL, created_at INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'dispatched' with CHECK constraint, fallback_broadcast INTEGER NOT NULL DEFAULT 0). Create both indexes (idx_escalation_dispatches_dispute, idx_escalation_dispatches_handoff). Bump `schema_version.version` to 5 and `CURRENT_SCHEMA_VERSION` in the test module to 5 to match. Wire a new `apply_v5` function alongside the existing `apply_v1..apply_v4` chain (`main`'s `apply_v4` owns the Phase 11 mid-session columns — do NOT edit or renumber it). Add assertion in the existing migration-table round-trip test that v5 creates the new table plus indexes.
 
 - [ ] T002 [P] Create `src/db/escalation_dispatches.rs` with the `EscalationDispatch` struct (fields matching the table) and the `DispatchStatus` enum (`Dispatched` / `SendFailed`). Implement `Display` and `FromStr` on `DispatchStatus` following the `MediationSessionState` / `ClassificationLabel` idiom (in-scope `FromStr` + `Error` names, snake_case tokens). Add inline unit tests for round-trip display/parse plus the unknown-token error path.
 
 - [ ] T003 [P] Add `EscalationConfig` to `src/models/config.rs` with fields `enabled: bool` (default false), `dispatch_interval_seconds: u64` (default 30, positive-integer validation that errors loudly on zero), `fallback_to_all_solvers: bool` (default false). Wire into the top-level `Config` struct as `pub escalation: EscalationConfig`. Make the section optional in TOML so older `config.toml` files keep parsing; when absent the defaults apply. Add inline tests: all-defaults load, explicit-enable load, zero-interval load returns ConfigError.
 
-**Checkpoint**: schema v4 is applied, `escalation_dispatches` CRUD types exist, `Config` carries an `escalation` section. No behavior change yet.
+**Checkpoint**: schema v5 is applied, `escalation_dispatches` CRUD types exist, `Config` carries an `escalation` section. No behavior change yet.
 
 ---
 
@@ -178,7 +178,7 @@ Single-project Rust daemon:
 
 ### Phase Dependencies
 
-- **Setup (Phase 1)**: no dependencies; the three tasks can start immediately. T002 and T003 are parallel-safe with each other; T001 must land first because later schema tests depend on v4.
+- **Setup (Phase 1)**: no dependencies; the three tasks can start immediately. T002 and T003 are parallel-safe with each other; T001 must land first because later schema tests depend on v5.
 - **Foundational (Phase 2)**: depends on all Phase 1 tasks. T004 and T005 share a file (`src/db/mediation_events.rs`) and must run sequentially. T006 depends on T001 (the table must exist). T007–T010 depend on T004/T005/T006. T009 and T010 are parallel-safe.
 - **User Story 1 (Phase 3 / P1)**: depends on all of Phase 2. Within US1, T011 and T012 are parallel-safe (different files). T013 and T014 share `dispatcher.rs`. T015 depends on T014's `DispatchOutcome` enum. T016 integrates T011–T015. T017 and T018 land after T016.
 - **User Story 2 (Phase 4 / P2)**: depends on Phase 2 and on US1's dispatch wiring (T016) — the supersession gate slots in before the dispatch call.
@@ -227,7 +227,7 @@ Task: "T018 [US1] Integration test tests/phase4_dispatch.rs duplicate_handoff_de
 
 ### MVP First (User Story 1 Only)
 
-1. Complete Phase 1 (Setup): migration v4, escalation_dispatches CRUD types, EscalationConfig.
+1. Complete Phase 1 (Setup): migration v5, escalation_dispatches CRUD types, EscalationConfig.
 2. Complete Phase 2 (Foundational): audit kinds + typed constructors, dispatch CRUD helpers, empty-loop dispatcher spawned from daemon.rs.
 3. Complete Phase 3 (US1): full dispatch path — consumer, router, dispatcher, tracker, integration test.
 4. **STOP and VALIDATE**: `cargo test --test phase4_dispatch` passes all six sub-tests; manually run the quickstart US1 walkthrough against a local MockRelay smoke-test. Phase 4 now ships the MVP.

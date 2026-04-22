@@ -10,7 +10,7 @@ Back-compat: when the section is absent, Phase 4 behaves as if
 ```toml
 [escalation]
 # Feature flag. When false, Phase 4 is inert: no dispatcher task is
-# spawned, no migration-v4-added table is read or written beyond
+# spawned, no migration-v5-added table is read or written beyond
 # migration-time initialization, and Phase 1/2/3 behavior is
 # completely unchanged. Default: false — Phase 4 is opt-in.
 enabled = true

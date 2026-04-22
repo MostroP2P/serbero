@@ -29,11 +29,12 @@ audit tables.
 ## Technical Context
 
 **Language/Version**: Rust stable, edition 2021 (same toolchain as Phases 1/2/3).
-**Primary Dependencies**: `nostr-sdk 0.44.1` (gift-wrap transport), `mostro-core 0.8.4`, `rusqlite` (bundled, now via migration v4), `tokio` (existing runtime), `serde` + `serde_json` (HandoffPackage round-trip + DM body), `uuid` (dispatch_id v4), `tracing`, `thiserror`. No new crate pulls.
-**Storage**: SQLite. One new table (`escalation_dispatches`), four new `mediation_events.kind` values. Migration v4 extends the existing migrations chain in `src/db/migrations.rs`.
+**Primary Dependencies**: `nostr-sdk 0.44.1` (gift-wrap transport), `mostro-core 0.8.4`, `rusqlite` (bundled, now via migration v5), `tokio` (existing runtime), `serde` + `serde_json` (HandoffPackage round-trip + DM body), `uuid` (dispatch_id v4), `tracing`, `thiserror`. No new crate pulls.
+**Storage**: SQLite. One new table (`escalation_dispatches`), four new `mediation_events.kind` values. Migration v5 extends the existing migrations chain in `src/db/migrations.rs`.
 **Testing**: `cargo test` + the existing integration-test harness (`nostr-relay-builder::MockRelay`, `common::SolverListener`, in-memory rusqlite). No new test dependency.
 **Target Platform**: Linux server (the parent daemon is already Linux-targeted; no platform-specific code added).
 **Project Type**: Single-binary Rust daemon — the existing `serbero` binary gains one new background task and one new module tree.
+**Baseline schema version**: the pre-Phase-4 state on `main` is **v4**. v1 landed with Phase 1 (disputes / notifications / schema_version), v2 added `dispute_state_transitions`, v3 landed with Phase 3 (`mediation_sessions` and friends), and v4 — already merged to `main` ahead of Phase 4 — added the Phase 11 mid-session columns `round_count_last_evaluated` and `consecutive_eval_failures` on `mediation_sessions`. Phase 4's migration is therefore **v5**, not v4. Implementers MUST NOT renumber it; T001 and the data-model DDL sketch both target v5.
 **Performance Goals**: SC-201 — 95% of handoffs reach a write-permission solver within 60 s at the default 30 s dispatch interval. Per-cycle DB read is a single indexed scan (`mediation_events LEFT JOIN escalation_dispatches ON handoff_event_id`); no cross-table joins on the hot path beyond that.
 **Constraints**: FR-217 — must NOT modify `disputes`, `mediation_sessions`, or any Phase 1/2/3 table other than appending to `mediation_events`. FR-218 — must NOT share state with the Phase 3 engine tick. FR-207 — DM body identifies Serbero as an assistance system (not a Mostro admin). FR-209 carries forward Fund Isolation First: no `TakeDispute` / `admin-settle` / `admin-cancel`.
 **Scale/Scope**: Same scale as Phase 3. Handoff throughput is bounded by the rate of Phase 3 escalations (observed experimentally in the low units per hour on typical Mostro deployments); the dispatcher is trivially able to absorb that rate with a 30 s cycle.
@@ -96,13 +97,13 @@ specs/004-escalation-execution/
 ### Source Code (repository root)
 
 Phase 4 adds one new top-level module under `src/` and one new table
-via migration v4. All existing modules remain unchanged.
+via migration v5. All existing modules remain unchanged.
 
 ```text
 src/
 ├── chat/                 # (existing; Phase 3 chat transport)
 ├── db/
-│   ├── migrations.rs     # MODIFIED: add migration v4 (escalation_dispatches + new kinds)
+│   ├── migrations.rs     # MODIFIED: add migration v5 (escalation_dispatches + new kinds). Baseline on main is v4.
 │   ├── mediation_events.rs  # MODIFIED: extend MediationEventKind enum (+4 variants)
 │   ├── disputes.rs       # (unchanged; Phase 4 only reads)
 │   ├── mediation.rs      # (unchanged)

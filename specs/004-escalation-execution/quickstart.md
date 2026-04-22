@@ -46,7 +46,7 @@ cargo build --release
 First-boot log lines (among the Phase 1/2/3 output):
 
 ```text
-schema migration: applied v4 (escalation_dispatches)
+schema migration: applied v5 (escalation_dispatches)
 Phase 4 escalation dispatcher enabled   dispatch_interval_seconds=30 fallback_to_all_solvers=false write_solver_count=1
 Phase 4 dispatcher loop started
 ```

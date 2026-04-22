@@ -1,8 +1,12 @@
 # Phase 4 Data Model
 
-Extends the Phase 1/2/3 schema. Migration version bumps from v3 to
-**v4**. Rollback to v3 is NOT supported — v4 is forward-only like
-the earlier migrations.
+Extends the Phase 1/2/3 schema. The baseline on `main` is schema
+**v4** (v1–v3 carry Phase 1/2/3 tables; v4 — already merged —
+added the Phase 11 mid-session columns
+`round_count_last_evaluated` and `consecutive_eval_failures` on
+`mediation_sessions`). Phase 4's migration is therefore **v5**, a
+forward-only step like the earlier migrations — rollback to v4 is
+not supported.
 
 ## New table
 
@@ -123,7 +127,7 @@ Reuses the existing Phase 3 type:
 ## Migration sketch (for reference; not prescriptive)
 
 ```sql
--- Migration v4 body (conceptual; the real file lives in src/db/migrations.rs).
+-- Migration v5 body (conceptual; the real file lives in src/db/migrations.rs).
 BEGIN;
 
 CREATE TABLE IF NOT EXISTS escalation_dispatches (
@@ -147,7 +151,7 @@ CREATE INDEX IF NOT EXISTS idx_escalation_dispatches_dispute
 CREATE INDEX IF NOT EXISTS idx_escalation_dispatches_handoff
     ON escalation_dispatches(handoff_event_id);
 
-UPDATE schema_version SET version = 4;
+UPDATE schema_version SET version = 5;
 
 COMMIT;
 ```

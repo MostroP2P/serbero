@@ -11,6 +11,8 @@
 
 - Q: Should `escalation_dispatches.status` capture the send outcome, or is the split-brain between dispatch-intent and per-recipient delivery the intended design? → A: Option A — extend the status enum with `send_failed`. The dispatcher writes `dispatched` when at least one targeted recipient succeeded and `send_failed` when every recipient failed. Partial-success cases stay `dispatched`; per-recipient forensic detail remains in the existing notifications table.
 
+- Baseline schema confirmation: the `main` branch as of this session already carries migration **v4** (Phase 11 mid-session columns `round_count_last_evaluated` and `consecutive_eval_failures` on `mediation_sessions`), so Phase 4's migration is **v5**, not v4. This correction was applied to plan.md, data-model.md, tasks.md (T001), quickstart.md, and contracts/config.md. No spec-level FR or SC changed; the correction is a planning-layer numbering adjustment only.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 — Write-Permission Solver Receives Structured Escalation (Priority: P1)
