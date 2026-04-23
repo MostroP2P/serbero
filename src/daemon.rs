@@ -180,16 +180,16 @@ where
     // (FR-121). The engine task and the handler share the same
     // `session_key_cache` so sessions opened by either path are
     // visible to the ingest tick on the next cycle.
+    //
+    // Parse the serbero private key once up front and clone into
+    // Phase 3 / Phase 4 task contexts. `build_client` already
+    // parsed it internally above; re-parsing for each phase spawn
+    // would be redundant and keeps two secret copies alive.
+    let shared_serbero_keys = nostr_sdk::Keys::parse(&config.serbero.private_key)
+        .map_err(|e| Error::InvalidKey(format!("failed to parse serbero private key: {e}")))?;
     let mut handler_phase3: Option<Arc<crate::mediation::Phase3HandlerCtx>> = None;
     let engine_handle: Option<JoinHandle<()>> = if let Some(rt) = phase3_runtime {
-        let engine_keys = match nostr_sdk::Keys::parse(&config.serbero.private_key) {
-            Ok(k) => k,
-            Err(e) => {
-                return Err(Error::InvalidKey(format!(
-                    "failed to parse serbero private key for engine task: {e}"
-                )))
-            }
-        };
+        let engine_keys = shared_serbero_keys.clone();
         // T043: run the initial authorization check and get a
         // handle. US1's stub `check_authorization` always returns
         // `Ok(())`, so the handle reports `Authorized` and no retry
@@ -260,14 +260,7 @@ where
     // false` we do not even spawn the task, so Phase 1/2/3
     // behavior is unaffected (FR-216 / SC-207).
     let escalation_handle: Option<JoinHandle<()>> = if config.escalation.enabled {
-        let escalation_keys = match nostr_sdk::Keys::parse(&config.serbero.private_key) {
-            Ok(k) => k,
-            Err(e) => {
-                return Err(Error::InvalidKey(format!(
-                    "failed to parse serbero private key for Phase 4 task: {e}"
-                )))
-            }
-        };
+        let escalation_keys = shared_serbero_keys.clone();
         let write_solver_count = config
             .solvers
             .iter()
@@ -294,7 +287,7 @@ where
             .await
         }))
     } else {
-        debug!("phase4_dispatcher_disabled");
+        info!("phase4_dispatcher_disabled");
         None
     };
 

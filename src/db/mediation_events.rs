@@ -12,7 +12,7 @@
 //! rationale text. General application logs MUST NOT include the
 //! `rationale_text` column either.
 
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, Transaction};
 use serde_json::json;
 
 use crate::error::Result;
@@ -447,14 +447,22 @@ pub fn record_resolved_externally_reported(
 ///
 /// Payload shape matches
 /// `specs/004-escalation-execution/contracts/audit-events.md`
-/// §escalation_dispatched. Writes inside the caller's
-/// transaction (caller passes `&Connection`; for atomicity-critical
-/// paths the caller should use the transaction's dereffed
-/// connection so the insert lands in the same tx as the
-/// `escalation_dispatches` row).
+/// §escalation_dispatched. Takes `&Transaction<'_>` (not
+/// `&Connection`) because FR-211 requires this audit row to land
+/// atomically with the matching `escalation_dispatches` row —
+/// forcing the transaction at the type level makes the pairing
+/// impossible to bypass by accident, and matches the signature of
+/// `db::escalation_dispatches::insert_dispatch`.
+///
+/// The other three Phase 4 audit writers
+/// (`record_escalation_superseded`,
+/// `record_escalation_dispatch_unroutable`,
+/// `record_escalation_dispatch_parse_failed`) stay on `&Connection`:
+/// they do NOT pair with a dispatch row, so the atomicity
+/// invariant does not apply to them.
 #[allow(clippy::too_many_arguments)]
 pub fn record_escalation_dispatched(
-    conn: &Connection,
+    tx: &Transaction<'_>,
     session_id: Option<&str>,
     dispatch_id: &str,
     dispute_id: &str,
@@ -475,8 +483,13 @@ pub fn record_escalation_dispatched(
         "fallback_broadcast": fallback_broadcast,
     })
     .to_string();
+    // `Transaction` derefs to `Connection`, so `record_event` can
+    // run the INSERT inside the caller's tx scope. The tx is
+    // committed by the caller after both this audit row and the
+    // paired `escalation_dispatches` row land — partial-commit
+    // races are impossible.
     record_event(
-        conn,
+        tx,
         MediationEventKind::EscalationDispatched,
         session_id,
         &payload,
@@ -1074,9 +1087,10 @@ mod tests {
 
     #[test]
     fn escalation_dispatched_payload_carries_required_keys() {
-        let conn = fresh_with_session();
+        let mut conn = fresh_with_session();
+        let tx = conn.transaction().unwrap();
         let id = record_escalation_dispatched(
-            &conn,
+            &tx,
             Some("sess-1"),
             "dispatch-abc",
             "d-ph4",
@@ -1089,6 +1103,7 @@ mod tests {
             1000,
         )
         .unwrap();
+        tx.commit().unwrap();
         let (kind, payload): (String, String) = conn
             .query_row(
                 "SELECT kind, payload_json FROM mediation_events WHERE id = ?1",
@@ -1108,9 +1123,10 @@ mod tests {
 
     #[test]
     fn escalation_dispatched_payload_preserves_fallback_flag() {
-        let conn = fresh_with_session();
+        let mut conn = fresh_with_session();
+        let tx = conn.transaction().unwrap();
         let id = record_escalation_dispatched(
-            &conn,
+            &tx,
             None,
             "dispatch-fb",
             "d-ph4",
@@ -1123,6 +1139,7 @@ mod tests {
             1100,
         )
         .unwrap();
+        tx.commit().unwrap();
         let payload: String = conn
             .query_row(
                 "SELECT payload_json FROM mediation_events WHERE id = ?1",

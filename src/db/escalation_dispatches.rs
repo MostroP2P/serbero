@@ -232,6 +232,14 @@ pub struct PendingHandoff {
 /// `limit` caps the batch so a backlog after a daemon restart does
 /// not starve other tokio tasks on the same cycle.
 pub fn list_pending_handoffs(conn: &Connection, limit: i64) -> Result<Vec<PendingHandoff>> {
+    // Guard against negative or zero `limit`. SQLite's LIMIT
+    // treats any negative value as "no upper bound", which would
+    // let a buggy caller dump an unbounded backlog in one tick
+    // and starve the rest of the tokio runtime. Clamping to at
+    // least 1 also keeps the dispatcher making forward progress
+    // on a legitimately-odd `limit = 0` call rather than silently
+    // returning an empty batch every cycle.
+    let clamped_limit = limit.max(1);
     let mut stmt = conn.prepare(
         "SELECT me.id, me.session_id, me.payload_json,
                 me.prompt_bundle_id, me.policy_hash, me.occurred_at
@@ -250,7 +258,7 @@ pub fn list_pending_handoffs(conn: &Connection, limit: i64) -> Result<Vec<Pendin
          LIMIT ?1",
     )?;
     let rows = stmt
-        .query_map(params![limit], |r| {
+        .query_map(params![clamped_limit], |r| {
             Ok(PendingHandoff {
                 handoff_event_id: r.get::<_, i64>(0)?,
                 session_id: r.get::<_, Option<String>>(1)?,
@@ -602,5 +610,32 @@ mod tests {
             2,
             "limit=2 must cap the batch so a restart backlog cannot starve other tasks"
         );
+    }
+
+    #[test]
+    fn list_pending_handoffs_clamps_nonpositive_limit() {
+        // SQLite's `LIMIT -1` returns every row in the table —
+        // passing that through unchecked would defeat the whole
+        // purpose of the batch cap. The clamp to `max(1, limit)`
+        // guards against a caller (test, future refactor, plugin)
+        // that accidentally passes 0 or a negative value.
+        let mut conn = open_in_memory().unwrap();
+        run_migrations(&mut conn).unwrap();
+        seed_dispute_row(&conn, "d-a");
+        seed_dispute_row(&conn, "d-b");
+        seed_dispute_row(&conn, "d-c");
+        seed_handoff_event(&conn, "d-a", "{\"dispute_id\":\"d-a\"}");
+        seed_handoff_event(&conn, "d-b", "{\"dispute_id\":\"d-b\"}");
+        seed_handoff_event(&conn, "d-c", "{\"dispute_id\":\"d-c\"}");
+
+        for bogus_limit in [0_i64, -1, i64::MIN] {
+            let pending = list_pending_handoffs(&conn, bogus_limit).unwrap();
+            assert_eq!(
+                pending.len(),
+                1,
+                "limit={bogus_limit} must clamp to 1 (got {} rows)",
+                pending.len()
+            );
+        }
     }
 }

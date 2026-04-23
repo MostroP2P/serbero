@@ -76,7 +76,14 @@ pub async fn run_dispatcher(
     _solvers: Vec<SolverConfig>,
     cfg: EscalationConfig,
 ) {
-    let interval_secs = cfg.dispatch_interval_seconds;
+    // Defensive guard. `validate_escalation` in `crate::config` already
+    // rejects `0` at config-load time with a loud `Error::Config`, so
+    // this branch is unreachable via the normal daemon startup path.
+    // Tests and future callers that build `EscalationConfig` directly
+    // (bypassing `load_config`) could still reach it; coercing to `1`
+    // keeps `tokio::time::interval` from panicking on
+    // `Duration::from_secs(0)`.
+    let interval_secs = cfg.dispatch_interval_seconds.max(1);
     info!(
         dispatch_interval_seconds = interval_secs,
         fallback_to_all_solvers = cfg.fallback_to_all_solvers,
