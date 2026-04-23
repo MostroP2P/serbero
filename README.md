@@ -268,7 +268,7 @@ renotification_seconds                = 300   # re-notify disputes unattended th
 renotification_check_interval_seconds = 60    # how often to scan for unattended disputes
 ```
 
-**About the `permission` field:** Phase 1 and Phase 2 notify **every** configured solver regardless of this value. Permission is parsed, stored, and surfaced to later phases — Phase 4 (escalation routing) will target write-permission solvers specifically. Setting it today is future-proofing, not gating.
+**About the `permission` field:** Phase 1 and Phase 2 notify **every** configured solver regardless of this value. Phase 4 (escalation execution) routes on it: when a Phase 3 session produces a `handoff_prepared` event, the structured `escalation_handoff/v1` DM goes to `write` solvers. `read` solvers are only targeted as a fallback and only when `[escalation].fallback_to_all_solvers = true` (see FR-202 in `specs/004-escalation-execution/spec.md` for the full recipient rule table). Setting the correct permission on every `[[solvers]]` entry is load-bearing.
 
 ### Run
 
@@ -372,7 +372,7 @@ For the full operator walkthrough see [`specs/003-guided-mediation/quickstart.md
 | `[mostro]`       | `pubkey`                                   | string   | ✓        | Hex-encoded public key of the Mostro instance to monitor.                                   |
 | `[[relays]]`     | `url`                                      | string   | ≥ 1      | One or more `wss://…` relay URLs. Serbero connects to all of them.                          |
 | `[[solvers]]`    | `pubkey`                                   | string   |          | Hex-encoded solver public key.                                                              |
-| `[[solvers]]`    | `permission`                               | string   |          | `"read"` or `"write"`. Not used for filtering in Phases 1–2; reserved for Phase 4 routing.  |
+| `[[solvers]]`    | `permission`                               | string   |          | `"read"` or `"write"`. Not used for filtering in Phases 1–2; Phase 4 routes structured escalation DMs to `write` solvers per FR-202. |
 | `[timeouts]`     | `renotification_seconds`                   | integer  |          | Defaults to `300`. Disputes in `notified` state older than this are re-notified.            |
 | `[timeouts]`     | `renotification_check_interval_seconds`    | integer  |          | Defaults to `60`. How often the re-notification timer scans the DB.                         |
 
@@ -581,7 +581,7 @@ Mediation session <session_id> (dispute <dispute_id>) escalated —
 trigger: <snake_case_trigger>. Needs human judgment.
 ```
 
-The compact body keeps DMs readable across Nostr clients; the full handoff package (evidence refs, rationale refs, prompt bundle id, policy hash, assembled-at timestamp) lives alongside in `mediation_events` as a `handoff_prepared` row for Phase 4 to consume.
+The compact body keeps DMs readable across Nostr clients; the full handoff package (evidence refs, rationale refs, prompt bundle id, policy hash, assembled-at timestamp) lives alongside in `mediation_events` as a `handoff_prepared` row, which Phase 4 consumes to dispatch a structured `escalation_handoff/v1` DM to the write-permission solver.
 
 ### Dispute-scoped escalation (FR-122, pre-take)
 
@@ -910,7 +910,7 @@ Serbero is governed by a [constitution](.specify/memory/constitution.md) that de
 - **Phase 1 — Detection + notification**: shipped.
 - **Phase 2 — Lifecycle + re-notification + assignment visibility**: shipped.
 - **Phase 3 — Guided Mediation** (low-risk coordination failures): shipped on `main`. Contacts dispute parties via gift wraps to their shared pubkeys, runs bounded clarifying rounds, classifies through a versioned prompt bundle + reasoning provider, and either delivers a cooperative summary to the assigned solver or escalates with a Phase 4 handoff package. Strict policy-layer validation suppresses any output that would cross Serbero's authority boundary.
-- **Phase 4 — Escalation Execution**: planned. Phase 3 already prepares the `handoff_prepared` package (evidence refs, rationale refs, prompt bundle id, policy hash); Phase 4 will consume it — routing to write-permission solvers, re-escalation on no-acknowledge, and the operator UI surface.
+- **Phase 4 — Escalation Execution**: shipped on `main`. Consumes the `handoff_prepared` packages Phase 3 produces (evidence refs, rationale refs, prompt bundle id, policy hash) and dispatches them as structured `escalation_handoff/v1` DMs to write-permission solvers. FR-202 recipient routing (targeted → write-set broadcast → fallback-to-all → unroutable), FR-208 supersession when a dispute resolves before the dispatcher's send step, FR-211 send-failed status, and FR-214 parse-failed / orphan-dispute audit shapes are all live. Phase 4 deliberately does NOT track solver acks, retry, or re-escalate — Phase 1/2's existing re-notification loop covers follow-up. There is no dedicated operator UI: inspection lives in the `sqlite3` query recipes documented in `specs/004-escalation-execution/quickstart.md`.
 - **Phase 5 — Additional Reasoning Adapters**: the OpenAI-compatible adapter shipped in Phase 3 already covers hosted OpenAI, vLLM, llama.cpp, Ollama, LiteLLM, and any router proxy exposing `/chat/completions`. Vendor-specific adapters (Anthropic, PPQai, OpenClaw) are tracked as future work behind a `not_yet_implemented` guard that fails loudly at startup so operators get an actionable message rather than silent coercion.
 
 ---
