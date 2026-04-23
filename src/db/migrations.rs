@@ -317,7 +317,13 @@ fn apply_v5(tx: &Transaction<'_>) -> Result<()> {
 
         CREATE INDEX IF NOT EXISTS idx_escalation_dispatches_dispute
             ON escalation_dispatches(dispute_id);
-        CREATE INDEX IF NOT EXISTS idx_escalation_dispatches_handoff
+        -- UNIQUE: FR-203 / SC-205 require at most one dispatch per
+        -- `handoff_prepared` event. Enforcing that at the DB layer
+        -- is a belt-and-braces guard against any future bug that
+        -- bypasses the consumer scan's LEFT-JOIN filter — the second
+        -- insert fails loudly instead of producing a duplicate
+        -- dispatch row and a duplicate DM.
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_escalation_dispatches_handoff
             ON escalation_dispatches(handoff_event_id);",
     )?;
     Ok(())
@@ -607,6 +613,31 @@ mod tests {
                 .unwrap();
             assert_eq!(hit, 1, "index {idx} should exist after v5");
         }
+
+        // FR-203 / SC-205: handoff index must be UNIQUE. PRAGMA
+        // `index_list` returns one row per index with a `unique`
+        // column (0/1). We pin this explicitly so a future
+        // migration edit cannot accidentally drop the uniqueness
+        // guarantee without tripping a test.
+        let mut stmt = conn
+            .prepare("PRAGMA index_list(escalation_dispatches)")
+            .unwrap();
+        let rows: Vec<(String, i64)> = stmt
+            .query_map([], |row| {
+                // PRAGMA columns: seq, name, unique, origin, partial.
+                Ok((row.get::<_, String>(1)?, row.get::<_, i64>(2)?))
+            })
+            .unwrap()
+            .collect::<std::result::Result<_, _>>()
+            .unwrap();
+        let handoff = rows
+            .iter()
+            .find(|(n, _)| n == "idx_escalation_dispatches_handoff")
+            .expect("handoff index should exist");
+        assert_eq!(
+            handoff.1, 1,
+            "idx_escalation_dispatches_handoff MUST be UNIQUE (FR-203 / SC-205)"
+        );
     }
 
     #[test]
@@ -614,11 +645,16 @@ mod tests {
         // The CHECK constraint on `status` must reject any value
         // other than `dispatched` or `send_failed`. A mis-spelled
         // token surfaces as a SQL error, not a silent audit drift.
+        //
+        // Each row seeds its own `handoff_prepared` event: the
+        // unique index on `handoff_event_id` (FR-203 / SC-205)
+        // forbids two dispatches against the same upstream row, so
+        // we give each status its own handoff to keep the test
+        // focused on the CHECK constraint rather than on the
+        // uniqueness invariant.
         let mut conn = open_in_memory().unwrap();
         run_migrations(&mut conn).unwrap();
 
-        // Seed a minimal parent dispute + mediation_event so FKs
-        // are satisfied.
         conn.execute(
             "INSERT INTO disputes (
                 dispute_id, event_id, mostro_pubkey, initiator_role,
@@ -628,18 +664,22 @@ mod tests {
             [],
         )
         .unwrap();
-        let handoff_event_id: i64 = conn
-            .query_row(
+
+        let fresh_handoff_event_id = |conn: &Connection| -> i64 {
+            conn.query_row(
                 "INSERT INTO mediation_events (session_id, kind, payload_json, occurred_at)
-             VALUES (NULL, 'handoff_prepared', '{}', 100)
-             RETURNING id",
+                 VALUES (NULL, 'handoff_prepared', '{}', 100)
+                 RETURNING id",
                 [],
                 |r| r.get(0),
             )
-            .unwrap();
+            .unwrap()
+        };
 
-        // Valid statuses succeed.
+        // Valid statuses succeed. Each dispatch targets a fresh
+        // handoff row so the unique index is not the failure mode.
         for status in ["dispatched", "send_failed"] {
+            let handoff_event_id = fresh_handoff_event_id(&conn);
             conn.execute(
                 "INSERT INTO escalation_dispatches (
                     dispatch_id, dispute_id, handoff_event_id,
@@ -651,6 +691,7 @@ mod tests {
         }
 
         // Any other token must error.
+        let handoff_event_id = fresh_handoff_event_id(&conn);
         let err = conn.execute(
             "INSERT INTO escalation_dispatches (
                 dispatch_id, dispute_id, handoff_event_id,
@@ -661,6 +702,59 @@ mod tests {
         assert!(
             err.is_err(),
             "CHECK constraint must reject status = 'bogus', but insert succeeded"
+        );
+    }
+
+    #[test]
+    fn phase4_unique_index_rejects_duplicate_handoff_dispatch() {
+        // FR-203 / SC-205: the DB must refuse a second dispatch row
+        // against the same `handoff_event_id`. The unique index
+        // introduced in v5 is the defense-in-depth guard — even if
+        // the consumer scan's LEFT-JOIN filter is bypassed by a
+        // future bug, the DB itself rejects the duplicate INSERT.
+        let mut conn = open_in_memory().unwrap();
+        run_migrations(&mut conn).unwrap();
+
+        conn.execute(
+            "INSERT INTO disputes (
+                dispute_id, event_id, mostro_pubkey, initiator_role,
+                dispute_status, event_timestamp, detected_at, lifecycle_state
+             ) VALUES ('d-dup', 'evt-dup', 'mostro', 'buyer',
+                       'initiated', 10, 11, 'notified')",
+            [],
+        )
+        .unwrap();
+        let handoff_event_id: i64 = conn
+            .query_row(
+                "INSERT INTO mediation_events (session_id, kind, payload_json, occurred_at)
+                 VALUES (NULL, 'handoff_prepared', '{}', 100)
+                 RETURNING id",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+
+        // First insert succeeds.
+        conn.execute(
+            "INSERT INTO escalation_dispatches (
+                dispatch_id, dispute_id, handoff_event_id,
+                target_solver, dispatched_at, created_at, status
+             ) VALUES ('dispatch-1', 'd-dup', ?1, 'solver-pk', 200, 200, 'dispatched')",
+            params![handoff_event_id],
+        )
+        .unwrap();
+
+        // Second insert against the same handoff_event_id must fail.
+        let err = conn.execute(
+            "INSERT INTO escalation_dispatches (
+                dispatch_id, dispute_id, handoff_event_id,
+                target_solver, dispatched_at, created_at, status
+             ) VALUES ('dispatch-2', 'd-dup', ?1, 'solver-pk', 300, 300, 'send_failed')",
+            params![handoff_event_id],
+        );
+        assert!(
+            err.is_err(),
+            "unique index must reject a second dispatch row for the same handoff_event_id"
         );
     }
 

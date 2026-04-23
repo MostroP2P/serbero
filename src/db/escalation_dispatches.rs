@@ -28,7 +28,7 @@
 use std::fmt;
 use std::str::FromStr;
 
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension, Transaction};
 
 use crate::error::{Error, Result};
 
@@ -101,11 +101,17 @@ pub struct EscalationDispatch {
     pub fallback_broadcast: bool,
 }
 
-/// Insert one `escalation_dispatches` row. Caller owns the
-/// transaction so the row lands atomically with the matching
-/// `escalation_dispatched` audit event (FR-211 invariant).
-pub fn insert_dispatch(conn: &Connection, row: &EscalationDispatch) -> Result<()> {
-    conn.execute(
+/// Insert one `escalation_dispatches` row.
+///
+/// Takes `&Transaction<'_>` (not `&Connection`) because FR-211
+/// requires this row and the matching `escalation_dispatched`
+/// audit event to land atomically. Forcing the transaction at the
+/// type level makes the atomicity invariant impossible to bypass
+/// by accident — a future caller cannot "just call insert_dispatch"
+/// without first opening a transaction that also covers the audit
+/// write.
+pub fn insert_dispatch(tx: &Transaction<'_>, row: &EscalationDispatch) -> Result<()> {
+    tx.execute(
         "INSERT INTO escalation_dispatches (
             dispatch_id, dispute_id, session_id, handoff_event_id,
             target_solver, dispatched_at, created_at, status, fallback_broadcast
@@ -137,38 +143,41 @@ pub fn find_dispatch_by_handoff_event_id(
     conn: &Connection,
     handoff_event_id: i64,
 ) -> Result<Option<EscalationDispatch>> {
-    // Only `QueryReturnedNoRows` maps to the `Ok(None)` "not
-    // dispatched yet" case. Every other rusqlite error — missing
-    // table, lock contention, row decoding failure — MUST propagate
-    // so the dispatch consumer loop surfaces real storage failures
-    // instead of silently bypassing the dedup probe and risking a
-    // duplicate send. `.ok()` would flatten them all to `None`; we
-    // match explicitly instead.
-    let tuple = match conn.query_row(
-        "SELECT dispatch_id, dispute_id, session_id, handoff_event_id,
-                target_solver, dispatched_at, created_at, status, fallback_broadcast
-         FROM escalation_dispatches
-         WHERE handoff_event_id = ?1
-         LIMIT 1",
-        params![handoff_event_id],
-        |r| {
-            let status_s: String = r.get(7)?;
-            Ok((
-                r.get::<_, String>(0)?,
-                r.get::<_, String>(1)?,
-                r.get::<_, Option<String>>(2)?,
-                r.get::<_, i64>(3)?,
-                r.get::<_, String>(4)?,
-                r.get::<_, i64>(5)?,
-                r.get::<_, i64>(6)?,
-                status_s,
-                r.get::<_, i64>(8)? != 0,
-            ))
-        },
-    ) {
-        Ok(tuple) => tuple,
-        Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(None),
-        Err(e) => return Err(e.into()),
+    // `OptionalExtension::optional()` is the idiomatic rusqlite form
+    // for "`QueryReturnedNoRows` becomes `Ok(None)`, everything else
+    // propagates" — matches the `disputes::get_dispute` pattern
+    // already used in the Phase 1/2 layer. The earlier `.ok()` shape
+    // was a bug: it flattened every rusqlite error (missing table,
+    // lock/busy, row-decode failure) to `None`, which in the
+    // dispatcher's consumer path would silently bypass the FR-203
+    // dedup probe and risk a duplicate send.
+    let tuple = conn
+        .query_row(
+            "SELECT dispatch_id, dispute_id, session_id, handoff_event_id,
+                    target_solver, dispatched_at, created_at, status, fallback_broadcast
+             FROM escalation_dispatches
+             WHERE handoff_event_id = ?1
+             LIMIT 1",
+            params![handoff_event_id],
+            |r| {
+                let status_s: String = r.get(7)?;
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, Option<String>>(2)?,
+                    r.get::<_, i64>(3)?,
+                    r.get::<_, String>(4)?,
+                    r.get::<_, i64>(5)?,
+                    r.get::<_, i64>(6)?,
+                    status_s,
+                    r.get::<_, i64>(8)? != 0,
+                ))
+            },
+        )
+        .optional()?;
+
+    let Some(tuple) = tuple else {
+        return Ok(None);
     };
 
     let status = DispatchStatus::from_str(&tuple.7)?;
@@ -264,7 +273,9 @@ mod tests {
             status: DispatchStatus::Dispatched,
             fallback_broadcast: false,
         };
-        insert_dispatch(&conn, &row).unwrap();
+        let tx = conn.transaction().unwrap();
+        insert_dispatch(&tx, &row).unwrap();
+        tx.commit().unwrap();
 
         let got = find_dispatch_by_handoff_event_id(&conn, handoff_event_id)
             .unwrap()
@@ -289,7 +300,9 @@ mod tests {
             status: DispatchStatus::SendFailed,
             fallback_broadcast: true,
         };
-        insert_dispatch(&conn, &row).unwrap();
+        let tx = conn.transaction().unwrap();
+        insert_dispatch(&tx, &row).unwrap();
+        tx.commit().unwrap();
 
         let got = find_dispatch_by_handoff_event_id(&conn, handoff_event_id)
             .unwrap()
