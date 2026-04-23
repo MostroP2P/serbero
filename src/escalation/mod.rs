@@ -63,15 +63,18 @@ const SCAN_BATCH_LIMIT: i64 = 128;
 /// dispatch-tracking row and its paired audit event inside a
 /// single transaction.
 ///
-/// US1 (dispatch pipeline) and US2 (supersession gate) are live;
-/// the gate at step (2a) of `process_one` writes an idempotent
-/// `escalation_superseded` audit row and short-circuits the send
-/// whenever `lifecycle_state = 'resolved'` beats the dispatcher
-/// to the handoff. US3 (unroutable audit row + fallback counter)
-/// and the parse-failed / orphan-dispute handlers land in T022 /
-/// T028. Until then the "Unroutable" and deserialize-error branches
-/// log an ERROR/WARN and leave the handoff unconsumed for the next
-/// cycle to pick up.
+/// US1 (dispatch pipeline), US2 (supersession gate) and US3
+/// (unroutable audit row) are live. The US2 gate at step (2a) of
+/// `process_one` writes an idempotent `escalation_superseded`
+/// audit row and short-circuits the send whenever
+/// `lifecycle_state = 'resolved'` beats the dispatcher to the
+/// handoff; the US3 arm of the recipient match writes an
+/// idempotent `escalation_dispatch_unroutable` audit row plus a
+/// fresh-every-cycle ERROR log line when zero write-permission
+/// solvers are configured and fallback is off. The parse-failed
+/// / orphan-dispute handlers are the remaining TODO (T028); the
+/// deserialize-error branch currently logs a WARN and leaves the
+/// handoff unconsumed for a later T028 landing.
 pub async fn run_dispatcher(
     conn: Arc<AsyncMutex<rusqlite::Connection>>,
     client: Client,
@@ -230,17 +233,51 @@ async fn process_one(
             via_fallback,
         } => (pubkeys, via_fallback),
         Recipients::Unroutable => {
-            // T022 handles this with an `escalation_dispatch_unroutable`
-            // audit row + ERROR log. For US1 we emit the ERROR and
-            // leave the handoff unconsumed so the T022 landing picks
-            // it up on the first cycle after.
+            // FR-213. Two config shapes collapse onto this arm (see
+            // `router::resolve_recipients`):
+            //   - At least one solver configured, all `Read`,
+            //     `fallback_to_all_solvers = false`.
+            //   - Zero solvers configured at all (with either
+            //     fallback value — the router folds fallback-on +
+            //     empty set onto Unroutable so there is one
+            //     can't-route code path instead of two).
+            //
+            // Emit a fresh ERROR each cycle so the live log tail
+            // surfaces the "still unroutable" state, but deduplicate
+            // the audit row at the writer — without dedup a stuck
+            // unroutable handoff would grow `mediation_events` by
+            // one row every `dispatch_interval_seconds` forever. The
+            // handoff stays unconsumed (no `escalation_dispatches`
+            // row is written) so a future operator config change
+            // that adds a Write solver dispatches it on the first
+            // cycle after the change.
+            let configured_count = solvers.len();
             error!(
                 dispute_id = %pkg.dispute_id,
                 handoff_event_id = handoff.handoff_event_id,
-                "phase4_dispatch: no Write-permission solvers configured and \
-                 fallback_to_all_solvers = false; handoff remains unconsumed \
-                 (T022 handler will add escalation_dispatch_unroutable audit row)"
+                configured_solver_count = configured_count,
+                fallback_to_all_solvers = cfg.fallback_to_all_solvers,
+                "phase4_unroutable — no write-permission solver configured; \
+                 handoff remains unconsumed (set [escalation].fallback_to_all_solvers = true \
+                 to broadcast to every configured solver, or add a write-permission solver)"
             );
+            if let Err(e) = tracker::record_unroutable(
+                conn,
+                &handoff,
+                &pkg.dispute_id,
+                configured_count,
+                cfg.fallback_to_all_solvers,
+                current_unix_seconds(),
+            )
+            .await
+            {
+                error!(
+                    dispute_id = %pkg.dispute_id,
+                    handoff_event_id = handoff.handoff_event_id,
+                    error = %e,
+                    "phase4_dispatch: record_unroutable failed; handoff remains unconsumed"
+                );
+            }
             return;
         }
     };
@@ -446,16 +483,22 @@ mod tests {
 
     #[tokio::test]
     async fn handoff_with_no_write_solvers_and_fallback_off_stays_unconsumed() {
-        // US3 scenario — zero write solvers + fallback off. The
-        // full T022 handler lands later; for US1 we assert that
-        // the handoff stays in the pending set (no
-        // escalation_dispatches row, no escalation_dispatched
-        // event). Operators see the loud ERROR log line.
+        // US3 (T022) scenario — zero write solvers + fallback off.
+        // The unroutable arm writes an `escalation_dispatch_unroutable`
+        // audit row, emits an ERROR log, and leaves the handoff
+        // unconsumed (no `escalation_dispatches` row, no
+        // `escalation_dispatched` event) so a later config change
+        // adding a Write solver dispatches it normally on the next
+        // cycle (FR-213). End-to-end coverage of the full rule-3/4
+        // recipient match, the fallback-broadcast path, and the
+        // re-pickability contract lives in
+        // `tests/phase4_no_write_solvers.rs`; this inline test is
+        // the per-cycle shape pin on `process_one`'s output.
         let conn = fresh_conn().await;
         let keys = Keys::generate();
         let client = nostr_sdk::Client::new(keys.clone());
         let pkg = sample_package("d-us3");
-        seed_handoff_for_dispute(&conn, "d-us3", None, &pkg).await;
+        let handoff_id = seed_handoff_for_dispute(&conn, "d-us3", None, &pkg).await;
         let solvers = vec![solver("pk-r1", SolverPermission::Read)];
         let cfg = sample_cfg(1, false);
 
@@ -472,24 +515,43 @@ mod tests {
         };
         assert_eq!(
             dispatches, 0,
-            "unroutable handoff must not create a dispatch row"
+            "unroutable handoff must not create a dispatch row (FR-213)"
         );
 
-        let events: i64 = {
+        let dispatched_audit: i64 = {
             let c = conn.lock().await;
             c.query_row(
                 "SELECT COUNT(*) FROM mediation_events
-                 WHERE kind IN ('escalation_dispatched',
-                                'escalation_dispatch_unroutable')",
+                 WHERE kind = 'escalation_dispatched'",
                 [],
                 |r| r.get(0),
             )
             .unwrap()
         };
         assert_eq!(
-            events, 0,
-            "T022 handler not live yet; no unroutable audit row should fire — \
-             handoff stays in the pending set for a future cycle to pick up"
+            dispatched_audit, 0,
+            "no send-step happened, so no escalation_dispatched audit row should exist"
         );
+
+        // Exactly one unroutable audit row whose payload references
+        // the handoff id and mirrors the config flags — this is the
+        // per-handoff observable state the operator queries against
+        // to distinguish "no Write solver configured" from "send
+        // failed on every recipient" (SC-208-adjacent).
+        let (hid, csc, fallback): (i64, i64, bool) = {
+            let c = conn.lock().await;
+            c.query_row(
+                "SELECT json_extract(payload_json, '$.handoff_event_id'),
+                        json_extract(payload_json, '$.configured_solver_count'),
+                        json_extract(payload_json, '$.fallback_to_all_solvers')
+                 FROM mediation_events WHERE kind = 'escalation_dispatch_unroutable'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap()
+        };
+        assert_eq!(hid, handoff_id);
+        assert_eq!(csc, 1, "one Read-permission solver counts as configured");
+        assert!(!fallback);
     }
 }

@@ -560,6 +560,28 @@ pub fn record_escalation_superseded(
     )
 }
 
+/// Lookup used by the FR-213 unroutable gate to avoid emitting a
+/// second `escalation_dispatch_unroutable` audit row for the same
+/// `handoff_event_id`. Mirrors the supersession dedup shape
+/// (`escalation_superseded_exists_for_handoff`) — deduplication
+/// lives at the writer, not at `list_pending_handoffs`, so the
+/// handoff stays visible to the scan and can be re-picked by a
+/// future config change (FR-213 re-pickability).
+pub fn escalation_dispatch_unroutable_exists_for_handoff(
+    conn: &Connection,
+    handoff_event_id: i64,
+) -> Result<bool> {
+    let n: i64 = conn.query_row(
+        "SELECT COUNT(*)
+         FROM mediation_events
+         WHERE kind = 'escalation_dispatch_unroutable'
+           AND json_extract(payload_json, '$.handoff_event_id') = ?1",
+        params![handoff_event_id],
+        |r| r.get(0),
+    )?;
+    Ok(n > 0)
+}
+
 /// FR-213 typed constructor for the unroutable dispatch case.
 ///
 /// Fires when `[escalation].fallback_to_all_solvers = false` AND
@@ -1282,6 +1304,40 @@ mod tests {
     fn escalation_superseded_exists_for_handoff_is_false_before_any_write() {
         let conn = fresh_with_session();
         assert!(!escalation_superseded_exists_for_handoff(&conn, 42).unwrap());
+    }
+
+    #[test]
+    fn escalation_dispatch_unroutable_exists_for_handoff_round_trip() {
+        let conn = fresh_with_session();
+        let handoff_a: i64 = conn
+            .query_row(
+                "INSERT INTO mediation_events (
+                    session_id, kind, payload_json, occurred_at
+                 ) VALUES (NULL, 'handoff_prepared', '{}', 100)
+                 RETURNING id",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        // Unrouted/unroutable absent before any write.
+        assert!(!escalation_dispatch_unroutable_exists_for_handoff(&conn, handoff_a).unwrap());
+        record_escalation_dispatch_unroutable(
+            &conn,
+            None,
+            "d-unr",
+            handoff_a,
+            2,
+            false,
+            Some("phase3-default"),
+            Some("hash-1"),
+            200,
+        )
+        .unwrap();
+        assert!(escalation_dispatch_unroutable_exists_for_handoff(&conn, handoff_a).unwrap());
+        // Scoped per handoff_event_id.
+        assert!(
+            !escalation_dispatch_unroutable_exists_for_handoff(&conn, handoff_a + 999).unwrap()
+        );
     }
 
     #[test]

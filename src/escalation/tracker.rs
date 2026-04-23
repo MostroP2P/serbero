@@ -2,9 +2,9 @@
 //! the matching `escalation_dispatched` audit event in a single
 //! transaction (FR-211 atomicity invariant).
 //!
-//! This file carries the dispatch-attempt writer (US1) and the
-//! supersession writer (US2). Unroutable (T023) and parse-failed
-//! (T029) helpers land alongside in later phases.
+//! This file carries the dispatch-attempt writer (US1), the
+//! supersession writer (US2) and the unroutable writer (US3).
+//! The parse-failed (T029) helper lands alongside in Phase 6.
 
 use std::sync::Arc;
 
@@ -15,7 +15,8 @@ use crate::db::escalation_dispatches::{
     insert_dispatch, DispatchStatus, EscalationDispatch, PendingHandoff,
 };
 use crate::db::mediation_events::{
-    escalation_superseded_exists_for_handoff, record_escalation_dispatched,
+    escalation_dispatch_unroutable_exists_for_handoff, escalation_superseded_exists_for_handoff,
+    record_escalation_dispatch_unroutable, record_escalation_dispatched,
     record_escalation_superseded,
 };
 use crate::error::Result;
@@ -145,6 +146,61 @@ pub async fn record_supersession(
         dispute_id,
         handoff.handoff_event_id,
         SUPERSESSION_REASON,
+        handoff.prompt_bundle_id.as_deref(),
+        handoff.policy_hash.as_deref(),
+        now_ts,
+    )?;
+    Ok(())
+}
+
+/// Record an `escalation_dispatch_unroutable` audit event for a
+/// handoff whose FR-202 routing collapsed to
+/// `Recipients::Unroutable` (zero write-permission solvers
+/// configured AND `[escalation].fallback_to_all_solvers = false`,
+/// or zero configured solvers at all).
+///
+/// Does NOT write to `escalation_dispatches`: FR-213 keeps the
+/// upstream `handoff_prepared` row visible to the next scan so a
+/// later operator config change (adding a write-permission solver)
+/// dispatches the handoff on the first cycle after the change —
+/// without re-running Phase 3 or hand-editing the audit log.
+///
+/// Idempotent per `handoff_event_id`: re-firing on the same
+/// config (still zero write solvers) is silently skipped at the
+/// writer, so a long-running dispatcher with persistently zero
+/// write solvers does not grow the audit table by one row per
+/// `dispatch_interval_seconds` per pending handoff. Same
+/// writer-side-dedup reasoning as [`record_supersession`];
+/// filtering at the scan's `NOT EXISTS` clause would hide the
+/// handoff from the gate on cycle N+1 and break re-pickability.
+///
+/// The single ERROR-level log line the caller emits is NOT
+/// deduplicated — each cycle logs again so an operator inspecting
+/// the live log tail sees fresh "still unroutable" evidence, not
+/// silence.
+///
+/// Session / bundle / policy-hash scoping copies the upstream
+/// `handoff_prepared` row verbatim so the audit chain stays
+/// anchored to the same Phase 3 context.
+pub async fn record_unroutable(
+    conn: &Arc<AsyncMutex<rusqlite::Connection>>,
+    handoff: &PendingHandoff,
+    dispute_id: &str,
+    configured_solver_count: usize,
+    fallback_to_all_solvers: bool,
+    now_ts: i64,
+) -> Result<()> {
+    let guard = conn.lock().await;
+    if escalation_dispatch_unroutable_exists_for_handoff(&guard, handoff.handoff_event_id)? {
+        return Ok(());
+    }
+    record_escalation_dispatch_unroutable(
+        &guard,
+        handoff.session_id.as_deref(),
+        dispute_id,
+        handoff.handoff_event_id,
+        configured_solver_count,
+        fallback_to_all_solvers,
         handoff.prompt_bundle_id.as_deref(),
         handoff.policy_hash.as_deref(),
         now_ts,
@@ -553,6 +609,150 @@ mod tests {
         assert_eq!(
             n, 2,
             "two distinct handoff_event_ids must produce two supersession rows"
+        );
+    }
+
+    // --- Unroutable (US3) ---------------------------------------------
+
+    #[tokio::test]
+    async fn record_unroutable_writes_audit_row_without_dispatch_row() {
+        let (conn, handoff) = fresh_with_dispute_and_handoff().await;
+
+        record_unroutable(&conn, &handoff, "d-trk", 2, false, 200)
+            .await
+            .unwrap();
+
+        // FR-213: the unroutable gate must NOT consume the handoff
+        // by writing to `escalation_dispatches` — a later config
+        // change adding a write-permission solver has to be able to
+        // re-surface the handoff on the next scan.
+        let dispatch_count: i64 = {
+            let c = conn.lock().await;
+            c.query_row("SELECT COUNT(*) FROM escalation_dispatches", [], |r| {
+                r.get(0)
+            })
+            .unwrap()
+        };
+        assert_eq!(
+            dispatch_count, 0,
+            "unroutable must NOT write an escalation_dispatches row"
+        );
+
+        let (kind, payload): (String, String) = {
+            let c = conn.lock().await;
+            c.query_row(
+                "SELECT kind, payload_json FROM mediation_events
+                 WHERE kind = 'escalation_dispatch_unroutable'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap()
+        };
+        assert_eq!(kind, "escalation_dispatch_unroutable");
+        let v: serde_json::Value = serde_json::from_str(&payload).unwrap();
+        assert_eq!(v["dispute_id"], "d-trk");
+        assert_eq!(v["handoff_event_id"], handoff.handoff_event_id);
+        assert_eq!(v["configured_solver_count"], 2);
+        assert_eq!(v["fallback_to_all_solvers"], false);
+    }
+
+    #[tokio::test]
+    async fn record_unroutable_copies_bundle_and_policy_pin_from_handoff() {
+        let (conn, handoff) = fresh_with_dispute_and_handoff().await;
+        record_unroutable(&conn, &handoff, "d-trk", 0, false, 200)
+            .await
+            .unwrap();
+
+        let (bundle, ph): (Option<String>, Option<String>) = {
+            let c = conn.lock().await;
+            c.query_row(
+                "SELECT prompt_bundle_id, policy_hash FROM mediation_events
+                 WHERE kind = 'escalation_dispatch_unroutable'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap()
+        };
+        assert_eq!(bundle.as_deref(), Some("phase3-default"));
+        assert_eq!(ph.as_deref(), Some("hash-1"));
+    }
+
+    #[tokio::test]
+    async fn record_unroutable_is_idempotent_per_handoff_event_id() {
+        // The gate re-fires on every dispatcher cycle while the
+        // config stays broken (zero write solvers + fallback off).
+        // The writer-side dedup keeps the audit table bounded.
+        let (conn, handoff) = fresh_with_dispute_and_handoff().await;
+        record_unroutable(&conn, &handoff, "d-trk", 0, false, 200)
+            .await
+            .unwrap();
+        record_unroutable(&conn, &handoff, "d-trk", 0, false, 260)
+            .await
+            .unwrap();
+
+        let n: i64 = {
+            let c = conn.lock().await;
+            c.query_row(
+                "SELECT COUNT(*) FROM mediation_events
+                 WHERE kind = 'escalation_dispatch_unroutable'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        assert_eq!(
+            n, 1,
+            "second record_unroutable for the same handoff_event_id must be a no-op"
+        );
+    }
+
+    #[tokio::test]
+    async fn record_unroutable_is_dedup_scoped_to_the_handoff_event_id() {
+        let (conn, handoff_a) = fresh_with_dispute_and_handoff().await;
+        let handoff_b = {
+            let c = conn.lock().await;
+            let id: i64 = c
+                .query_row(
+                    "INSERT INTO mediation_events (
+                        session_id, kind, payload_json,
+                        prompt_bundle_id, policy_hash, occurred_at
+                     ) VALUES (NULL, 'handoff_prepared', '{}',
+                               'phase3-default', 'hash-1', 150)
+                     RETURNING id",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            PendingHandoff {
+                handoff_event_id: id,
+                session_id: None,
+                payload_json: "{}".into(),
+                prompt_bundle_id: Some("phase3-default".into()),
+                policy_hash: Some("hash-1".into()),
+                occurred_at: 150,
+            }
+        };
+
+        record_unroutable(&conn, &handoff_a, "d-trk", 0, false, 200)
+            .await
+            .unwrap();
+        record_unroutable(&conn, &handoff_b, "d-trk", 0, false, 260)
+            .await
+            .unwrap();
+
+        let n: i64 = {
+            let c = conn.lock().await;
+            c.query_row(
+                "SELECT COUNT(*) FROM mediation_events
+                 WHERE kind = 'escalation_dispatch_unroutable'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        assert_eq!(
+            n, 2,
+            "two distinct handoff_event_ids must produce two unroutable rows"
         );
     }
 }
