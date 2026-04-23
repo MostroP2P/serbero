@@ -135,7 +135,11 @@ WARN  Phase 4 will record escalation_dispatch_unroutable for every handoff until
 
    Expected: one row with `reason = 'dispute_already_resolved'`.
    No `escalation_dispatches` row exists for this handoff; no DM
-   arrives at the solver.
+   arrives at the solver. If the dispute stays resolved across
+   subsequent cycles, the `escalation_superseded` count stays at
+   1 (writer-side dedup per `handoff_event_id`); if an operator
+   flips `lifecycle_state` back to `notified` later, the handoff
+   dispatches normally on the next cycle (FR-213 re-pickability).
 
 ### 3. No write-permission solvers (US3)
 
@@ -145,8 +149,15 @@ WARN  Phase 4 will record escalation_dispatch_unroutable for every handoff until
 2. Drive a Phase 3 escalation.
 3. Observe:
    - An ERROR-level log line:
-     `Phase 4 dispatch unroutable: no Write-permission solvers configured (fallback_to_all_solvers=false) dispute_id=...`.
-   - An `escalation_dispatch_unroutable` audit row.
+     `phase4_unroutable — no write-permission solver configured; handoff remains unconsumed (set [escalation].fallback_to_all_solvers = true with at least one configured solver to broadcast, or add a write-permission solver) dispute_id=... handoff_event_id=... configured_solver_count=... config_fallback_to_all_solvers=false`.
+     The ERROR line fires on every dispatcher cycle while the
+     config stays broken, so a live log tail always surfaces the
+     "still unroutable" state.
+   - Exactly one `escalation_dispatch_unroutable` audit row per
+     handoff. The writer deduplicates per `handoff_event_id` so
+     a stuck-unroutable handoff does NOT grow `mediation_events`
+     by one row every `dispatch_interval_seconds`; subsequent
+     cycles re-trip the ERROR log but not the audit row.
    - No dispatch-tracking row and no DM at any solver's inbox.
 4. Flip `fallback_to_all_solvers = true` and restart. On the
    next dispatcher cycle the handoff picks up from where it was:
@@ -191,6 +202,46 @@ the `notifications` table has one `status = 'failed'` row per
 attempted recipient. The operator query for "which dispatches
 reached nobody" resolves from `escalation_dispatches` alone
 without a JOIN (SC-208).
+
+### 5. Malformed or orphan handoff → `escalation_dispatch_parse_failed` (FR-214)
+
+Phase 3 produces well-formed handoffs by construction, so this
+branch is defensive. It fires when upstream corruption injects a
+`handoff_prepared` event whose `payload_json` does not parse
+into a `HandoffPackage`, or whose `dispute_id` does not resolve
+to a row in `disputes`. To exercise it, write a malformed row
+directly into the test DB:
+
+```bash
+sqlite3 serbero.db \
+  "INSERT INTO mediation_events (session_id, kind, payload_json,
+                                 prompt_bundle_id, policy_hash, occurred_at)
+    VALUES (NULL, 'handoff_prepared', 'this is not valid json',
+            'phase3-default', 'hash-1', strftime('%s','now'));"
+```
+
+Within one dispatcher cycle, inspect:
+
+```bash
+sqlite3 serbero.db \
+  "SELECT json_extract(payload_json, '$.reason'),
+          json_extract(payload_json, '$.detail'),
+          json_extract(payload_json, '$.dispute_id')
+     FROM mediation_events WHERE kind = 'escalation_dispatch_parse_failed'
+    ORDER BY id DESC LIMIT 3;"
+```
+
+Expected: one row with `reason = 'deserialize_failed'`, `detail`
+carrying the parser error, and `dispute_id` extracted best-effort
+from the raw payload (or the sentinel `'unknown'` when the blob
+is too corrupted to find the key). For orphan references — valid
+JSON that names a dispute with no row in `disputes` — the
+`reason` value is `'orphan_dispute_reference'` and `detail =
+'dispute_id not found'`. Neither sub-shape writes an
+`escalation_dispatches` row; the `NOT EXISTS` clause inside
+`list_pending_handoffs` filters the handoff out on every
+subsequent cycle, so the malformed event is "consumed via audit"
+and the queue moves forward without operator cleanup.
 
 ## Inspect
 

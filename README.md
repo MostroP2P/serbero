@@ -92,16 +92,19 @@ Mostro operates normally with or without Serbero. If Serbero is offline, operato
 ## Implementation Status
 
 Serbero evolves in five phases. `main` currently implements
-**Phases 1, 2, and 3** end-to-end. Phase 3 ships the full guided-
-mediation engine: take-flow, clarifying messages, inbound ingest,
-classification, summary delivery, and escalation routing.
+**Phases 1, 2, 3, and 4** end-to-end. Phase 3 ships the full
+guided-mediation engine (take-flow, clarifying messages, inbound
+ingest, classification, summary delivery, escalation routing);
+Phase 4 ships the escalation execution surface that consumes
+those handoff packages and dispatches structured DMs to write-
+permission solvers.
 
 | Phase | Scope                                                        | Status on `main`                                                                                  |
 |-------|--------------------------------------------------------------|---------------------------------------------------------------------------------------------------|
 | 1     | Always-on dispute listener and solver notification           | **Implemented**                                                                                   |
 | 2     | Intake tracking, assignment visibility, re-notification      | **Implemented**                                                                                   |
 | 3     | Guided mediation for low-risk disputes                       | **Implemented** (88 / 88 tasks): US1–US5 + foundational + polish all closed                       |
-| 4     | Escalation support for write-permission operators            | Planned (Phase 3 prepares the handoff package; Phase 4 will execute it)                           |
+| 4     | Escalation execution for write-permission operators          | **Implemented** (34 / 34 tasks): US1 dispatch pipeline, US2 supersession, US3 unroutable, FR-214 parse-failed handlers, all closed |
 | 5     | Optional reasoning backend                                   | OpenAI-compatible adapter shipped (covers hosted OpenAI, vLLM, llama.cpp, Ollama, LiteLLM, etc.); other vendor adapters are future work |
 
 ### What Phase 3 ships
