@@ -39,7 +39,7 @@ use tracing::{debug, error, info, warn};
 use crate::db::disputes::get_dispute;
 use crate::db::escalation_dispatches::PendingHandoff;
 use crate::mediation::escalation::HandoffPackage;
-use crate::models::{EscalationConfig, SolverConfig};
+use crate::models::{EscalationConfig, LifecycleState, SolverConfig};
 
 use self::dispatcher::{build_dm_body, send_to_recipients};
 use self::router::{resolve_recipients, Recipients};
@@ -58,12 +58,20 @@ const SCAN_BATCH_LIMIT: i64 = 128;
 ///
 /// Spawned by `crate::daemon::run` when `config.escalation.enabled`.
 /// Each tick scans for pending handoffs, deserializes each one,
-/// resolves recipients via the FR-202 rule table, sends the DM,
-/// and records both the dispatch-tracking row and its paired audit
-/// event inside a single transaction.
+/// checks the FR-208 supersession gate, resolves recipients via
+/// the FR-202 rule table, sends the DM, and records both the
+/// dispatch-tracking row and its paired audit event inside a
+/// single transaction.
 ///
-/// US2 (supersession) and US3 (unroutable + parse-failed) branches
-/// are currently TODO stubs — they land in T019/T022/T028.
+/// US1 (dispatch pipeline) and US2 (supersession gate) are live;
+/// the gate at step (2a) of `process_one` writes an idempotent
+/// `escalation_superseded` audit row and short-circuits the send
+/// whenever `lifecycle_state = 'resolved'` beats the dispatcher
+/// to the handoff. US3 (unroutable audit row + fallback counter)
+/// and the parse-failed / orphan-dispute handlers land in T022 /
+/// T028. Until then the "Unroutable" and deserialize-error branches
+/// log an ERROR/WARN and leave the handoff unconsumed for the next
+/// cycle to pick up.
 pub async fn run_dispatcher(
     conn: Arc<AsyncMutex<rusqlite::Connection>>,
     client: Client,
@@ -163,14 +171,11 @@ async fn process_one(
         }
     };
 
-    // (2) Supersession gate (FR-208 / T019). Until T019 lands we
-    //     cannot skip-and-record; for US1's MVP scope we only log
-    //     at DEBUG if the dispute is already resolved and press
-    //     on — the solver getting a second "please review" DM
-    //     after resolution is the documented at-least-once
-    //     trade-off the spec accepts.
-    let assigned_solver: Option<String> = match dispute_metadata(conn, &pkg.dispute_id).await {
-        Ok(md) => md.assigned_solver,
+    // (2) Read the dispute row — we need `lifecycle_state` for the
+    //     FR-208 supersession gate immediately below, plus
+    //     `assigned_solver` for FR-202 routing if we proceed.
+    let metadata = match dispute_metadata(conn, &pkg.dispute_id).await {
+        Ok(md) => md,
         Err(e) => {
             warn!(
                 dispute_id = %pkg.dispute_id,
@@ -180,6 +185,36 @@ async fn process_one(
             return;
         }
     };
+
+    // (2a) Supersession gate (FR-208). If the dispute resolved
+    //      externally before this cycle reached its send step, we
+    //      record an `escalation_superseded` audit row and stop —
+    //      no DM, no dispatch row. FR-212 / FR-213 jointly pin the
+    //      shape: audit fires, `escalation_dispatches` stays
+    //      untouched, and the upstream `handoff_prepared` row
+    //      stays unconsumed so a future policy change can pick it
+    //      up again.
+    if metadata.lifecycle_state == LifecycleState::Resolved {
+        info!(
+            dispute_id = %pkg.dispute_id,
+            handoff_event_id = handoff.handoff_event_id,
+            "phase4_superseded — dispute already resolved; skipping dispatch"
+        );
+        if let Err(e) =
+            tracker::record_supersession(conn, &handoff, &pkg.dispute_id, current_unix_seconds())
+                .await
+        {
+            error!(
+                dispute_id = %pkg.dispute_id,
+                handoff_event_id = handoff.handoff_event_id,
+                error = %e,
+                "phase4_dispatch: record_supersession failed; handoff remains unconsumed"
+            );
+        }
+        return;
+    }
+
+    let assigned_solver: Option<String> = metadata.assigned_solver;
 
     // (3) Resolve recipients per FR-202.
     let recipients = resolve_recipients(
@@ -281,14 +316,14 @@ async fn process_one(
 #[derive(Debug)]
 struct DisputeMetadata {
     assigned_solver: Option<String>,
+    lifecycle_state: LifecycleState,
 }
 
-/// Read the fields of `disputes` that Phase 4 actually needs.
-///
-/// Only `assigned_solver` today; the supersession gate (T019) will
-/// extend this to also read `lifecycle_state`. Kept as a small
-/// helper so the `get_dispute` FK lookup runs once per handoff,
-/// not once per branch.
+/// Read the fields of `disputes` that Phase 4 actually needs:
+/// `assigned_solver` for FR-202 routing and `lifecycle_state` for
+/// the FR-208 supersession gate. Kept as a small helper so the
+/// `get_dispute` FK lookup runs once per handoff, not once per
+/// branch.
 async fn dispute_metadata(
     conn: &Arc<AsyncMutex<rusqlite::Connection>>,
     dispute_id: &str,
@@ -302,6 +337,7 @@ async fn dispute_metadata(
     })?;
     Ok(DisputeMetadata {
         assigned_solver: d.assigned_solver,
+        lifecycle_state: d.lifecycle_state,
     })
 }
 
