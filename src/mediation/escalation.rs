@@ -42,7 +42,7 @@
 use std::sync::Arc;
 
 use rusqlite::params;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex as AsyncMutex;
 use tracing::{debug, info, instrument, warn};
 
@@ -76,7 +76,7 @@ const ESCALATABLE_STATES: &[&str] = &[
 /// session row in the first place and the field stays `None`.
 /// Phase 4 consumers MUST accept both shapes — see FR-122 and the
 /// dispute-scoped handoff flow added in T104d.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HandoffPackage {
     pub dispute_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
