@@ -171,12 +171,41 @@ Phase 3 specification:
 
 ### Prerequisites
 
-- **Rust toolchain**, stable, edition 2021. Install via [`rustup`](https://rustup.rs/).
 - Access to at least one Nostr relay that carries Mostro's dispute events.
 - A **hex-encoded** Nostr key pair for Serbero. You can generate one with [rana](https://github.com/grunch/rana) (a Nostr vanity pubkey miner) or any Nostr key tool. If you hold your keys in Bech32 form (`nsec...`, `npub...`), convert them to hex before placing them in the config. The public key derived from this keypair is the identity Serbero uses on Nostr — you must register it as a solver on the Mostro instance before enabling Phase 3 (see [Enable Phase 3](#enable-phase-3-guided-mediation)).
 - **Hex-encoded** Nostr public keys for the Mostro instance you monitor and for every solver you want to notify.
+- **Rust toolchain** (stable, edition 2021), only needed if you build from source — Option 2 below. Install via [`rustup`](https://rustup.rs/).
 
-### Build
+### Install
+
+Two options. Pre-built binaries are recommended for most operators; build from source if your platform is not on the matrix below or if you want to run a local modification.
+
+#### Option 1 — pre-built binary (recommended)
+
+Every tagged release publishes binaries for five platforms. Grab the one that matches your OS / CPU from <https://github.com/MostroP2P/serbero/releases/latest>:
+
+| Platform       | File                         |
+|----------------|------------------------------|
+| Linux x86_64   | `serbero-linux-x86_64`       |
+| Linux arm64    | `serbero-linux-arm64`        |
+| macOS x86_64   | `serbero-macos-x86_64`       |
+| macOS arm64    | `serbero-macos-arm64`        |
+| Windows x86_64 | `serbero-windows-x86_64.exe` |
+
+Each release also ships `checksums.sha256`. Verify the binary before running it — the file lists one SHA-256 per platform, so `--ignore-missing` lets you check only the one you downloaded:
+
+```bash
+# Linux x86_64 example — adjust the filename for your platform.
+curl -sSLO https://github.com/MostroP2P/serbero/releases/latest/download/serbero-linux-x86_64
+curl -sSLO https://github.com/MostroP2P/serbero/releases/latest/download/checksums.sha256
+sha256sum -c checksums.sha256 --ignore-missing
+chmod +x serbero-linux-x86_64
+./serbero-linux-x86_64 --help
+```
+
+On macOS, use `shasum -a 256 -c checksums.sha256 --ignore-missing`. On Windows, compute the hash with `CertUtil -hashfile serbero-windows-x86_64.exe SHA256` and compare manually against the line in `checksums.sha256`.
+
+#### Option 2 — build from source
 
 ```bash
 cargo build --release
