@@ -594,6 +594,54 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn admin_took_dispute_reply_unwraps_back_to_mostro_sender() {
+        // Reciprocal of `admin_take_dispute_roundtrips_through_mostro_core_nip59`.
+        // The outbound test covers serbero → mostro; this one covers
+        // the inbound direction that `run_take_flow` relies on:
+        // Mostro signs an `AdminTookDispute` reply, wraps it toward
+        // serbero's public key, and serbero's `unwrap_message` pass
+        // must recover Mostro as the inner sender. Without this the
+        // inbound `unwrapped.sender != *p.mostro_pubkey` filter — the
+        // authenticity check serbero relies on before it honors a
+        // refusal or a solver-info payload — could silently regress
+        // against a future mostro-core release that reshuffles the
+        // seal/rumor author binding.
+        let serbero = Keys::generate();
+        let mostro = Keys::generate();
+        let dispute_id = Uuid::new_v4();
+        let took_msg = Message::new_dispute(
+            Some(dispute_id),
+            None,
+            None,
+            Action::AdminTookDispute,
+            Some(Payload::Dispute(dispute_id, None)),
+        );
+
+        let wrapped_reply = wrap_message(
+            &took_msg,
+            &mostro,
+            serbero.public_key(),
+            WrapOptions::default(),
+        )
+        .await
+        .expect("wrap reply");
+
+        let unwrapped = unwrap_message(&wrapped_reply, &serbero)
+            .await
+            .expect("unwrap result")
+            .expect("reply addressed to serbero must yield Some(_)");
+        assert_eq!(
+            unwrapped.sender,
+            mostro.public_key(),
+            "reply must decrypt back to Mostro's trade pubkey so the \
+             `sender != mostro_pubkey` filter in run_take_flow is honored"
+        );
+        let inner = unwrapped.message.get_inner_message_kind();
+        assert_eq!(inner.action, Action::AdminTookDispute);
+        assert_eq!(inner.id, Some(dispute_id));
+    }
+
+    #[tokio::test]
     async fn gift_wrap_addressed_to_someone_else_yields_ok_none() {
         // The canonical "not for me" signal from the new transport:
         // `unwrap_message` returns `Ok(None)` when the outer NIP-44
