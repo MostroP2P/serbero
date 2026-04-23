@@ -63,10 +63,14 @@ const SCAN_BATCH_LIMIT: i64 = 128;
 /// dispatch-tracking row and its paired audit event inside a
 /// single transaction.
 ///
-/// US3 (unroutable audit row + fallback counter) and the
-/// parse-failed / orphan-dispute handlers land in T022 / T028.
-/// Until then the "Unroutable" and deserialize-error branches log
-/// an ERROR/WARN and leave the handoff unconsumed for the next
+/// US1 (dispatch pipeline) and US2 (supersession gate) are live;
+/// the gate at step (2a) of `process_one` writes an idempotent
+/// `escalation_superseded` audit row and short-circuits the send
+/// whenever `lifecycle_state = 'resolved'` beats the dispatcher
+/// to the handoff. US3 (unroutable audit row + fallback counter)
+/// and the parse-failed / orphan-dispute handlers land in T022 /
+/// T028. Until then the "Unroutable" and deserialize-error branches
+/// log an ERROR/WARN and leave the handoff unconsumed for the next
 /// cycle to pick up.
 pub async fn run_dispatcher(
     conn: Arc<AsyncMutex<rusqlite::Connection>>,

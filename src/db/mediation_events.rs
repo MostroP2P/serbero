@@ -500,6 +500,31 @@ pub fn record_escalation_dispatched(
     )
 }
 
+/// Lookup used by the FR-208 supersession gate to avoid emitting a
+/// second `escalation_superseded` audit row for the same
+/// `handoff_event_id`.
+///
+/// Deduplication lives at the gate (not at the scan) so FR-213 is
+/// preserved: the upstream `handoff_prepared` row stays visible to
+/// `list_pending_handoffs` on every cycle — a later lifecycle flip
+/// that reopens the dispute (e.g. an operator corrective workflow)
+/// must be able to pick the same handoff back up. The consumer
+/// keeps seeing the handoff; the audit stops growing.
+pub fn escalation_superseded_exists_for_handoff(
+    conn: &Connection,
+    handoff_event_id: i64,
+) -> Result<bool> {
+    let n: i64 = conn.query_row(
+        "SELECT COUNT(*)
+         FROM mediation_events
+         WHERE kind = 'escalation_superseded'
+           AND json_extract(payload_json, '$.handoff_event_id') = ?1",
+        params![handoff_event_id],
+        |r| r.get(0),
+    )?;
+    Ok(n > 0)
+}
+
 /// FR-212 typed constructor for supersession.
 ///
 /// Fires when the dispatcher's FR-208 gate detected the dispute
@@ -1251,5 +1276,43 @@ mod tests {
         let v2: serde_json::Value = serde_json::from_str(&payload2).unwrap();
         assert_eq!(v2["reason"], "orphan_dispute_reference");
         assert_eq!(v2["detail"], "dispute_id not found");
+    }
+
+    #[test]
+    fn escalation_superseded_exists_for_handoff_is_false_before_any_write() {
+        let conn = fresh_with_session();
+        assert!(!escalation_superseded_exists_for_handoff(&conn, 42).unwrap());
+    }
+
+    #[test]
+    fn escalation_superseded_exists_for_handoff_is_true_after_write_and_scoped_per_id() {
+        let conn = fresh_with_session();
+        // Seed a handoff_prepared row so the foreign-key chain stays
+        // valid (the audit payload references a real handoff_event_id).
+        let handoff_a: i64 = conn
+            .query_row(
+                "INSERT INTO mediation_events (
+                    session_id, kind, payload_json, occurred_at
+                 ) VALUES (NULL, 'handoff_prepared', '{}', 100)
+                 RETURNING id",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        record_escalation_superseded(
+            &conn,
+            None,
+            "d-exists",
+            handoff_a,
+            "dispute_already_resolved",
+            Some("phase3-default"),
+            Some("hash-1"),
+            200,
+        )
+        .unwrap();
+        assert!(escalation_superseded_exists_for_handoff(&conn, handoff_a).unwrap());
+        // A different handoff_event_id must still read as "absent" —
+        // the dedup check is per handoff, not global.
+        assert!(!escalation_superseded_exists_for_handoff(&conn, handoff_a + 999).unwrap());
     }
 }

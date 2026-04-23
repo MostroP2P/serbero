@@ -14,7 +14,10 @@ use uuid::Uuid;
 use crate::db::escalation_dispatches::{
     insert_dispatch, DispatchStatus, EscalationDispatch, PendingHandoff,
 };
-use crate::db::mediation_events::{record_escalation_dispatched, record_escalation_superseded};
+use crate::db::mediation_events::{
+    escalation_superseded_exists_for_handoff, record_escalation_dispatched,
+    record_escalation_superseded,
+};
 use crate::error::Result;
 
 use super::dispatcher::DispatchOutcome;
@@ -113,6 +116,16 @@ pub async fn record_successful_dispatch(
 /// reactivates the dispute (for example, a future corrective
 /// workflow) can pick it up.
 ///
+/// Idempotent per `handoff_event_id`: when the gate re-fires on a
+/// still-resolved dispute (cycle N+1 while lifecycle hasn't
+/// changed), the second call skips the insert so the audit table
+/// stays bounded. Without this guard, a stuck-resolved dispute
+/// would emit one supersession row every `dispatch_interval_seconds`
+/// forever. Dedup at the writer (rather than at the scan's
+/// `NOT EXISTS` clause) is intentional: filtering at the scan
+/// would also hide the handoff from the gate on cycle N+1 and
+/// break FR-213's re-pickability contract.
+///
 /// Session / bundle / policy-hash scoping copies the upstream
 /// `handoff_prepared` row verbatim so the audit chain stays
 /// anchored to the same Phase 3 context.
@@ -123,6 +136,9 @@ pub async fn record_supersession(
     now_ts: i64,
 ) -> Result<()> {
     let guard = conn.lock().await;
+    if escalation_superseded_exists_for_handoff(&guard, handoff.handoff_event_id)? {
+        return Ok(());
+    }
     record_escalation_superseded(
         &guard,
         handoff.session_id.as_deref(),
@@ -450,5 +466,93 @@ mod tests {
         };
         assert_eq!(bundle.as_deref(), Some("phase3-default"));
         assert_eq!(ph.as_deref(), Some("hash-1"));
+    }
+
+    #[tokio::test]
+    async fn record_supersession_is_idempotent_per_handoff_event_id() {
+        // Calling `record_supersession` twice for the same handoff
+        // MUST NOT create a second audit row. The gate re-fires on
+        // every cycle for a still-resolved dispute; without the
+        // dedup check in the writer the audit table would grow by
+        // one row per dispatch_interval_seconds for any stuck-
+        // resolved dispute.
+        let (conn, handoff) = fresh_with_dispute_and_handoff().await;
+        record_supersession(&conn, &handoff, "d-trk", 200)
+            .await
+            .unwrap();
+        record_supersession(&conn, &handoff, "d-trk", 260)
+            .await
+            .unwrap();
+
+        let n: i64 = {
+            let c = conn.lock().await;
+            c.query_row(
+                "SELECT COUNT(*) FROM mediation_events
+                 WHERE kind = 'escalation_superseded'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        assert_eq!(
+            n, 1,
+            "second record_supersession for the same handoff_event_id must be a no-op"
+        );
+    }
+
+    #[tokio::test]
+    async fn record_supersession_is_dedup_scoped_to_the_handoff_event_id() {
+        // Dedup is per handoff_event_id, not per dispute_id. A
+        // second handoff for the same dispute (for instance after a
+        // Phase 3 re-run) must be free to supersede in its own
+        // right. Cover the scope so a future refactor cannot
+        // accidentally broaden the dedup and swallow legitimate
+        // supersession events.
+        let (conn, handoff_a) = fresh_with_dispute_and_handoff().await;
+        let handoff_b = {
+            let c = conn.lock().await;
+            let id: i64 = c
+                .query_row(
+                    "INSERT INTO mediation_events (
+                        session_id, kind, payload_json,
+                        prompt_bundle_id, policy_hash, occurred_at
+                     ) VALUES (NULL, 'handoff_prepared', '{}',
+                               'phase3-default', 'hash-1', 150)
+                     RETURNING id",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            PendingHandoff {
+                handoff_event_id: id,
+                session_id: None,
+                payload_json: "{}".into(),
+                prompt_bundle_id: Some("phase3-default".into()),
+                policy_hash: Some("hash-1".into()),
+                occurred_at: 150,
+            }
+        };
+
+        record_supersession(&conn, &handoff_a, "d-trk", 200)
+            .await
+            .unwrap();
+        record_supersession(&conn, &handoff_b, "d-trk", 260)
+            .await
+            .unwrap();
+
+        let n: i64 = {
+            let c = conn.lock().await;
+            c.query_row(
+                "SELECT COUNT(*) FROM mediation_events
+                 WHERE kind = 'escalation_superseded'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        assert_eq!(
+            n, 2,
+            "two distinct handoff_event_ids must produce two supersession rows"
+        );
     }
 }

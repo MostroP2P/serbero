@@ -262,12 +262,26 @@ async fn dispute_resolving_after_dispatch_does_not_recall() {
 
 #[tokio::test]
 async fn supersession_does_not_mark_handoff_consumed() {
-    // FR-213-adjacent: supersession leaves the `handoff_prepared`
-    // row unconsumed so a future policy change can pick it up.
-    // Concretely — a second dispatcher cycle on the same DB with
-    // the dispute still resolved MUST fire another supersession,
-    // because nothing in mediation_events.escalation_superseded
-    // terminates the handoff from the scan's perspective.
+    // FR-213: supersession leaves the `handoff_prepared` row
+    // unconsumed so a future policy change can pick it up.
+    //
+    // We pin that property in two ways:
+    //
+    //  (a) Cycles 1 and 2 run against the still-resolved dispute.
+    //      Cycle 1 writes one supersession audit row. Cycle 2 —
+    //      gated by the idempotence check in
+    //      `tracker::record_supersession` (FR-212 dedup) — MUST
+    //      NOT emit a second row; left unchecked this would grow
+    //      the audit by one row every `dispatch_interval_seconds`
+    //      forever for any stuck-resolved dispute.
+    //
+    //  (b) The handoff is never written into `escalation_dispatches`,
+    //      so when we flip `lifecycle_state` back to `notified`
+    //      (simulating a policy-change reactivation) the scan
+    //      re-surfaces the handoff and the dispatcher proceeds
+    //      through the normal send path. This is the re-pickability
+    //      guarantee — dedup of the audit row does NOT bleed into
+    //      the scan's view of the handoff.
     let harness = TestHarness::new().await;
     let solver = SolverListener::start(&harness.relay_url).await;
     let conn = fresh_conn().await;
@@ -297,10 +311,9 @@ async fn supersession_does_not_mark_handoff_consumed() {
         "cycle 1: one supersession event"
     );
 
-    // Cycle 2: supersession MUST fire again. The handoff is still
-    // pending (no escalation_dispatches row was written on cycle 1),
-    // so the consumer scan re-surfaces it and the gate trips
-    // again.
+    // Cycle 2: lifecycle unchanged → the gate trips again, but
+    // `record_supersession` observes the existing audit row and
+    // skips the insert. Count stays at 1.
     escalation::run_once(
         &conn,
         &client,
@@ -316,16 +329,65 @@ async fn supersession_does_not_mark_handoff_consumed() {
             "SELECT COUNT(*) FROM mediation_events WHERE kind = 'escalation_superseded'",
         )
         .await,
-        2,
-        "cycle 2: second supersession event (handoff stays unconsumed)"
+        1,
+        "cycle 2: supersession is idempotent per handoff_event_id — \
+         audit stays bounded on a stuck-resolved dispute"
     );
 
-    // Confirm no DM was ever sent across both cycles.
+    // Confirm no DM was sent across the two supersession cycles
+    // and the dispatch table stays empty.
     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
     assert_eq!(solver.count().await, 0);
     assert_eq!(
         count(&conn, "SELECT COUNT(*) FROM escalation_dispatches").await,
         0,
-        "no dispatch row in either cycle — supersession stays a pure audit event"
+        "no dispatch row in either supersession cycle"
+    );
+
+    // Policy-change simulation: the dispute reopens (lifecycle flips
+    // back to `notified`). Because the handoff was never consumed in
+    // the dispatch table, the scan still surfaces it. The gate now
+    // sees a non-resolved lifecycle and proceeds through the normal
+    // send path — FR-213's "stays unconsumed so a future policy
+    // change can re-process it" contract in action.
+    set_lifecycle_state(&conn, "d-idemp", "notified").await;
+    escalation::run_once(
+        &conn,
+        &client,
+        &harness.serbero_keys,
+        &solvers,
+        &sample_cfg(),
+    )
+    .await
+    .unwrap();
+    assert!(
+        solver.wait_for(1, 10).await,
+        "post-reopen cycle must dispatch the previously-superseded handoff"
+    );
+    assert_eq!(
+        count(&conn, "SELECT COUNT(*) FROM escalation_dispatches").await,
+        1,
+        "dispatch row written on the reopen cycle"
+    );
+    assert_eq!(
+        count(
+            &conn,
+            "SELECT COUNT(*) FROM mediation_events WHERE kind = 'escalation_dispatched'",
+        )
+        .await,
+        1,
+        "paired dispatch audit row on the reopen cycle"
+    );
+    // The supersession audit row for the earlier resolved window
+    // stays intact — the replay-friendly audit trail documents both
+    // the prior superseded state and the eventual dispatch.
+    assert_eq!(
+        count(
+            &conn,
+            "SELECT COUNT(*) FROM mediation_events WHERE kind = 'escalation_superseded'",
+        )
+        .await,
+        1,
+        "historical supersession row is preserved across the reopen"
     );
 }
