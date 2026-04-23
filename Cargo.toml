@@ -3,6 +3,9 @@ name = "serbero"
 version = "0.1.0"
 edition = "2021"
 description = "Nostr-native dispute coordination daemon for the Mostro ecosystem"
+authors = ["Francisco Calderón <fjcalderon@gmail.com>"]
+homepage = "https://mostro.network"
+repository = "https://github.com/MostroP2P/serbero"
 license = "MIT"
 readme = "README.md"
 
