@@ -1,15 +1,15 @@
 # cancerbero Development Guidelines
 
-Auto-generated from all feature plans. Last updated: 2026-04-22
+Auto-generated from all feature plans. Last updated: 2026-04-23
 
 ## Active Technologies
-- Rust stable, edition 2021 (same toolchain as Phases 1/2/3). + `nostr-sdk 0.44.1` (gift-wrap transport), `mostro-core 0.8.4`, `rusqlite` (bundled, now via migration v4), `tokio` (existing runtime), `serde` + `serde_json` (HandoffPackage round-trip + DM body), `uuid` (dispatch_id v4), `tracing`, `thiserror`. No new crate pulls. (004-escalation-execution)
+- Rust stable, edition 2021 (same toolchain as Phases 1/2/3). + `nostr-sdk 0.44.1` (gift-wrap transport), `mostro-core 0.9.1`, `rusqlite` (bundled, now via migration v4), `tokio` (existing runtime), `serde` + `serde_json` (HandoffPackage round-trip + DM body), `uuid` (dispatch_id v4), `tracing`, `thiserror`. No new crate pulls. (004-escalation-execution)
 - SQLite. One new table (`escalation_dispatches`), four new `mediation_events.kind` values. Migration v4 extends the existing migrations chain in `src/db/migrations.rs`. (004-escalation-execution)
 
 Currently shipped in `main` (Phases 1 and 2 implemented):
 
 - Rust (stable, edition 2021)
-- `nostr-sdk 0.44.1`, `mostro-core 0.8.4`, `rusqlite` (bundled), `tokio`, `serde`, `toml`, `tracing`, `thiserror`, `anyhow`
+- `nostr-sdk 0.44.1`, `mostro-core 0.9.1`, `rusqlite` (bundled), `tokio`, `serde`, `toml`, `tracing`, `thiserror`, `anyhow`
 - SQLite schema: `disputes`, `notifications`, `dispute_state_transitions`, `schema_version` (migration v2)
 
 ## Planned for Phase 3 (spec + plan only; not yet in `main`)
@@ -42,10 +42,10 @@ cargo test && cargo clippy
 Rust (stable, edition 2021): Follow standard conventions
 
 ## Recent Changes
-- 004-escalation-execution: Added Rust stable, edition 2021 (same toolchain as Phases 1/2/3). + `nostr-sdk 0.44.1` (gift-wrap transport), `mostro-core 0.8.4`, `rusqlite` (bundled, now via migration v4), `tokio` (existing runtime), `serde` + `serde_json` (HandoffPackage round-trip + DM body), `uuid` (dispatch_id v4), `tracing`, `thiserror`. No new crate pulls.
-- 003-guided-mediation: Added Rust (stable, edition 2021) — same toolchain as Phases 1 and 2. + `nostr-sdk 0.44.1`, `mostro-core 0.8.4`, `rusqlite` (bundled), `tokio`, `serde`, `toml`, `tracing`. **New for Phase 3**: `reqwest` (HTTP client for reasoning providers), `sha2` (prompt-bundle hashing and rationale reference ids), `uuid` (session ids).
+- 004-escalation-execution: Added Rust stable, edition 2021 (same toolchain as Phases 1/2/3). + `nostr-sdk 0.44.1` (gift-wrap transport), `mostro-core 0.9.1`, `rusqlite` (bundled, now via migration v4), `tokio` (existing runtime), `serde` + `serde_json` (HandoffPackage round-trip + DM body), `uuid` (dispatch_id v4), `tracing`, `thiserror`. No new crate pulls.
+- 003-guided-mediation: Added Rust (stable, edition 2021) — same toolchain as Phases 1 and 2. + `nostr-sdk 0.44.1`, `mostro-core 0.9.1`, `rusqlite` (bundled), `tokio`, `serde`, `toml`, `tracing`. **New for Phase 3**: `reqwest` (HTTP client for reasoning providers), `sha2` (prompt-bundle hashing and rationale reference ids), `uuid` (session ids).
 
-- main: Added Rust (stable, edition 2021) + nostr-sdk 0.44.1, mostro-core 0.8.4, rusqlite, tokio, serde, toml, tracing
+- main: Added Rust (stable, edition 2021) + nostr-sdk 0.44.1, mostro-core 0.9.1, rusqlite, tokio, serde, toml, tracing
 
 <!-- MANUAL ADDITIONS START -->
 <!-- MANUAL ADDITIONS END -->

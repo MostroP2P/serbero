@@ -405,6 +405,15 @@ impl MostroChatSim {
     pub fn pubkey(&self) -> PublicKey {
         self.keys.public_key()
     }
+
+    /// Clone of the sim's Mostro trade keys. Tests that want to
+    /// publish extra gift-wraps as the same Mostro identity (e.g.
+    /// to simulate stale traffic the take-flow must correlate by
+    /// dispute_id) use these keys to sign their wraps so the
+    /// sender-check inside `run_take_flow` still matches.
+    pub fn keys(&self) -> Keys {
+        self.keys.clone()
+    }
 }
 
 /// Scripted reasoning provider used by US1 happy-path tests.
