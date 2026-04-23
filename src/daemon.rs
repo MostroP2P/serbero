@@ -254,6 +254,50 @@ where
         None
     };
 
+    // Phase 4 escalation dispatcher. Independent of Phase 3's
+    // engine tick (FR-218) — the two loops share no state beyond
+    // the read-only audit table. When `[escalation].enabled =
+    // false` we do not even spawn the task, so Phase 1/2/3
+    // behavior is unaffected (FR-216 / SC-207).
+    let escalation_handle: Option<JoinHandle<()>> = if config.escalation.enabled {
+        let escalation_keys = match nostr_sdk::Keys::parse(&config.serbero.private_key) {
+            Ok(k) => k,
+            Err(e) => {
+                return Err(Error::InvalidKey(format!(
+                    "failed to parse serbero private key for Phase 4 task: {e}"
+                )))
+            }
+        };
+        let write_solver_count = config
+            .solvers
+            .iter()
+            .filter(|s| s.permission == crate::models::SolverPermission::Write)
+            .count();
+        info!(
+            dispatch_interval_seconds = config.escalation.dispatch_interval_seconds,
+            fallback_to_all_solvers = config.escalation.fallback_to_all_solvers,
+            write_solver_count,
+            "phase4_dispatcher_enabled"
+        );
+        let esc_conn = Arc::clone(&conn);
+        let esc_client = client.clone();
+        let esc_solvers = config.solvers.clone();
+        let esc_cfg = config.escalation.clone();
+        Some(tokio::spawn(async move {
+            crate::escalation::run_dispatcher(
+                esc_conn,
+                esc_client,
+                escalation_keys,
+                esc_solvers,
+                esc_cfg,
+            )
+            .await
+        }))
+    } else {
+        debug!("phase4_dispatcher_disabled");
+        None
+    };
+
     let ctx = Arc::new(HandlerContext {
         conn: conn.clone(),
         client: client.clone(),
@@ -315,6 +359,10 @@ where
     renotif_handle.abort();
     let _ = renotif_handle.await;
     if let Some(h) = engine_handle {
+        h.abort();
+        let _ = h.await;
+    }
+    if let Some(h) = escalation_handle {
         h.abort();
         let _ = h.await;
     }

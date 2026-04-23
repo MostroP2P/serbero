@@ -15,3 +15,9 @@ pub mod chat;
 pub mod mediation;
 pub mod prompts;
 pub mod reasoning;
+
+// --- Phase 4: escalation execution surface (FR-121..FR-218).
+// --- The module tree is scaffolded at Phase 2 of the Phase 4
+// --- rollout; the consumer/router/dispatcher/tracker layers are
+// --- filled in by T011–T016.
+pub mod escalation;
