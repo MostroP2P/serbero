@@ -12,7 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 nostr-sdk = { version = "0.44.1", features = ["nip59", "nip44", "nip04"] }
-mostro-core = "0.8.4"
+mostro-core = "0.9.1"
 rusqlite = { version = "0.31", features = ["bundled"] }
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }

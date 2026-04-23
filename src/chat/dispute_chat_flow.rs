@@ -5,9 +5,16 @@
 //!
 //! 1. Subscribe to NIP-59 gift-wrapped DMs addressed to Serbero.
 //! 2. Send an `AdminTakeDispute` mostro-core message to the Mostro
-//!    pubkey via `Client::send_private_msg` (NIP-17, which uses
-//!    NIP-59 gift-wrap under the hood).
-//! 3. Poll the subscription for the `AdminTookDispute` response.
+//!    pubkey via `mostro_core::nip59::wrap_message` +
+//!    `Client::send_event`. The wrap function owns the rumor/seal/
+//!    GiftWrap layering, the ephemeral key, the timestamp tweak and
+//!    the inner Schnorr signature binding the message to Serbero's
+//!    trade identity (see issue #34 for why this used to live in
+//!    serbero and the motivation for centralizing).
+//! 3. Poll the subscription for the `AdminTookDispute` response,
+//!    recovering each candidate gift-wrap with
+//!    `mostro_core::nip59::unwrap_message` and short-circuiting
+//!    `CantDo` replies via `mostro_core::nip59::validate_response`.
 //!    The response carries a `Payload::Dispute(id, Some(SolverDisputeInfo))`
 //!    with `buyer_pubkey` + `seller_pubkey` (trade-scoped).
 //! 4. Derive the per-party chat-addressing keys via ECDH
@@ -53,7 +60,9 @@
 
 use std::time::Duration;
 
+use mostro_core::error::MostroError;
 use mostro_core::message::{Action, Message, Payload};
+use mostro_core::nip59::{unwrap_message, validate_response, wrap_message, WrapOptions};
 use nostr_sdk::prelude::*;
 use uuid::Uuid;
 
@@ -141,16 +150,15 @@ pub async fn run_take_flow(p: TakeFlowParams<'_>) -> Result<DisputeChatMaterial>
     // REQ per session-open attempt.
     let result: Result<DisputeChatMaterial> = async {
         // (2) Build and send the AdminTakeDispute mostro-core message.
-        //     Mostro expects the rumor content as a JSON 2-tuple
-        //     `[<Message>, "<hex_schnorr_sig>"]` (or `[<Message>, null]`
-        //     when unsigned). The signature is a Schnorr signature
-        //     over the UTF-8 bytes of `serde_json::to_string(&Message)` —
-        //     `Message::sign` hashes+signs and we assemble the wrapper
-        //     via `serde_json::to_string(&(message, sig))`. This matches
-        //     mostro-cli's `util/messaging.rs` and mostrod's
-        //     `serde_json::from_str::<(Message, Option<Signature>)>`
-        //     deserializer. Sending a bare `Message::as_json()` trips
-        //     mostrod's `invalid type: map, expected a tuple of size 2`.
+        //     `wrap_message` owns the whole NIP-59 pipeline: it
+        //     serializes the `Message`, signs it with Serbero's trade
+        //     keys (required by mostrod — which deserializes the
+        //     rumor content as `(Message, Option<Signature>)`),
+        //     builds the rumor, seals it, and wraps the seal in a
+        //     fresh ephemeral-signed GiftWrap. The defaults
+        //     (`signed = true`, no PoW, no expiration) match mostrod's
+        //     current expectations; the caller's own `p.timeout`
+        //     enforces the wall-clock deadline on the round-trip.
         let take_msg = Message::new_dispute(
             Some(p.dispute_id),
             None,
@@ -158,35 +166,21 @@ pub async fn run_take_flow(p: TakeFlowParams<'_>) -> Result<DisputeChatMaterial>
             Action::AdminTakeDispute,
             None,
         );
-        let msg_json = take_msg
-            .as_json()
-            .map_err(|_| Error::ChatTransport("failed to serialize AdminTakeDispute".into()))?;
-        // Re-implement `Message::sign` inline to avoid the doubled
-        // `nostr::Keys` dependency: mostro-core 0.8.4 links nostr
-        // 0.43 while nostr-sdk 0.44 brings nostr 0.44; both ultimately
-        // pin `secp256k1 0.29`, so the `Signature` type is shared and
-        // the JSON wire form is identical. Algorithm matches
-        // `mostro_core::message::Message::sign`:
-        //     sha256(msg_json.as_bytes()) -> Schnorr signature.
-        use nostr_sdk::hashes::Hash as _;
-        let digest = nostr_sdk::hashes::sha256::Hash::hash(msg_json.as_bytes());
-        let secp_msg = nostr_sdk::secp256k1::Message::from_digest(digest.to_byte_array());
-        let sig: Signature = p.serbero_keys.sign_schnorr(&secp_msg);
-        let content = serde_json::to_string(&(take_msg, Some(sig))).map_err(|e| {
-            Error::ChatTransport(format!(
-                "failed to serialize signed AdminTakeDispute tuple: {e}"
-            ))
+        let wrapped_event = wrap_message(
+            &take_msg,
+            p.serbero_keys,
+            *p.mostro_pubkey,
+            WrapOptions::default(),
+        )
+        .await
+        .map_err(|e| Error::ChatTransport(format!("failed to wrap AdminTakeDispute: {e}")))?;
+        let outer_event_id = wrapped_event.id;
+        p.client.send_event(&wrapped_event).await.map_err(|e| {
+            Error::ChatTransport(format!("failed to publish AdminTakeDispute gift-wrap: {e}"))
         })?;
-        let send_out = p
-            .client
-            .send_private_msg(*p.mostro_pubkey, content, [])
-            .await
-            .map_err(|e| {
-                Error::ChatTransport(format!("failed to send AdminTakeDispute DM: {e}"))
-            })?;
         tracing::info!(
             mostro = %p.mostro_pubkey.to_hex(),
-            outer_event_id = %send_out.val,
+            outer_event_id = %outer_event_id,
             "sent AdminTakeDispute to Mostro"
         );
 
@@ -222,25 +216,61 @@ pub async fn run_take_flow(p: TakeFlowParams<'_>) -> Result<DisputeChatMaterial>
             tracing::trace!(count = events.len(), "take-flow: fetched candidate events");
 
             for wrapped in events.iter() {
-                let Ok(unwrapped) = p.client.unwrap_gift_wrap(wrapped).await else {
-                    continue;
+                // `unwrap_message` is the read-side mirror of the
+                // `wrap_message` call above. Its three outcomes map
+                // cleanly onto our loop's needs:
+                //   Ok(Some(u)) → candidate addressed to us; examine.
+                //   Ok(None)    → outer NIP-44 decrypt failed → not
+                //                 for us; silently skip (expected for
+                //                 any wrap on the relay that happens
+                //                 to match our `p` filter but was
+                //                 addressed to someone else).
+                //   Err(_)      → malformed/corrupted wrap that was
+                //                 addressed to us; log at warn and
+                //                 keep polling (a hostile peer must
+                //                 not poison the whole take-flow).
+                let unwrapped = match unwrap_message(wrapped, p.serbero_keys).await {
+                    Ok(Some(u)) => u,
+                    Ok(None) => continue,
+                    Err(e) => {
+                        tracing::warn!(
+                            outer_event_id = %wrapped.id.to_hex(),
+                            error = %e,
+                            "dropping malformed gift-wrap addressed to serbero during take-flow"
+                        );
+                        continue;
+                    }
                 };
                 if unwrapped.sender != *p.mostro_pubkey {
                     continue;
                 }
-                // The rumor content is a JSON 2-tuple
-                // `[<Message>, <Option<Signature>>]` — same shape as
-                // the outbound `AdminTakeDispute` above (see that
-                // site for the mostrod / mostro-cli references).
-                // Mostro may omit its own signature (`null`), so we
-                // accept `Option<Signature>` here and ignore the
-                // signature itself; Serbero trusts `unwrapped.sender`
-                // for authenticity.
-                let Ok((response, _sig)) =
-                    serde_json::from_str::<(Message, Option<Signature>)>(&unwrapped.rumor.content)
-                else {
-                    continue;
-                };
+                // Short-circuit `CantDo` responses from Mostro. This
+                // is a real failure (Mostro refused our
+                // `AdminTakeDispute`) and continuing to poll would
+                // just hit the overall timeout. We pass `None` for
+                // `expected_request_id` because our outbound
+                // `AdminTakeDispute` is sent without one (Serbero
+                // correlates by `dispute_id`, not `request_id`); the
+                // request-id check collapses to a no-op, leaving
+                // only the `CantDo` short-circuit active.
+                let response = unwrapped.message;
+                if let Err(e) = validate_response(&response, None) {
+                    match e {
+                        MostroError::MostroCantDo(_) => {
+                            return Err(Error::ChatTransport(format!(
+                                "Mostro refused AdminTakeDispute: {e}"
+                            )));
+                        }
+                        MostroError::MostroInternalErr(_) => {
+                            tracing::warn!(
+                                outer_event_id = %wrapped.id.to_hex(),
+                                error = %e,
+                                "validate_response rejected Mostro reply; skipping"
+                            );
+                            continue;
+                        }
+                    }
+                }
                 let kind = response.get_inner_message_kind();
                 if kind.action != Action::AdminTookDispute {
                     continue;
@@ -473,5 +503,149 @@ mod tests {
             }
             other => panic!("expected ChatTransport, got {other}"),
         }
+    }
+
+    // -----------------------------------------------------------------
+    // Issue #34 — NIP-59 transport migration tests.
+    //
+    // Pin the outbound + inbound wire contract for the exact Mostro
+    // protocol messages `run_take_flow` exchanges, so a future
+    // mostro-core bump that changes the rumor/seal layout surfaces
+    // here before it breaks a live take-flow.
+    // -----------------------------------------------------------------
+
+    #[tokio::test]
+    async fn admin_take_dispute_roundtrips_through_mostro_core_nip59() {
+        // `wrap_message` on the outbound side, `unwrap_message` on
+        // the inbound side, with the exact `AdminTakeDispute` shape
+        // `run_take_flow` produces. Replaces the manual
+        // `Message::sign` + 2-tuple JSON assembly we used to do
+        // inline.
+        let serbero = Keys::generate();
+        let mostro = Keys::generate();
+        let dispute_id = Uuid::new_v4();
+        let take_msg =
+            Message::new_dispute(Some(dispute_id), None, None, Action::AdminTakeDispute, None);
+
+        let wrapped = wrap_message(
+            &take_msg,
+            &serbero,
+            mostro.public_key(),
+            WrapOptions::default(),
+        )
+        .await
+        .expect("wrap");
+
+        // Outer is a gift-wrap addressed to Mostro; the signer is
+        // ephemeral (not serbero) — this is what lets a relay-side
+        // `authors()` filter fail to correlate senders.
+        assert_eq!(wrapped.kind, Kind::GiftWrap);
+        assert_ne!(
+            wrapped.pubkey,
+            serbero.public_key(),
+            "outer gift-wrap must be signed by an ephemeral key, not serbero"
+        );
+        assert!(
+            wrapped
+                .tags
+                .iter()
+                .any(|t| t.as_slice().first().map(|s| s.as_str()) == Some("p")),
+            "outer gift-wrap must carry a `p` tag addressing the receiver"
+        );
+
+        let unwrapped = unwrap_message(&wrapped, &mostro)
+            .await
+            .expect("unwrap result")
+            .expect("some");
+        assert_eq!(unwrapped.sender, serbero.public_key());
+        assert!(
+            unwrapped.signature.is_some(),
+            "WrapOptions::default() must produce a signed rumor (mostrod rejects unsigned requests)"
+        );
+        let inner = unwrapped.message.get_inner_message_kind();
+        assert_eq!(inner.action, Action::AdminTakeDispute);
+        assert_eq!(inner.id, Some(dispute_id));
+    }
+
+    #[tokio::test]
+    async fn gift_wrap_addressed_to_someone_else_yields_ok_none() {
+        // The canonical "not for me" signal from the new transport:
+        // `unwrap_message` returns `Ok(None)` when the outer NIP-44
+        // layer can't be decrypted with our trade keys. The old code
+        // silently dropped on any `unwrap_gift_wrap` error — now the
+        // miss is an explicit branch, which means the `Err(_)` arm
+        // is reserved for genuine corruption.
+        let serbero = Keys::generate();
+        let mostro = Keys::generate();
+        let stranger = Keys::generate();
+        let take_msg = Message::new_dispute(
+            Some(Uuid::new_v4()),
+            None,
+            None,
+            Action::AdminTakeDispute,
+            None,
+        );
+
+        let wrapped = wrap_message(
+            &take_msg,
+            &serbero,
+            mostro.public_key(),
+            WrapOptions::default(),
+        )
+        .await
+        .unwrap();
+
+        let result = unwrap_message(&wrapped, &stranger)
+            .await
+            .expect("not-for-me must not be an Err");
+        assert!(
+            result.is_none(),
+            "a gift-wrap not addressed to us must yield Ok(None), got Some(...)"
+        );
+    }
+
+    #[test]
+    fn cant_do_response_is_rejected_by_validate_response() {
+        // The migration's observable win on the inbound side: a
+        // `CantDo` response from Mostro is now rejected explicitly
+        // via `validate_response`. The old code filtered by
+        // `kind.action != Action::AdminTookDispute` and therefore
+        // silently looped past `CantDo` replies until the caller's
+        // wall-clock timeout fired. With `validate_response` the
+        // refusal surfaces immediately as
+        // `MostroError::MostroCantDo(_)` and the take-flow can turn
+        // it into a clean error.
+        use mostro_core::error::CantDoReason;
+        let refusal = Message::cant_do(
+            Some(Uuid::new_v4()),
+            None,
+            Some(Payload::CantDo(Some(CantDoReason::NotAuthorized))),
+        );
+        let err = validate_response(&refusal, None)
+            .expect_err("CantDo must short-circuit validate_response");
+        assert!(
+            matches!(err, MostroError::MostroCantDo(CantDoReason::NotAuthorized)),
+            "expected MostroCantDo(NotAuthorized), got {err:?}"
+        );
+    }
+
+    #[test]
+    fn admin_took_dispute_response_passes_validate_response() {
+        // Mirror of the happy-path inbound check: the canned
+        // `AdminTookDispute` shape our mock mostrod emits (and real
+        // mostrod emits) must pass `validate_response(&msg, None)`.
+        // `AdminTookDispute` is on the `action_accepts_missing_request_id`
+        // allow-list, so missing/None request_id is fine. The test
+        // guards against a future mostro-core release that silently
+        // drops the action from that allow-list.
+        let dispute_id = Uuid::new_v4();
+        let took = Message::new_dispute(
+            Some(dispute_id),
+            None,
+            None,
+            Action::AdminTookDispute,
+            Some(Payload::Dispute(dispute_id, None)),
+        );
+        validate_response(&took, None).expect("AdminTookDispute must pass validate_response");
     }
 }
