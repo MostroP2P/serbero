@@ -63,18 +63,24 @@ const SCAN_BATCH_LIMIT: i64 = 128;
 /// dispatch-tracking row and its paired audit event inside a
 /// single transaction.
 ///
-/// US1 (dispatch pipeline), US2 (supersession gate) and US3
-/// (unroutable audit row) are live. The US2 gate at step (2a) of
+/// US1 (dispatch pipeline), US2 (supersession gate), US3
+/// (unroutable audit row) and the FR-214 parse-failed / orphan-
+/// dispute handlers are live. The US2 gate at step (2a) of
 /// `process_one` writes an idempotent `escalation_superseded`
 /// audit row and short-circuits the send whenever
 /// `lifecycle_state = 'resolved'` beats the dispatcher to the
 /// handoff; the US3 arm of the recipient match writes an
 /// idempotent `escalation_dispatch_unroutable` audit row plus a
 /// fresh-every-cycle ERROR log line when zero write-permission
-/// solvers are configured and fallback is off. The parse-failed
-/// / orphan-dispute handlers are the remaining TODO (T028); the
-/// deserialize-error branch currently logs a WARN and leaves the
-/// handoff unconsumed for a later T028 landing.
+/// solvers are configured and fallback is off; step (1) writes
+/// an `escalation_dispatch_parse_failed` audit row with
+/// `reason = "deserialize_failed"` for malformed payloads, and
+/// step (2)'s `Ok(None)` branch writes the same kind with
+/// `reason = "orphan_dispute_reference"` when a handoff
+/// references a dispute id that has no row in `disputes`. Both
+/// parse-failed sub-shapes mark the handoff consumed through the
+/// `NOT EXISTS` clause inside
+/// `list_pending_handoffs`.
 pub async fn run_dispatcher(
     conn: Arc<AsyncMutex<rusqlite::Connection>>,
     client: Client,
@@ -155,21 +161,55 @@ async fn process_one(
     cfg: &EscalationConfig,
     handoff: PendingHandoff,
 ) {
-    // (1) Deserialize. Parse failures (FR-214 /
+    // (1) Deserialize. Parse failures (FR-214
     //     `deserialize_failed` sub-reason) land as
-    //     `escalation_dispatch_parse_failed` audit rows via T028.
-    //     Until T028 ships, a deserialize failure logs WARN and
-    //     advances — the payload stays in `mediation_events` so a
-    //     later cycle after the T028 landing will record the
-    //     parse_failed audit row.
+    //     `escalation_dispatch_parse_failed` audit rows. The audit
+    //     row simultaneously acts as the "mark consumed" signal —
+    //     `list_pending_handoffs` carries a `NOT EXISTS` clause
+    //     against `kind = 'escalation_dispatch_parse_failed'` so a
+    //     malformed handoff does not re-surface on the next scan
+    //     and the queue moves forward without manual cleanup.
     let pkg: HandoffPackage = match serde_json::from_str(&handoff.payload_json) {
         Ok(p) => p,
         Err(e) => {
+            // Best-effort dispute_id extraction so operators
+            // querying parse_failed rows keyed on the dispute
+            // still find this event. When the payload is too
+            // corrupted to locate the key, fall back to the
+            // sentinel "unknown"; the paired `handoff_event_id`
+            // field still resolves the row to the upstream
+            // `handoff_prepared` event for manual inspection.
+            let dispute_hint = serde_json::from_str::<serde_json::Value>(&handoff.payload_json)
+                .ok()
+                .and_then(|v| {
+                    v.get("dispute_id")
+                        .and_then(|s| s.as_str().map(String::from))
+                })
+                .unwrap_or_else(|| "unknown".to_string());
+            let detail = e.to_string();
             warn!(
                 handoff_event_id = handoff.handoff_event_id,
+                dispute_id_hint = %dispute_hint,
                 error = %e,
-                "phase4_dispatch: handoff payload deserialize failed (T028 handler not yet live)"
+                "phase4_parse_failed — deserialize_failed"
             );
+            if let Err(audit_err) = tracker::record_parse_failed(
+                conn,
+                &handoff,
+                &dispute_hint,
+                "deserialize_failed",
+                &detail,
+                current_unix_seconds(),
+            )
+            .await
+            {
+                error!(
+                    handoff_event_id = handoff.handoff_event_id,
+                    error = %audit_err,
+                    "phase4_dispatch: record_parse_failed (deserialize_failed) audit insert failed; \
+                     handoff will be retried next cycle"
+                );
+            }
             return;
         }
     };
@@ -177,13 +217,47 @@ async fn process_one(
     // (2) Read the dispute row — we need `lifecycle_state` for the
     //     FR-208 supersession gate immediately below, plus
     //     `assigned_solver` for FR-202 routing if we proceed.
+    //     `dispute_metadata` distinguishes `Ok(None)` (orphan FK,
+    //     FR-214 `orphan_dispute_reference` sub-reason) from
+    //     `Err(e)` (transient DB failure): the former writes a
+    //     parse_failed audit row and marks the handoff consumed;
+    //     the latter leaves the handoff unconsumed so the next
+    //     cycle can retry.
     let metadata = match dispute_metadata(conn, &pkg.dispute_id).await {
-        Ok(md) => md,
-        Err(e) => {
+        Ok(Some(md)) => md,
+        Ok(None) => {
             warn!(
                 dispute_id = %pkg.dispute_id,
+                handoff_event_id = handoff.handoff_event_id,
+                "phase4_parse_failed — orphan_dispute_reference"
+            );
+            if let Err(audit_err) = tracker::record_parse_failed(
+                conn,
+                &handoff,
+                &pkg.dispute_id,
+                "orphan_dispute_reference",
+                "dispute_id not found",
+                current_unix_seconds(),
+            )
+            .await
+            {
+                error!(
+                    dispute_id = %pkg.dispute_id,
+                    handoff_event_id = handoff.handoff_event_id,
+                    error = %audit_err,
+                    "phase4_dispatch: record_parse_failed (orphan_dispute_reference) audit insert \
+                     failed; handoff will be retried next cycle"
+                );
+            }
+            return;
+        }
+        Err(e) => {
+            error!(
+                dispute_id = %pkg.dispute_id,
+                handoff_event_id = handoff.handoff_event_id,
                 error = %e,
-                "phase4_dispatch: dispute lookup failed (T028 orphan handler not yet live)"
+                "phase4_dispatch: dispute lookup failed (transient DB error); \
+                 handoff remains unconsumed for the next cycle"
             );
             return;
         }
@@ -383,21 +457,28 @@ struct DisputeMetadata {
 /// the FR-208 supersession gate. Kept as a small helper so the
 /// `get_dispute` FK lookup runs once per handoff, not once per
 /// branch.
+///
+/// Three outcomes distinguish the caller's responsibilities:
+/// * `Ok(Some(md))` — dispute exists; continue with routing.
+/// * `Ok(None)` — "orphan dispute reference" (FR-214): the
+///   handoff payload parsed but its `dispute_id` does not resolve
+///   to any row in `disputes`. The caller writes an
+///   `escalation_dispatch_parse_failed` audit row with
+///   `reason = "orphan_dispute_reference"` and moves on.
+/// * `Err(e)` — a genuine DB error. The caller logs and leaves
+///   the handoff unconsumed for a retry next cycle.
 async fn dispute_metadata(
     conn: &Arc<AsyncMutex<rusqlite::Connection>>,
     dispute_id: &str,
-) -> crate::error::Result<DisputeMetadata> {
+) -> crate::error::Result<Option<DisputeMetadata>> {
     let guard = conn.lock().await;
-    let d = get_dispute(&guard, dispute_id)?.ok_or_else(|| {
-        crate::error::Error::InvalidEvent(format!(
-            "phase4_dispatch: handoff references unknown dispute {dispute_id} \
-             (T028 orphan_dispute_reference handler not yet live)"
-        ))
-    })?;
-    Ok(DisputeMetadata {
+    let Some(d) = get_dispute(&guard, dispute_id)? else {
+        return Ok(None);
+    };
+    Ok(Some(DisputeMetadata {
         assigned_solver: d.assigned_solver,
         lifecycle_state: d.lifecycle_state,
-    })
+    }))
 }
 
 /// Current Unix-epoch seconds. A thin wrapper so we can swap the

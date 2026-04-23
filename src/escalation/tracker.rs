@@ -3,8 +3,8 @@
 //! transaction (FR-211 atomicity invariant).
 //!
 //! This file carries the dispatch-attempt writer (US1), the
-//! supersession writer (US2) and the unroutable writer (US3).
-//! The parse-failed (T029) helper lands alongside in Phase 6.
+//! supersession writer (US2), the unroutable writer (US3) and
+//! the parse-failed writer (Phase 6 Polish).
 
 use std::sync::Arc;
 
@@ -16,8 +16,8 @@ use crate::db::escalation_dispatches::{
 };
 use crate::db::mediation_events::{
     escalation_dispatch_unroutable_exists_for_handoff, escalation_superseded_exists_for_handoff,
-    record_escalation_dispatch_unroutable, record_escalation_dispatched,
-    record_escalation_superseded,
+    record_escalation_dispatch_parse_failed, record_escalation_dispatch_unroutable,
+    record_escalation_dispatched, record_escalation_superseded,
 };
 use crate::error::Result;
 
@@ -201,6 +201,56 @@ pub async fn record_unroutable(
         handoff.handoff_event_id,
         configured_solver_count,
         fallback_to_all_solvers,
+        handoff.prompt_bundle_id.as_deref(),
+        handoff.policy_hash.as_deref(),
+        now_ts,
+    )?;
+    Ok(())
+}
+
+/// Record an `escalation_dispatch_parse_failed` audit event for a
+/// handoff whose upstream `handoff_prepared` row cannot be used
+/// (FR-214). Two shapes, disambiguated by the `reason` argument:
+///
+/// * `"deserialize_failed"` — `payload_json` failed to parse into
+///   a `HandoffPackage`. `detail` carries the parser error. The
+///   `dispute_id` argument is best-effort (extracted from the raw
+///   JSON if possible, else a sentinel like `"unknown"`).
+/// * `"orphan_dispute_reference"` — the payload parsed cleanly
+///   but the `dispute_id` has no row in `disputes`. `detail` is
+///   typically the constant `"dispute_id not found"`.
+///
+/// Unlike [`record_supersession`] and [`record_unroutable`],
+/// parse_failed does NOT dedup at the writer: `list_pending_handoffs`
+/// already filters out handoffs that have any
+/// `escalation_dispatch_parse_failed` audit row for the same
+/// `handoff_event_id` (see the `NOT EXISTS` clause in
+/// `src/db/escalation_dispatches.rs::list_pending_handoffs`), so
+/// the audit row doubles as the "mark consumed" signal. A second
+/// call for the same handoff_event_id would only happen if a
+/// caller bypassed `list_pending_handoffs`, which the live
+/// dispatcher does not; a defensive dedup here would add a round-
+/// trip for a path the consumer scan already blocks.
+///
+/// Session / bundle / policy-hash scoping copies the upstream
+/// `handoff_prepared` row verbatim so the audit chain stays
+/// anchored to the same Phase 3 context.
+pub async fn record_parse_failed(
+    conn: &Arc<AsyncMutex<rusqlite::Connection>>,
+    handoff: &PendingHandoff,
+    dispute_id: &str,
+    reason: &str,
+    detail: &str,
+    now_ts: i64,
+) -> Result<()> {
+    let guard = conn.lock().await;
+    record_escalation_dispatch_parse_failed(
+        &guard,
+        handoff.session_id.as_deref(),
+        dispute_id,
+        handoff.handoff_event_id,
+        reason,
+        detail,
         handoff.prompt_bundle_id.as_deref(),
         handoff.policy_hash.as_deref(),
         now_ts,
@@ -754,5 +804,109 @@ mod tests {
             n, 2,
             "two distinct handoff_event_ids must produce two unroutable rows"
         );
+    }
+
+    // --- Parse-failed (Phase 6 Polish) --------------------------------
+
+    #[tokio::test]
+    async fn record_parse_failed_writes_audit_row_without_dispatch_row_deserialize_failed() {
+        let (conn, handoff) = fresh_with_dispute_and_handoff().await;
+
+        record_parse_failed(
+            &conn,
+            &handoff,
+            "d-malformed",
+            "deserialize_failed",
+            "expected `,` or `}` at line 1 column 42",
+            200,
+        )
+        .await
+        .unwrap();
+
+        // No dispatch row — parse_failed never writes one
+        // (mark-consumed happens at the scan via the NOT EXISTS
+        // clause against `kind = 'escalation_dispatch_parse_failed'`).
+        let dispatch_count: i64 = {
+            let c = conn.lock().await;
+            c.query_row("SELECT COUNT(*) FROM escalation_dispatches", [], |r| {
+                r.get(0)
+            })
+            .unwrap()
+        };
+        assert_eq!(dispatch_count, 0);
+
+        let (kind, payload): (String, String) = {
+            let c = conn.lock().await;
+            c.query_row(
+                "SELECT kind, payload_json FROM mediation_events
+                 WHERE kind = 'escalation_dispatch_parse_failed'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap()
+        };
+        assert_eq!(kind, "escalation_dispatch_parse_failed");
+        let v: serde_json::Value = serde_json::from_str(&payload).unwrap();
+        assert_eq!(v["dispute_id"], "d-malformed");
+        assert_eq!(v["handoff_event_id"], handoff.handoff_event_id);
+        assert_eq!(v["reason"], "deserialize_failed");
+        assert_eq!(v["detail"], "expected `,` or `}` at line 1 column 42");
+    }
+
+    #[tokio::test]
+    async fn record_parse_failed_orphan_dispute_reference_shape() {
+        let (conn, handoff) = fresh_with_dispute_and_handoff().await;
+        record_parse_failed(
+            &conn,
+            &handoff,
+            "d-orphan",
+            "orphan_dispute_reference",
+            "dispute_id not found",
+            200,
+        )
+        .await
+        .unwrap();
+
+        let payload: String = {
+            let c = conn.lock().await;
+            c.query_row(
+                "SELECT payload_json FROM mediation_events
+                 WHERE kind = 'escalation_dispatch_parse_failed'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        let v: serde_json::Value = serde_json::from_str(&payload).unwrap();
+        assert_eq!(v["reason"], "orphan_dispute_reference");
+        assert_eq!(v["detail"], "dispute_id not found");
+    }
+
+    #[tokio::test]
+    async fn record_parse_failed_copies_bundle_and_policy_pin_from_handoff() {
+        let (conn, handoff) = fresh_with_dispute_and_handoff().await;
+        record_parse_failed(
+            &conn,
+            &handoff,
+            "d-trk",
+            "deserialize_failed",
+            "detail",
+            200,
+        )
+        .await
+        .unwrap();
+
+        let (bundle, ph): (Option<String>, Option<String>) = {
+            let c = conn.lock().await;
+            c.query_row(
+                "SELECT prompt_bundle_id, policy_hash FROM mediation_events
+                 WHERE kind = 'escalation_dispatch_parse_failed'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap()
+        };
+        assert_eq!(bundle.as_deref(), Some("phase3-default"));
+        assert_eq!(ph.as_deref(), Some("hash-1"));
     }
 }

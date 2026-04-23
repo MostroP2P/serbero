@@ -147,30 +147,30 @@ Single-project Rust daemon:
 
 **Purpose**: edge-case coverage (send_failed status, parse_failed branches), quality gates, and documentation.
 
-- [ ] T026 Extend `src/escalation/dispatcher.rs::send_to_recipients` with correct `DispatchOutcome` classification: every recipient must record a `notifications` row before returning. If every recipient failed, return `DispatchOutcome::AllFailed` so `tracker::record_successful_dispatch` writes `status = 'send_failed'` per FR-211. Make sure the existing SC-208 shape holds.
+- [X] T026 Extend `src/escalation/dispatcher.rs::send_to_recipients` with correct `DispatchOutcome` classification: every recipient must record a `notifications` row before returning. If every recipient failed, return `DispatchOutcome::AllFailed` so `tracker::record_successful_dispatch` writes `status = 'send_failed'` per FR-211. Make sure the existing SC-208 shape holds.
 
-- [ ] T027 Integration test `tests/phase4_send_failure.rs`. Simulate all-recipient failure by pointing the configured solver at an unreachable pubkey (or by using a mock relay that rejects writes to a given pubkey). Assert:
+- [X] T027 Integration test `tests/phase4_send_failure.rs`. Simulate all-recipient failure by pointing the configured solver at an unreachable pubkey (or by using a mock relay that rejects writes to a given pubkey). Assert:
   - Exactly one `escalation_dispatches` row with `status = 'send_failed'`.
   - One `notifications` row per attempted recipient with `status = 'failed'`.
   - Exactly one `escalation_dispatched` audit row (the audit kind does not change with send outcome — the `status` payload field does).
   - `SELECT * FROM escalation_dispatches WHERE status = 'send_failed'` returns the row without a JOIN against `notifications` (SC-208 invariant).
 
-- [ ] T028 Implement parse-failed handling in `src/escalation/mod.rs::run_dispatcher`: wrap the `HandoffPackage` deserialize call in `match serde_json::from_str::<HandoffPackage>(&handoff.payload_json)` — on `Err`, call `tracker::record_parse_failed` (new helper, T029) with `reason = "deserialize_failed"` and the parser error detail, then continue. Add a separate dispute-row lookup to detect orphan references: if the deserialize succeeds but `db::disputes::get_dispute` returns `Ok(None)`, call the same helper with `reason = "orphan_dispute_reference"`. Both branches mark the handoff consumed so the queue moves forward.
+- [X] T028 Implement parse-failed handling in `src/escalation/mod.rs::run_dispatcher`: wrap the `HandoffPackage` deserialize call in `match serde_json::from_str::<HandoffPackage>(&handoff.payload_json)` — on `Err`, call `tracker::record_parse_failed` (new helper, T029) with `reason = "deserialize_failed"` and the parser error detail, then continue. Add a separate dispute-row lookup to detect orphan references: if the deserialize succeeds but `db::disputes::get_dispute` returns `Ok(None)`, call the same helper with `reason = "orphan_dispute_reference"`. Both branches mark the handoff consumed so the queue moves forward.
 
-- [ ] T029 Add `pub async fn record_parse_failed(conn, handoff: &PendingHandoff, reason: &str, detail: &str) -> Result<()>` to `src/escalation/tracker.rs`. Calls `db::mediation_events::record_escalation_dispatch_parse_failed` with the payload from `contracts/audit-events.md`. The parse_failed path needs a "mark consumed" effect to prevent queue poisoning; implement by inserting a sentinel `escalation_dispatches` row? No — the data-model says these kinds do NOT write a dispatch row. Instead, keep the dedup query honest: extend `list_pending_handoffs` (T006) to exclude handoffs that already have any `escalation_dispatch_parse_failed` OR `escalation_dispatched` audit row for the same `handoff_event_id`.
+- [X] T029 Add `pub async fn record_parse_failed(conn, handoff: &PendingHandoff, reason: &str, detail: &str) -> Result<()>` to `src/escalation/tracker.rs`. Calls `db::mediation_events::record_escalation_dispatch_parse_failed` with the payload from `contracts/audit-events.md`. The parse_failed path needs a "mark consumed" effect to prevent queue poisoning; implement by inserting a sentinel `escalation_dispatches` row? No — the data-model says these kinds do NOT write a dispatch row. Instead, keep the dedup query honest: extend `list_pending_handoffs` (T006) to exclude handoffs that already have any `escalation_dispatch_parse_failed` OR `escalation_dispatched` audit row for the same `handoff_event_id`.
 
-- [ ] T030 Integration test `tests/phase4_dedup_and_parse_failure.rs`. Sub-tests:
+- [X] T030 Integration test `tests/phase4_dedup_and_parse_failure.rs`. Sub-tests:
   - `malformed_payload_records_parse_failed_and_moves_on` — seed a `handoff_prepared` row with invalid JSON payload → one cycle → one `escalation_dispatch_parse_failed` audit row (reason = `deserialize_failed`, detail contains the parser error), zero dispatch rows, zero DMs. Second cycle over the same DB does NOT re-emit the audit row.
   - `orphan_dispute_reference_records_parse_failed` — handoff whose `dispute_id` has no row in `disputes` → one `escalation_dispatch_parse_failed` audit row (reason = `orphan_dispute_reference`), zero DMs, zero dispatch rows.
   - `poisoning_is_prevented` — start with a malformed payload (parse_failed fires), add a valid payload on the next tick → only the valid one dispatches; the malformed one stays consumed-via-audit and is not retried.
 
-- [ ] T031 [P] Run `cargo clippy --all-targets --all-features -- -D warnings` and `cargo fmt --all -- --check`. Expect new lints around the reshaped `Config` struct and the newly-introduced dispatcher loop; fix findings without `#[allow]` attributes.
+- [X] T031 [P] Run `cargo clippy --all-targets --all-features -- -D warnings` and `cargo fmt --all -- --check`. Expect new lints around the reshaped `Config` struct and the newly-introduced dispatcher loop; fix findings without `#[allow]` attributes.
 
-- [ ] T032 [P] Run the full test suite (`cargo test --all`). Ensure all pre-existing Phase 1/2/3 tests still pass and the new Phase 4 tests pass. SC-207 regression proof.
+- [X] T032 [P] Run the full test suite (`cargo test --all`). Ensure all pre-existing Phase 1/2/3 tests still pass and the new Phase 4 tests pass. SC-207 regression proof.
 
-- [ ] T033 [P] Update `README.md` if it carries a phase-status section; otherwise leave. CLAUDE.md was already updated by the plan step (verify via git diff that the Phase 4 row is present).
+- [X] T033 [P] Update `README.md` if it carries a phase-status section; otherwise leave. CLAUDE.md was already updated by the plan step (verify via git diff that the Phase 4 row is present).
 
-- [ ] T034 Validate `specs/004-escalation-execution/quickstart.md` manually against a local `serbero` build: walk through the US1/US2/US3 steps, confirm the SQL inspection queries return the expected shapes. If any command produces an unexpected result, fix the quickstart or the implementation before closing the task.
+- [X] T034 Validate `specs/004-escalation-execution/quickstart.md` manually against a local `serbero` build: walk through the US1/US2/US3 steps, confirm the SQL inspection queries return the expected shapes. If any command produces an unexpected result, fix the quickstart or the implementation before closing the task.
 
 ---
 
