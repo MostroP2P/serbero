@@ -244,21 +244,42 @@ pub async fn run_take_flow(p: TakeFlowParams<'_>) -> Result<DisputeChatMaterial>
                 if unwrapped.sender != *p.mostro_pubkey {
                     continue;
                 }
-                // Short-circuit `CantDo` responses from Mostro. This
-                // is a real failure (Mostro refused our
-                // `AdminTakeDispute`) and continuing to poll would
-                // just hit the overall timeout. We pass `None` for
+                let response = unwrapped.message;
+                let kind = response.get_inner_message_kind();
+
+                // Correlate the reply to THIS take-flow's dispute
+                // before any policy check. The subscription filter
+                // is just `#p=serbero, kind=1059` with a 7-day
+                // since-window (wide enough to tolerate NIP-59's
+                // ±2-day random timestamp tweak), so the relay
+                // routinely replays stale traffic from prior
+                // take-flows for other disputes — CantDo refusals,
+                // AdminTookDispute replies, the lot. Without this
+                // id gate, a stale `CantDo` emitted by Mostro for
+                // some earlier dispute would pass the sender check
+                // and then short-circuit `validate_response` below,
+                // aborting the *current* take-flow as if Mostro had
+                // refused the current `AdminTakeDispute` — a
+                // cross-dispute false failure.
+                if kind.id != Some(p.dispute_id) {
+                    continue;
+                }
+
+                // Correlated. Now surface a CantDo as a real
+                // refusal (stops polling early rather than waiting
+                // for the wall-clock timeout). We pass `None` for
                 // `expected_request_id` because our outbound
                 // `AdminTakeDispute` is sent without one (Serbero
-                // correlates by `dispute_id`, not `request_id`); the
-                // request-id check collapses to a no-op, leaving
-                // only the `CantDo` short-circuit active.
-                let response = unwrapped.message;
+                // correlates by `dispute_id`, not `request_id`);
+                // the request-id arm of `validate_response`
+                // collapses to a no-op, leaving the CantDo
+                // short-circuit as the only active branch.
                 if let Err(e) = validate_response(&response, None) {
                     match e {
                         MostroError::MostroCantDo(_) => {
                             return Err(Error::ChatTransport(format!(
-                                "Mostro refused AdminTakeDispute: {e}"
+                                "Mostro refused AdminTakeDispute for dispute {}: {e}",
+                                p.dispute_id
                             )));
                         }
                         MostroError::MostroInternalErr(_) => {
@@ -271,13 +292,18 @@ pub async fn run_take_flow(p: TakeFlowParams<'_>) -> Result<DisputeChatMaterial>
                         }
                     }
                 }
-                let kind = response.get_inner_message_kind();
                 if kind.action != Action::AdminTookDispute {
                     continue;
                 }
                 let Some(Payload::Dispute(id, Some(info))) = &kind.payload else {
                     continue;
                 };
+                // Defense in depth. `kind.id == Some(p.dispute_id)`
+                // already held above, but `Payload::Dispute(id,…)`
+                // is a second, independent field on the wire. A
+                // well-formed `AdminTookDispute` from mostrod has
+                // the two ids aligned; an inconsistent reply is
+                // dropped rather than trusted.
                 if *id != p.dispute_id {
                     continue;
                 }
@@ -647,5 +673,39 @@ mod tests {
             Some(Payload::Dispute(dispute_id, None)),
         );
         validate_response(&took, None).expect("AdminTookDispute must pass validate_response");
+    }
+
+    #[test]
+    fn cant_do_for_other_dispute_is_distinguishable_by_kind_id() {
+        // Pins the correlation key the take-flow uses to scope a
+        // `CantDo` to the current dispute. `validate_response`
+        // itself reports the refusal regardless of id, so the gate
+        // lives one level up in `run_take_flow`: it checks
+        // `kind.id == Some(p.dispute_id)` *before* invoking
+        // `validate_response`. If a future mostro-core release ever
+        // stripped the `id` field off `CantDo` messages, the
+        // correlation would silently start matching every refusal
+        // — this test fails loudly on that shape change.
+        use mostro_core::error::CantDoReason;
+        let current = Uuid::new_v4();
+        let other = Uuid::new_v4();
+        assert_ne!(current, other);
+        let stale_refusal = Message::cant_do(
+            Some(other),
+            None,
+            Some(Payload::CantDo(Some(CantDoReason::NotAuthorized))),
+        );
+        let kind = stale_refusal.get_inner_message_kind();
+        assert_eq!(
+            kind.id,
+            Some(other),
+            "Message::cant_do must propagate its id onto MessageKind::id \
+             for run_take_flow to correlate against the current dispute"
+        );
+        assert_ne!(
+            kind.id,
+            Some(current),
+            "a CantDo for a different dispute must not match the current dispute's id"
+        );
     }
 }
