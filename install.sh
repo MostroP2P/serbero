@@ -150,17 +150,19 @@ fetch_latest_tag() {
     LATEST_TAG=$tag
 }
 
-# --- Existing-install detection (for "upgraded from X to Y" message) ------
-detect_old_version() {
+# --- Existing-install detection -------------------------------------------
+# Note: we deliberately DO NOT execute the existing binary (e.g.
+# `$existing --version`) to read its version. An installer running as
+# root would otherwise invoke untrusted pre-existing code during a
+# status probe — the threat model includes a previously-installed
+# binary that may have been tampered with. Reporting "Replaced
+# previous installation" based on file presence is less informative
+# than a precise version string, but it is safe unconditionally.
+detect_previous_install() {
     existing=$1
-    OLD_VERSION=''
-    if [ -x "$existing" ]; then
-        # `--version` is best-effort: early releases may not implement it.
-        # Discard stderr and exit-code noise; grab the last whitespace-
-        # separated token if anything comes back.
-        if v=$("$existing" --version 2>/dev/null); then
-            OLD_VERSION=$(printf '%s' "$v" | awk '{print $NF}')
-        fi
+    PREV_INSTALLED=0
+    if [ -e "$existing" ]; then
+        PREV_INSTALLED=1
     fi
 }
 
@@ -195,19 +197,41 @@ choose_install_dir() {
 }
 
 # --- Checksum verification -------------------------------------------------
+# `sha256sum -c --ignore-missing` is deliberately NOT used: if the
+# release's checksums.sha256 happened to be malformed or missing our
+# specific asset, that flag would silently return success with zero
+# entries actually verified. Instead, we extract exactly the line for
+# our asset into a single-entry checksum file and run `sha256sum -c`
+# (no --ignore-missing), so a missing or mis-formatted entry becomes
+# a loud failure.
 verify_checksum() {
     dir=$1
+    asset=$2
+    # Anchored match: start-of-line hex hash, whitespace, optional
+    # `*` binary-mode marker, asset name, end-of-line. Guards against
+    # substring collisions (e.g. `serbero-linux-x86_64` inside
+    # `serbero-linux-x86_64.sig` if signatures are added later).
+    expected=$(grep -E "^[0-9a-fA-F]+[[:space:]]+[*]?${asset}\$" \
+        "${dir}/checksums.sha256" | head -n 1)
+    if [ -z "$expected" ]; then
+        err "checksums.sha256 does not contain an entry for ${asset}."
+        err "The release appears malformed. Download manually from $RELEASES_URL"
+        exit 1
+    fi
+    printf '%s\n' "$expected" > "${dir}/checksums.single"
+
     if have sha256sum; then
-        (cd "$dir" && sha256sum -c --ignore-missing checksums.sha256 >/dev/null) \
+        (cd "$dir" && sha256sum -c checksums.single >/dev/null) \
             || { err "Checksum verification failed."; exit 1; }
-        ok 'Checksum verified.'
     elif have shasum; then
-        (cd "$dir" && shasum -a 256 -c --ignore-missing checksums.sha256 >/dev/null) \
+        (cd "$dir" && shasum -a 256 -c checksums.single >/dev/null) \
             || { err "Checksum verification failed."; exit 1; }
-        ok 'Checksum verified.'
     else
         warn 'Neither sha256sum nor shasum found; skipping checksum verification.'
+        return
     fi
+    rm -f "${dir}/checksums.single"
+    ok 'Checksum verified.'
 }
 
 # --- Main ------------------------------------------------------------------
@@ -223,11 +247,23 @@ main() {
     mkdir -p "$INSTALL_DIR"
 
     dest="${INSTALL_DIR}/${BINARY_BASENAME}"
-    detect_old_version "$dest"
+    detect_previous_install "$dest"
 
-    # Use a tmpdir so a partial download never overwrites the existing
-    # binary. `mktemp -d` syntax varies across BSD/GNU; try both.
-    tmpdir=$(mktemp -d 2>/dev/null || mktemp -d -t serbero)
+    # Place the tmpdir INSIDE the install dir so the final mv is a
+    # same-filesystem rename and stays atomic. If /tmp is a separate
+    # tmpfs (common on many Linux distros), a tmpdir in /tmp would
+    # make mv fall back to copy+unlink — losing atomicity and
+    # leaving a window where another process could see a partial
+    # binary. Using the install-dir parent guarantees rename(2)
+    # semantics. PID suffix avoids collisions without depending on
+    # mktemp template behaviour that varies between GNU and BSD.
+    tmpdir="${INSTALL_DIR}/.serbero-install.$$"
+    rm -rf "$tmpdir"
+    if ! mkdir -p "$tmpdir"; then
+        err "Failed to create temp dir at $tmpdir"
+        err "The install directory must be writable for atomic installs."
+        exit 1
+    fi
     trap 'rm -rf "$tmpdir"' EXIT
 
     asset_url="https://github.com/${REPO}/releases/download/${LATEST_TAG}/${RELEASE_ASSET}"
@@ -242,14 +278,14 @@ main() {
         info 'Downloading checksums.sha256...'
         http_download "$checksums_url" "${tmpdir}/checksums.sha256"
         info 'Verifying checksum...'
-        verify_checksum "$tmpdir"
+        verify_checksum "$tmpdir" "$RELEASE_ASSET"
     else
         warn 'Skipping checksum verification (install a sha256 tool for provenance checks).'
     fi
 
     chmod +x "${tmpdir}/${RELEASE_ASSET}"
-    # mv is atomic on the same filesystem; a partial write cannot be seen by
-    # another shell process.
+    # Same-filesystem rename → atomic: no other shell process can
+    # ever see a partial binary at $dest.
     if ! mv "${tmpdir}/${RELEASE_ASSET}" "$dest" 2>/dev/null; then
         err "Cannot write $dest (permission denied)."
         if [ "$INSTALL_DIR" = '/usr/local/bin' ]; then
@@ -258,22 +294,18 @@ main() {
         exit 1
     fi
 
-    # Post-install version probe. If the binary supports --version, use it;
-    # otherwise just confirm the executable bit.
-    new_version=''
-    if v=$("$dest" --version 2>/dev/null); then
-        new_version=$(printf '%s' "$v" | awk '{print $NF}')
-    fi
-    if [ -z "$new_version" ] && [ ! -x "$dest" ]; then
+    # Sanity-check the resulting file without executing it. We do
+    # NOT run `$dest --version`: the installer deliberately avoids
+    # invoking downloaded code (see detect_previous_install).
+    if [ ! -x "$dest" ]; then
         err "Installed binary at $dest is not executable."
         exit 1
     fi
 
-    display_version=${new_version:-$LATEST_TAG}
-    if [ -n "$OLD_VERSION" ] && [ -n "$new_version" ] && [ "$OLD_VERSION" != "$new_version" ]; then
-        ok "Upgraded from $OLD_VERSION to $new_version (installed at $dest)"
+    if [ "$PREV_INSTALLED" = 1 ]; then
+        ok "Replaced previous installation — Serbero $LATEST_TAG now at $dest"
     else
-        ok "Serbero $display_version installed to $dest"
+        ok "Serbero $LATEST_TAG installed to $dest"
     fi
 
     # PATH diagnostic — a common source of "command not found" confusion

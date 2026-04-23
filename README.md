@@ -177,9 +177,13 @@ The fastest way to get Serbero is to download a pre-built binary.
 curl -fsSL https://raw.githubusercontent.com/MostroP2P/serbero/main/install.sh | sh
 ```
 
-The install script detects your OS and architecture, downloads the latest release, verifies the checksum, and places the binary in a directory on your `PATH` (`/usr/local/bin` or `~/.local/bin`).
+The install script detects your OS and architecture, downloads the latest release, verifies the SHA-256 checksum of your specific asset (not with `--ignore-missing`, so a malformed release fails loudly), and installs the binary.
 
-**Requirements:** None — not even Rust. The binary is fully self-contained.
+**Install location:** `/usr/local/bin` when that directory is writable by the running user, or when the script is running as root; otherwise `~/.local/bin` (created if missing). If the chosen directory is not already on your `PATH`, the installer prints the exact `export PATH="..."` line to add to your shell profile. Set `SERBERO_INSTALL_DIR` before running to pick a different location.
+
+**Installer requirements:** a POSIX shell (`sh`, `dash`, `bash` all work) plus `curl` or `wget`. No `jq`, no Python, no other runtimes. Checksum verification additionally needs `sha256sum` (Linux, GNU coreutils) or `shasum -a 256` (macOS). If neither is present the installer prints a warning and continues without verifying.
+
+**Runtime requirements for the binary:** none — not even Rust. The release binary is statically linked against musl (Linux) or the platform's system libraries (macOS / Windows) and is fully self-contained.
 
 **Before you run it**, you will still need to have ready:
 
