@@ -182,7 +182,10 @@ mod tests {
     #[tokio::test]
     async fn partial_success_still_maps_to_dispatched() {
         let (conn, handoff) = fresh_with_dispute_and_handoff().await;
+        // Send-loop order: ok-1 succeeded, bad-1 failed. The
+        // `target_solver` column must reflect that original order.
         let outcome = DispatchOutcome::PartialSuccess {
+            attempted: vec!["ok-1".into(), "bad-1".into()],
             succeeded: vec!["ok-1".into()],
             failed: vec!["bad-1".into()],
         };
@@ -199,6 +202,35 @@ mod tests {
         };
         assert_eq!(row.status, DispatchStatus::Dispatched);
         assert_eq!(row.target_solver, "ok-1,bad-1");
+    }
+
+    #[tokio::test]
+    async fn partial_success_target_solver_preserves_send_loop_order() {
+        // Regression guard for the DispatchOutcome ordering fix.
+        // Attempt sequence: [early-fail, later-success]. The
+        // `target_solver` column must read "early-fail,later-success",
+        // NOT "later-success,early-fail" (which is what a naive
+        // concatenation of succeeded + failed would produce).
+        let (conn, handoff) = fresh_with_dispute_and_handoff().await;
+        let outcome = DispatchOutcome::PartialSuccess {
+            attempted: vec!["early-fail".into(), "later-success".into()],
+            succeeded: vec!["later-success".into()],
+            failed: vec!["early-fail".into()],
+        };
+        record_successful_dispatch(&conn, &handoff, "d-trk", &outcome, false, 200)
+            .await
+            .unwrap();
+        let row = {
+            let c = conn.lock().await;
+            find_dispatch_by_handoff_event_id(&c, handoff.handoff_event_id)
+                .unwrap()
+                .unwrap()
+        };
+        assert_eq!(
+            row.target_solver, "early-fail,later-success",
+            "target_solver MUST preserve send-loop order for operator correlation \
+             with notifications timestamps"
+        );
     }
 
     #[tokio::test]

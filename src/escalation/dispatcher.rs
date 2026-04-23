@@ -102,18 +102,31 @@ pub fn build_dm_body(pkg: &HandoffPackage) -> String {
 /// `AllSucceeded` and `PartialSuccess` map to `Dispatched` (per
 /// FR-211 "at least one recipient succeeded"), while `AllFailed`
 /// maps to `SendFailed`.
+///
+/// **Order discipline**: every variant's `attempted_recipients`
+/// projection MUST return the recipients in the original send-loop
+/// order. The tracker persists that ordering verbatim into
+/// `escalation_dispatches.target_solver`, and operator
+/// reconciliation correlates it with `notifications` rows by
+/// timestamp. A shuffled partial-success list would break that
+/// correlation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DispatchOutcome {
     /// Every targeted recipient's gift-wrap publish succeeded.
+    /// `recipients` is in send-loop order.
     AllSucceeded { recipients: Vec<String> },
     /// Every targeted recipient's gift-wrap publish failed.
-    /// `attempted` carries the full recipient list so the tracker
-    /// can encode it into the `target_solver` column; the
-    /// per-recipient failure rows already live in `notifications`.
+    /// `attempted` is in send-loop order.
     AllFailed { attempted: Vec<String> },
-    /// Some recipients succeeded, others failed. `succeeded` +
-    /// `failed` together equal the original target list.
+    /// Some recipients succeeded, others failed.
+    /// - `attempted`: the original send-loop order (authoritative
+    ///   source for [`attempted_recipients`] so `target_solver`
+    ///   matches the `notifications`-row timestamps).
+    /// - `succeeded` / `failed`: analytical splits of `attempted`,
+    ///   useful for logs + future handlers. Each is a subset of
+    ///   `attempted` in its original relative order.
     PartialSuccess {
+        attempted: Vec<String>,
         succeeded: Vec<String>,
         failed: Vec<String>,
     },
@@ -121,16 +134,14 @@ pub enum DispatchOutcome {
 
 impl DispatchOutcome {
     /// Full recipient list in the order the send loop attempted.
-    /// Used by the tracker to fill `escalation_dispatches.target_solver`.
+    /// Used by the tracker to fill
+    /// `escalation_dispatches.target_solver` and to correlate the
+    /// dispatch row back to per-recipient `notifications` rows.
     pub fn attempted_recipients(&self) -> Vec<String> {
         match self {
             DispatchOutcome::AllSucceeded { recipients } => recipients.clone(),
             DispatchOutcome::AllFailed { attempted } => attempted.clone(),
-            DispatchOutcome::PartialSuccess { succeeded, failed } => {
-                let mut out = succeeded.clone();
-                out.extend(failed.iter().cloned());
-                out
-            }
+            DispatchOutcome::PartialSuccess { attempted, .. } => attempted.clone(),
         }
     }
 }
@@ -227,14 +238,25 @@ pub async fn send_to_recipients(
         }
     }
 
+    // `recipients` was walked in order, so a clone is the
+    // authoritative send-loop ordering used by `target_solver`.
+    // We deliberately do NOT concatenate `succeeded + failed` —
+    // that would reorder recipients whenever a failure arrived
+    // before a later success in the loop, breaking the
+    // ordering invariant documented on DispatchOutcome.
+    let attempted: Vec<String> = recipients.to_vec();
     let outcome = if failed.is_empty() {
         DispatchOutcome::AllSucceeded {
-            recipients: succeeded,
+            recipients: attempted,
         }
     } else if succeeded.is_empty() {
-        DispatchOutcome::AllFailed { attempted: failed }
+        DispatchOutcome::AllFailed { attempted }
     } else {
-        DispatchOutcome::PartialSuccess { succeeded, failed }
+        DispatchOutcome::PartialSuccess {
+            attempted,
+            succeeded,
+            failed,
+        }
     };
     Ok(outcome)
 }
@@ -398,16 +420,42 @@ mod tests {
         };
         assert_eq!(o.attempted_recipients(), vec!["x", "y"]);
 
-        // PartialSuccess — succeeded first, then failed, preserving
-        // each sub-list's order.
+        // PartialSuccess — `attempted` is the authoritative order.
+        // The `succeeded` / `failed` sub-lists are analytical
+        // splits and do NOT determine the projection.
         let o = DispatchOutcome::PartialSuccess {
+            attempted: vec!["ok-1".into(), "bad-1".into(), "ok-2".into()],
             succeeded: vec!["ok-1".into(), "ok-2".into()],
             failed: vec!["bad-1".into()],
         };
         assert_eq!(
             o.attempted_recipients(),
-            vec!["ok-1", "ok-2", "bad-1"],
-            "PartialSuccess must preserve both sublists' order"
+            vec!["ok-1", "bad-1", "ok-2"],
+            "PartialSuccess must preserve the original send-loop order"
+        );
+    }
+
+    #[test]
+    fn partial_success_with_failure_before_later_success_keeps_original_order() {
+        // Regression guard: the earlier implementation appended
+        // `failed` after `succeeded` when building
+        // `attempted_recipients`, which reordered recipients
+        // whenever a failure came BEFORE a later success in the
+        // send loop. Operators who correlate `target_solver` with
+        // `notifications` rows by timestamp would then see a mismatch
+        // between the comma-joined dispatch row and the actual send
+        // order. Attempted sequence here: [A (fail), B (ok)] → the
+        // projection must match, not [B, A].
+        let o = DispatchOutcome::PartialSuccess {
+            attempted: vec!["A".into(), "B".into()],
+            succeeded: vec!["B".into()],
+            failed: vec!["A".into()],
+        };
+        assert_eq!(
+            o.attempted_recipients(),
+            vec!["A", "B"],
+            "attempted_recipients MUST reflect send-loop order, \
+             not a succeeded-then-failed concatenation"
         );
     }
 }
