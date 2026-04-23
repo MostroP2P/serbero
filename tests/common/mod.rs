@@ -79,6 +79,9 @@ impl TestHarness {
             reasoning: Default::default(),
             prompts: Default::default(),
             chat: Default::default(),
+            // Phase 4 disabled by default too; individual Phase 4
+            // tests override this field explicitly.
+            escalation: Default::default(),
         }
     }
 }

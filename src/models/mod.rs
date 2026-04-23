@@ -5,8 +5,8 @@ pub mod notification;
 pub mod reasoning;
 
 pub use config::{
-    ChatConfig, Config, MediationConfig, MostroConfig, PromptsConfig, ReasoningConfig, RelayConfig,
-    SerberoConfig, SolverConfig, SolverPermission, TimeoutsConfig,
+    ChatConfig, Config, EscalationConfig, MediationConfig, MostroConfig, PromptsConfig,
+    ReasoningConfig, RelayConfig, SerberoConfig, SolverConfig, SolverPermission, TimeoutsConfig,
 };
 pub use dispute::{Dispute, DisputeStatus, InitiatorRole, LifecycleState};
 pub use mediation::{

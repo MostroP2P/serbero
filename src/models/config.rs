@@ -21,6 +21,12 @@ pub struct Config {
     pub prompts: PromptsConfig,
     #[serde(default)]
     pub chat: ChatConfig,
+
+    // --- Phase 4 section. Defaulted (enabled = false) so Phase 1/2/3-only
+    // --- operators can omit it entirely and the daemon still runs
+    // --- without starting the escalation dispatcher.
+    #[serde(default)]
+    pub escalation: EscalationConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -285,6 +291,57 @@ fn default_inbound_fetch_interval_seconds() -> u64 {
     10
 }
 
+/// Phase 4 (`[escalation]`) configuration.
+///
+/// All fields are defaulted so `[escalation]` is optional in
+/// `config.toml`. When the section is absent, `EscalationConfig::default()`
+/// produces the safe defaults: dispatcher disabled,
+/// fallback-to-all-solvers off, 30-second cycle. A deployment
+/// running Phase 1/2/3 only continues to work unchanged (FR-216 /
+/// SC-207).
+///
+/// Loud-validation discipline: `dispatch_interval_seconds == 0` is
+/// not a valid value (it would busy-loop the dispatcher). Validation
+/// lives in `crate::config::load_config`, not in a `serde` default,
+/// so the operator sees a clear `Error::Config` at startup rather
+/// than a silent clamp.
+#[derive(Debug, Clone, Deserialize)]
+pub struct EscalationConfig {
+    /// Feature flag. `true` spawns the Phase 4 dispatcher task;
+    /// `false` keeps Phase 4 entirely inert. Default: `false`.
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// How often the dispatcher scans `mediation_events` for pending
+    /// `handoff_prepared` rows. Positive integer seconds. The
+    /// SC-201 delivery target (60 s at default interval) assumes the
+    /// default 30 here. Default: 30.
+    #[serde(default = "default_dispatch_interval_seconds")]
+    pub dispatch_interval_seconds: u64,
+
+    /// When zero solvers with `Write` permission are configured,
+    /// `true` broadcasts the handoff DM to every configured solver
+    /// regardless of permission; `false` refuses to broadcast and
+    /// records an `escalation_dispatch_unroutable` audit event.
+    /// Default: `false` (fail loud and visible).
+    #[serde(default)]
+    pub fallback_to_all_solvers: bool,
+}
+
+impl Default for EscalationConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            dispatch_interval_seconds: default_dispatch_interval_seconds(),
+            fallback_to_all_solvers: false,
+        }
+    }
+}
+
+fn default_dispatch_interval_seconds() -> u64 {
+    30
+}
+
 #[cfg(test)]
 mod phase3_tests {
     use super::*;
@@ -375,5 +432,61 @@ api_key = "SECRET_FROM_TOML"
         // Even when the TOML tries to inject it, skip_deserializing
         // keeps the field empty — secrets come only from the env.
         assert_eq!(cfg.reasoning.api_key, "");
+    }
+}
+
+#[cfg(test)]
+mod phase4_tests {
+    use super::*;
+
+    const MINIMAL: &str = r#"
+[serbero]
+private_key = "aa11"
+
+[mostro]
+pubkey = "bb22"
+"#;
+
+    const ESCALATION_ENABLED: &str = r#"
+[serbero]
+private_key = "aa11"
+
+[mostro]
+pubkey = "bb22"
+
+[escalation]
+enabled = true
+dispatch_interval_seconds = 45
+fallback_to_all_solvers = true
+"#;
+
+    #[test]
+    fn escalation_section_absent_applies_safe_defaults() {
+        // FR-215 / FR-216: omitting `[escalation]` entirely MUST yield
+        // enabled=false, interval=30, fallback_to_all_solvers=false.
+        let cfg: Config = toml::from_str(MINIMAL).expect("parse");
+        assert!(!cfg.escalation.enabled);
+        assert_eq!(cfg.escalation.dispatch_interval_seconds, 30);
+        assert!(!cfg.escalation.fallback_to_all_solvers);
+    }
+
+    #[test]
+    fn escalation_section_explicit_values_override_defaults() {
+        let cfg: Config = toml::from_str(ESCALATION_ENABLED).expect("parse");
+        assert!(cfg.escalation.enabled);
+        assert_eq!(cfg.escalation.dispatch_interval_seconds, 45);
+        assert!(cfg.escalation.fallback_to_all_solvers);
+    }
+
+    #[test]
+    fn escalation_config_default_matches_safe_values() {
+        // Belt-and-braces: EscalationConfig::default() must match
+        // the "section absent" case so callers that bypass serde
+        // (e.g. tests constructing a Config directly) get the same
+        // safe posture.
+        let d = EscalationConfig::default();
+        assert!(!d.enabled);
+        assert_eq!(d.dispatch_interval_seconds, 30);
+        assert!(!d.fallback_to_all_solvers);
     }
 }

@@ -13,7 +13,23 @@ pub fn load_config(path: &Path) -> Result<Config> {
     let mut config: Config = toml::from_str(&contents)?;
     apply_env_overrides(&mut config);
     resolve_reasoning_api_key(&mut config)?;
+    validate_escalation(&config)?;
     Ok(config)
+}
+
+/// Validate the `[escalation]` section. The defaults are safe, so
+/// most fields need no check; the one load-bearing guard is that
+/// `dispatch_interval_seconds == 0` would busy-loop the dispatcher.
+/// We surface a loud `Error::Config` instead of silently clamping,
+/// matching the rest of the config surface's discipline (see
+/// `resolve_reasoning_api_key`).
+fn validate_escalation(config: &Config) -> Result<()> {
+    if config.escalation.dispatch_interval_seconds == 0 {
+        return Err(Error::Config(
+            "[escalation].dispatch_interval_seconds must be a positive integer (got 0)".into(),
+        ));
+    }
+    Ok(())
 }
 
 /// Populate `config.reasoning.api_key` from the environment variable
@@ -209,5 +225,36 @@ renotification_check_interval_seconds = 30
         assert_eq!(cfg.serbero.private_key, "aa11");
         assert_eq!(cfg.serbero.db_path, "serbero.db");
         assert_eq!(cfg.serbero.log_level, "info");
+    }
+
+    const ZERO_INTERVAL_CONFIG: &str = r#"
+[serbero]
+private_key = "aa11"
+
+[mostro]
+pubkey = "bb22"
+
+[escalation]
+enabled = true
+dispatch_interval_seconds = 0
+"#;
+
+    #[test]
+    fn zero_dispatch_interval_is_rejected_loudly() {
+        // FR-215: positive-integer validation errors loudly on zero.
+        // A silent clamp would busy-loop the dispatcher; this guard
+        // surfaces the mistake at startup.
+        let _lock = EnvLock::new();
+        let f = write_tmp(ZERO_INTERVAL_CONFIG);
+        let err = load_config(f.path()).unwrap_err();
+        match err {
+            Error::Config(msg) => {
+                assert!(
+                    msg.contains("dispatch_interval_seconds"),
+                    "error message should name the field: {msg}"
+                );
+            }
+            other => panic!("expected Error::Config for zero-interval, got {other:?}"),
+        }
     }
 }
