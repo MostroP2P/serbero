@@ -208,6 +208,39 @@ impl SolverListener {
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
     }
+
+    /// Negative-assertion mirror of [`wait_for`]. Polls `count()`
+    /// every 50ms for `window` and returns:
+    ///
+    /// * `Ok(())` — count stayed at 0 for the full window (no DM
+    ///   landed on the listener).
+    /// * `Err(n)` — count became `n >= 1` at some poll tick; the
+    ///   helper returns immediately on the first non-zero
+    ///   observation so a regression fails the test at ~50ms
+    ///   granularity instead of only after the full window.
+    ///
+    /// Prefer this over `tokio::time::sleep(window) +
+    /// assert_eq!(count, 0)` for DM-count negative assertions:
+    /// the sleep form hides regressions that land a DM just
+    /// after the window ends and is fragile under CI load where
+    /// a 300ms window may race the send loop. With this helper
+    /// you can extend the window for CI robustness without
+    /// amortizing the cost against regressions — the happy path
+    /// still waits the full window (nothing to short-circuit on)
+    /// but the regression path fails fast with a concrete count.
+    pub async fn assert_no_messages_within(&self, window: Duration) -> Result<(), usize> {
+        let deadline = tokio::time::Instant::now() + window;
+        loop {
+            let n = self.count().await;
+            if n > 0 {
+                return Err(n);
+            }
+            if tokio::time::Instant::now() >= deadline {
+                return Ok(());
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
 }
 
 /// Spawn the Serbero daemon on a background task; returns a shutdown sender and the join handle.

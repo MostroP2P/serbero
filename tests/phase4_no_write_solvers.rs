@@ -131,15 +131,20 @@ async fn zero_write_solvers_fallback_off_records_unroutable() {
     .await
     .unwrap();
 
-    // The Unroutable arm runs BEFORE send_to_recipients; the short
-    // sleep catches any spurious DM that a misbehaving future
-    // refactor might slip in.
-    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-    assert_eq!(
-        read_solver.count().await,
-        0,
-        "unroutable arm must not send a DM to a read-permission solver"
-    );
+    // The Unroutable arm runs BEFORE send_to_recipients; the
+    // bounded-poll guard catches any spurious DM that a
+    // misbehaving future refactor might slip in. A fixed
+    // `tokio::time::sleep` would be fragile under CI load —
+    // `assert_no_messages_within` polls every 50ms and bails on
+    // the first non-zero count, so we can afford a generous
+    // 500ms window without paying it against regression speed.
+    match read_solver
+        .assert_no_messages_within(std::time::Duration::from_millis(500))
+        .await
+    {
+        Ok(()) => {}
+        Err(n) => panic!("unroutable arm must not send a DM to a read-permission solver (got {n})"),
+    }
 
     assert_eq!(
         count(&conn, "SELECT COUNT(*) FROM escalation_dispatches").await,
@@ -335,7 +340,11 @@ async fn fallback_on_with_zero_solvers_writes_contract_compliant_unroutable() {
     .await
     .unwrap();
 
-    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    // No sleep: `run_once` awaits `tracker::record_unroutable`
+    // (which holds the DB lock for its insert) before returning,
+    // so every visible DB effect has already committed. The
+    // earlier `tokio::time::sleep` here did nothing for the
+    // assertion and only slowed the test.
     assert_eq!(
         count(&conn, "SELECT COUNT(*) FROM escalation_dispatches").await,
         0,
@@ -400,9 +409,24 @@ async fn unroutable_handoff_picked_up_after_config_change() {
     )
     .await
     .unwrap();
-    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-    assert_eq!(read_solver.count().await, 0);
-    assert_eq!(write_solver.count().await, 0);
+    // Cycle-1 negative DM assertions: neither listener should
+    // have observed any gift-wrap. Polling form over a fixed
+    // sleep for the same CI-robustness / fail-fast reasons as
+    // the first sub-test above.
+    match read_solver
+        .assert_no_messages_within(std::time::Duration::from_millis(500))
+        .await
+    {
+        Ok(()) => {}
+        Err(n) => panic!("cycle 1: read solver unexpectedly received {n} DM(s)"),
+    }
+    match write_solver
+        .assert_no_messages_within(std::time::Duration::from_millis(500))
+        .await
+    {
+        Ok(()) => {}
+        Err(n) => panic!("cycle 1: write solver unexpectedly received {n} DM(s)"),
+    }
     assert_eq!(
         count(
             &conn,
