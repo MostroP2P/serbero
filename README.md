@@ -16,7 +16,8 @@ Serbero helps operators and users handle disputes more quickly, more consistentl
 - [What It Does Not Do](#what-it-does-not-do)
 - [Architecture](#architecture)
 - [Implementation Status](#implementation-status)
-- [Quickstart](#quickstart)
+- [Install from Release](#install-from-release)
+- [Build from Source](#build-from-source)
 - [Configuration Reference](#configuration-reference)
 - [How Serbero Behaves at Runtime](#how-serbero-behaves-at-runtime)
 - [Notification Format](#notification-format)
@@ -27,6 +28,7 @@ Serbero helps operators and users handle disputes more quickly, more consistentl
 - [Technical Constraints](#technical-constraints)
 - [Project Principles](#project-principles)
 - [Roadmap](#roadmap)
+- [Release a New Version](#release-a-new-version)
 - [License](#license)
 
 ---
@@ -167,48 +169,57 @@ Phase 3 specification:
 
 ---
 
-## Quickstart
+## Install from Release
 
-### Prerequisites
-
-- Access to at least one Nostr relay that carries Mostro's dispute events.
-- A **hex-encoded** Nostr key pair for Serbero. You can generate one with [rana](https://github.com/grunch/rana) (a Nostr vanity pubkey miner) or any Nostr key tool. If you hold your keys in Bech32 form (`nsec...`, `npub...`), convert them to hex before placing them in the config. The public key derived from this keypair is the identity Serbero uses on Nostr — you must register it as a solver on the Mostro instance before enabling Phase 3 (see [Enable Phase 3](#enable-phase-3-guided-mediation)).
-- **Hex-encoded** Nostr public keys for the Mostro instance you monitor and for every solver you want to notify.
-- **Rust toolchain** (stable, edition 2021), only needed if you build from source — Option 2 below. Install via [`rustup`](https://rustup.rs/).
-
-### Install
-
-Two options. Pre-built binaries are recommended for most operators; build from source if your platform is not on the matrix below or if you want to run a local modification.
-
-#### Option 1 — pre-built binary (recommended)
-
-Every tagged release publishes binaries for five platforms. Grab the one that matches your OS / CPU from <https://github.com/MostroP2P/serbero/releases/latest>:
-
-| Platform       | File                         |
-|----------------|------------------------------|
-| Linux x86_64   | `serbero-linux-x86_64`       |
-| Linux arm64    | `serbero-linux-arm64`        |
-| macOS x86_64   | `serbero-macos-x86_64`       |
-| macOS arm64    | `serbero-macos-arm64`        |
-| Windows x86_64 | `serbero-windows-x86_64.exe` |
-
-Each release also ships `checksums.sha256`. Verify the binary before running it — the file lists one SHA-256 per platform, so `--ignore-missing` lets you check only the one you downloaded:
+The fastest way to get Serbero is to download a pre-built binary.
 
 ```bash
-# Linux x86_64 example — adjust the filename for your platform.
-curl -sSLO https://github.com/MostroP2P/serbero/releases/latest/download/serbero-linux-x86_64
-curl -sSLO https://github.com/MostroP2P/serbero/releases/latest/download/checksums.sha256
-sha256sum -c checksums.sha256 --ignore-missing
-chmod +x serbero-linux-x86_64
-# Rename to `serbero` so the commands in the Run section below work
-# as-is. Alternatively, move the binary to a directory in your PATH.
-mv serbero-linux-x86_64 serbero
-./serbero --help
+curl -fsSL https://raw.githubusercontent.com/MostroP2P/serbero/main/install.sh | sh
 ```
 
-On macOS, use `shasum -a 256 -c checksums.sha256 --ignore-missing`. On Windows, compute the hash with `CertUtil -hashfile serbero-windows-x86_64.exe SHA256` and compare manually against the line in `checksums.sha256`.
+The install script detects your OS and architecture, downloads the latest release, verifies the checksum, and places the binary in a directory on your `PATH` (`/usr/local/bin` or `~/.local/bin`).
 
-#### Option 2 — build from source
+**Requirements:** None — not even Rust. The binary is fully self-contained.
+
+**Before you run it**, you will still need to have ready:
+
+- A **hex-encoded** Nostr key pair for Serbero. You can generate one with [rana](https://github.com/grunch/rana) or any Nostr key tool; Bech32 keys (`nsec...`, `npub...`) must be converted to hex. The public key of this pair is the identity Serbero uses on Nostr — register it as a solver on the target Mostro instance before enabling Phase 3 (see [Enable Phase 3](#enable-phase-3-guided-mediation)).
+- The **hex-encoded** public key of the Mostro instance you want to monitor, plus hex public keys for every solver you want to notify.
+- At least one Nostr relay URL that carries Mostro dispute events.
+
+After installing, copy the sample config and edit it:
+
+```bash
+cp config.sample.toml config.toml
+# Edit config.toml with your keys, relays, and solvers
+serbero
+```
+
+### Manual download
+
+If you prefer not to pipe to `sh`, download the binary for your platform from the [Releases](https://github.com/MostroP2P/serbero/releases) page, verify the checksum against `checksums.sha256`, make it executable, and place it somewhere on your `PATH`.
+
+### Available platforms
+
+| Platform            | Binary name                  |
+|---------------------|------------------------------|
+| Linux x86_64        | `serbero-linux-x86_64`       |
+| Linux ARM64         | `serbero-linux-arm64`        |
+| macOS Intel         | `serbero-macos-x86_64`       |
+| macOS Apple Silicon | `serbero-macos-arm64`        |
+| Windows x64         | `serbero-windows-x86_64.exe` |
+
+---
+
+## Build from Source
+
+If you prefer to compile Serbero yourself (e.g. for development, debugging, or running an unreleased commit):
+
+### Prerequisites (for building from source)
+
+- **Rust toolchain**, stable, edition 2021. Install via [rustup](https://rustup.rs/). Only needed if you compile from source. Users who install the pre-built binary do not need Rust.
+
+### Build
 
 ```bash
 cargo build --release
@@ -252,23 +263,21 @@ renotification_check_interval_seconds = 60    # how often to scan for unattended
 
 ### Run
 
-The examples below assume the binary is named `./serbero` in the current directory — which is what Option 1 produces after the `mv` step, or what you get if you copy `./target/release/serbero` next to your `config.toml` after Option 2. If you built from source and prefer to run from the build directory, replace `./serbero` with `./target/release/serbero` in the commands below.
-
 Serbero reads `config.toml` from the current working directory. Secrets and a few operational parameters can be overridden via environment variables:
 
 ```bash
 # Minimal invocation — expects ./config.toml
-./serbero
+./target/release/serbero
 
 # Override the private key via env (recommended for production)
-SERBERO_PRIVATE_KEY="<hex-encoded private key>" ./serbero
+SERBERO_PRIVATE_KEY="<hex-encoded private key>" ./target/release/serbero
 
 # Point at a different config file (any path)
-SERBERO_CONFIG=/etc/serbero/config.toml ./serbero
+SERBERO_CONFIG=/etc/serbero/config.toml ./target/release/serbero
 
 # Verbose tracing (module-level filters also supported)
-SERBERO_LOG=debug ./serbero
-SERBERO_LOG="serbero=debug,nostr_sdk=info" ./serbero
+SERBERO_LOG=debug ./target/release/serbero
+SERBERO_LOG="serbero=debug,nostr_sdk=info" ./target/release/serbero
 ```
 
 Shut down with `Ctrl-C` (SIGINT). On Unix hosts Serbero also catches SIGTERM (so `systemctl stop`, `kill`, and container shutdowns work). Both paths abort the re-notification timer and exit cleanly.
@@ -304,7 +313,7 @@ Phase 3 layers on top of Phases 1 and 2. To enable it:
 5. **Restart**:
 
    ```bash
-   ./serbero
+   ./target/release/serbero
    ```
 
    At startup you should see (alongside the Phase 1/2 lines):
@@ -616,7 +625,7 @@ Serbero emits structured `tracing` spans and events at every decision point:
 Use `SERBERO_LOG` to tune the filter:
 
 ```bash
-SERBERO_LOG="serbero=debug,nostr_sdk=warn" ./serbero
+SERBERO_LOG="serbero=debug,nostr_sdk=warn" ./target/release/serbero
 ```
 
 ### SQLite tables
@@ -800,6 +809,8 @@ Combined with the constitutional invariant that Serbero holds no credentials for
 
 ## Running the Test Suite
 
+> **Note:** Tests require the Rust toolchain. If you installed Serbero via the release binary and want to run tests, clone the repo and build from source.
+
 The crate ships **228 tests**: 179 inline `#[cfg(test)]` lib unit tests (covering parsers, policy decisions, audit-store invariants, migrations, prompt loading, …) plus 49 integration tests that spin up an in-process `nostr-relay-builder::MockRelay` (and, where relevant, an `httpmock` reasoning endpoint) and exercise the daemon end-to-end.
 
 ```bash
@@ -892,6 +903,35 @@ Serbero is governed by a [constitution](.specify/memory/constitution.md) that de
 - **Phase 3 — Guided Mediation** (low-risk coordination failures): shipped on `main`. Contacts dispute parties via gift wraps to their shared pubkeys, runs bounded clarifying rounds, classifies through a versioned prompt bundle + reasoning provider, and either delivers a cooperative summary to the assigned solver or escalates with a Phase 4 handoff package. Strict policy-layer validation suppresses any output that would cross Serbero's authority boundary.
 - **Phase 4 — Escalation Execution**: planned. Phase 3 already prepares the `handoff_prepared` package (evidence refs, rationale refs, prompt bundle id, policy hash); Phase 4 will consume it — routing to write-permission solvers, re-escalation on no-acknowledge, and the operator UI surface.
 - **Phase 5 — Additional Reasoning Adapters**: the OpenAI-compatible adapter shipped in Phase 3 already covers hosted OpenAI, vLLM, llama.cpp, Ollama, LiteLLM, and any router proxy exposing `/chat/completions`. Vendor-specific adapters (Anthropic, PPQai, OpenClaw) are tracked as future work behind a `not_yet_implemented` guard that fails loudly at startup so operators get an actionable message rather than silent coercion.
+
+---
+
+## Release a New Version
+
+Serbero uses [cargo-release](https://github.com/crate-ci/cargo-release) to automate versioning and tagging.
+
+```bash
+# Install cargo-release (once)
+cargo install cargo-release
+
+# Bump patch version (0.1.0 → 0.1.1), commit, tag, and push
+cargo release patch --execute
+
+# Or bump minor (0.1.0 → 0.2.0)
+cargo release minor --execute
+
+# Or bump major (0.1.0 → 1.0.0)
+cargo release major --execute
+```
+
+Pushing a tag `v*.*.*` triggers a [GitHub Actions workflow](.github/workflows/release.yml) that builds binaries for all supported platforms and publishes them to the [Releases](https://github.com/MostroP2P/serbero/releases) page. Tags containing `-rc` or `-beta` are marked as pre-releases automatically.
+
+You can also create a release manually with `git tag`:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
 
 ---
 
