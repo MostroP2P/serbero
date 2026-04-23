@@ -289,8 +289,10 @@ main() {
 
     printf '\n'
     printf 'Next steps:\n'
-    printf '  1. Create your config: cp config.sample.toml config.toml\n'
-    printf '  2. Edit config.toml with your keys and relays\n'
+    printf '  1. Fetch the sample config (the binary ships alone — the sample\n'
+    printf '     lives in the repo and must be downloaded separately):\n'
+    printf '       curl -fsSL https://raw.githubusercontent.com/%s/main/config.sample.toml -o config.toml\n' "$REPO"
+    printf '  2. Edit config.toml with your keys, relays, and solvers\n'
     printf '  3. Run: serbero\n'
     printf '\n'
     printf 'Documentation: https://github.com/%s\n' "$REPO"

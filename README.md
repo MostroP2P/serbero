@@ -187,13 +187,15 @@ The install script detects your OS and architecture, downloads the latest releas
 - The **hex-encoded** public key of the Mostro instance you want to monitor, plus hex public keys for every solver you want to notify.
 - At least one Nostr relay URL that carries Mostro dispute events.
 
-After installing, copy the sample config and edit it:
+After installing, fetch the sample config and edit it. The binary-only install does not pull repository files, so download the sample directly from the repo:
 
 ```bash
-cp config.sample.toml config.toml
+curl -fsSL https://raw.githubusercontent.com/MostroP2P/serbero/main/config.sample.toml -o config.toml
 # Edit config.toml with your keys, relays, and solvers
 serbero
 ```
+
+If you cloned the repository (e.g. for Build from Source below), `cp config.sample.toml config.toml` works too — the file is checked in at the repo root.
 
 ### Manual download
 
