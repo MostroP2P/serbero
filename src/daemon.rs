@@ -180,16 +180,16 @@ where
     // (FR-121). The engine task and the handler share the same
     // `session_key_cache` so sessions opened by either path are
     // visible to the ingest tick on the next cycle.
+    //
+    // Parse the serbero private key once up front and clone into
+    // Phase 3 / Phase 4 task contexts. `build_client` already
+    // parsed it internally above; re-parsing for each phase spawn
+    // would be redundant and keeps two secret copies alive.
+    let shared_serbero_keys = nostr_sdk::Keys::parse(&config.serbero.private_key)
+        .map_err(|e| Error::InvalidKey(format!("failed to parse serbero private key: {e}")))?;
     let mut handler_phase3: Option<Arc<crate::mediation::Phase3HandlerCtx>> = None;
     let engine_handle: Option<JoinHandle<()>> = if let Some(rt) = phase3_runtime {
-        let engine_keys = match nostr_sdk::Keys::parse(&config.serbero.private_key) {
-            Ok(k) => k,
-            Err(e) => {
-                return Err(Error::InvalidKey(format!(
-                    "failed to parse serbero private key for engine task: {e}"
-                )))
-            }
-        };
+        let engine_keys = shared_serbero_keys.clone();
         // T043: run the initial authorization check and get a
         // handle. US1's stub `check_authorization` always returns
         // `Ok(())`, so the handle reports `Authorized` and no retry
@@ -254,6 +254,43 @@ where
         None
     };
 
+    // Phase 4 escalation dispatcher. Independent of Phase 3's
+    // engine tick (FR-218) — the two loops share no state beyond
+    // the read-only audit table. When `[escalation].enabled =
+    // false` we do not even spawn the task, so Phase 1/2/3
+    // behavior is unaffected (FR-216 / SC-207).
+    let escalation_handle: Option<JoinHandle<()>> = if config.escalation.enabled {
+        let escalation_keys = shared_serbero_keys.clone();
+        let write_solver_count = config
+            .solvers
+            .iter()
+            .filter(|s| s.permission == crate::models::SolverPermission::Write)
+            .count();
+        info!(
+            dispatch_interval_seconds = config.escalation.dispatch_interval_seconds,
+            fallback_to_all_solvers = config.escalation.fallback_to_all_solvers,
+            write_solver_count,
+            "phase4_dispatcher_enabled"
+        );
+        let esc_conn = Arc::clone(&conn);
+        let esc_client = client.clone();
+        let esc_solvers = config.solvers.clone();
+        let esc_cfg = config.escalation.clone();
+        Some(tokio::spawn(async move {
+            crate::escalation::run_dispatcher(
+                esc_conn,
+                esc_client,
+                escalation_keys,
+                esc_solvers,
+                esc_cfg,
+            )
+            .await
+        }))
+    } else {
+        info!("phase4_dispatcher_disabled");
+        None
+    };
+
     let ctx = Arc::new(HandlerContext {
         conn: conn.clone(),
         client: client.clone(),
@@ -315,6 +352,10 @@ where
     renotif_handle.abort();
     let _ = renotif_handle.await;
     if let Some(h) = engine_handle {
+        h.abort();
+        let _ = h.await;
+    }
+    if let Some(h) = escalation_handle {
         h.abort();
         let _ = h.await;
     }

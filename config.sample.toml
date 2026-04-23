@@ -100,3 +100,30 @@ message_templates_path = "./prompts/phase3-message-templates.md"
 [chat]
 # Inbound Mostro chat polling interval used by the mediation engine.
 inbound_fetch_interval_seconds = 10
+
+# --- Phase 4: escalation execution surface (FR-215) ---
+# Consumes Phase 3's handoff_prepared audit events and dispatches
+# a structured DM to write-permission solvers. See
+# specs/004-escalation-execution/contracts/config.md for the full
+# shape.
+[escalation]
+# Feature flag. `true` spawns the Phase 4 dispatcher task; `false`
+# keeps Phase 4 entirely inert (no task, no writes, no Phase 1/2/3
+# behavior change). Default: false — Phase 4 is opt-in.
+enabled = false
+
+# Scan cadence. Positive integer seconds. The SC-201 target (95% of
+# handoffs delivered within 60 s) assumes the default 30 here;
+# larger values degrade delivery latency linearly.
+dispatch_interval_seconds = 30
+
+# When zero solvers with `permission = "write"` are configured:
+#   true  → broadcast the handoff DM to every configured solver
+#           regardless of permission.
+#   false → refuse to broadcast and record an
+#           `escalation_dispatch_unroutable` audit event + ERROR log
+#           line. The handoff stays pending so a later config
+#           change (adding a write solver) re-surfaces it.
+# Operators running intentionally read-only deployments must opt in
+# explicitly by flipping this to true.
+fallback_to_all_solvers = false

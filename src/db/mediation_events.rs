@@ -12,7 +12,7 @@
 //! rationale text. General application logs MUST NOT include the
 //! `rationale_text` column either.
 
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, Transaction};
 use serde_json::json;
 
 use crate::error::Result;
@@ -49,6 +49,33 @@ pub enum MediationEventKind {
     /// dispute-scoped (only reasoning context existed, no session).
     ResolvedExternallyReported,
     SessionClosed,
+    // --- Phase 4 escalation dispatcher audit kinds (FR-211 / FR-212 /
+    // FR-213 / FR-214). Session_id scoping copies the upstream
+    // `handoff_prepared` row: set if a session existed, NULL for
+    // FR-122 dispute-scoped handoffs.
+    /// FR-211 — written in the same transaction as the
+    /// `escalation_dispatches` row whenever a dispatch attempt
+    /// reached the send step (succeeded AT LEAST on one recipient OR
+    /// failed on every recipient — the `status` payload field
+    /// distinguishes the two).
+    EscalationDispatched,
+    /// FR-212 — written when the dispatcher skipped a handoff
+    /// because the dispute had already resolved externally before
+    /// the send step (FR-208 supersession gate). No
+    /// `escalation_dispatches` row is written alongside.
+    EscalationSuperseded,
+    /// FR-213 — written when no write-permission solver is
+    /// configured and `[escalation].fallback_to_all_solvers = false`.
+    /// Paired with an ERROR-level log line. The handoff event
+    /// deliberately stays unconsumed so a later config change can
+    /// pick it up.
+    EscalationDispatchUnroutable,
+    /// FR-214 — written when the `handoff_prepared` payload cannot
+    /// be used. Two sub-shapes distinguished by the payload's
+    /// `reason` field: `deserialize_failed` (payload does not parse)
+    /// and `orphan_dispute_reference` (payload parses but the
+    /// dispute id has no row in `disputes`).
+    EscalationDispatchParseFailed,
 }
 
 impl MediationEventKind {
@@ -75,6 +102,10 @@ impl MediationEventKind {
             SupersededByHuman => "superseded_by_human",
             ResolvedExternallyReported => "resolved_externally_reported",
             SessionClosed => "session_closed",
+            EscalationDispatched => "escalation_dispatched",
+            EscalationSuperseded => "escalation_superseded",
+            EscalationDispatchUnroutable => "escalation_dispatch_unroutable",
+            EscalationDispatchParseFailed => "escalation_dispatch_parse_failed",
         }
     }
 }
@@ -412,6 +443,176 @@ pub fn record_resolved_externally_reported(
     )
 }
 
+/// FR-211 typed constructor for the Phase 4 dispatch audit event.
+///
+/// Payload shape matches
+/// `specs/004-escalation-execution/contracts/audit-events.md`
+/// §escalation_dispatched. Takes `&Transaction<'_>` (not
+/// `&Connection`) because FR-211 requires this audit row to land
+/// atomically with the matching `escalation_dispatches` row —
+/// forcing the transaction at the type level makes the pairing
+/// impossible to bypass by accident, and matches the signature of
+/// `db::escalation_dispatches::insert_dispatch`.
+///
+/// The other three Phase 4 audit writers
+/// (`record_escalation_superseded`,
+/// `record_escalation_dispatch_unroutable`,
+/// `record_escalation_dispatch_parse_failed`) stay on `&Connection`:
+/// they do NOT pair with a dispatch row, so the atomicity
+/// invariant does not apply to them.
+#[allow(clippy::too_many_arguments)]
+pub fn record_escalation_dispatched(
+    tx: &Transaction<'_>,
+    session_id: Option<&str>,
+    dispatch_id: &str,
+    dispute_id: &str,
+    handoff_event_id: i64,
+    target_solver: &str,
+    status: &str,
+    fallback_broadcast: bool,
+    prompt_bundle_id: Option<&str>,
+    policy_hash: Option<&str>,
+    occurred_at: i64,
+) -> Result<i64> {
+    let payload = json!({
+        "dispatch_id": dispatch_id,
+        "dispute_id": dispute_id,
+        "handoff_event_id": handoff_event_id,
+        "target_solver": target_solver,
+        "status": status,
+        "fallback_broadcast": fallback_broadcast,
+    })
+    .to_string();
+    // `Transaction` derefs to `Connection`, so `record_event` can
+    // run the INSERT inside the caller's tx scope. The tx is
+    // committed by the caller after both this audit row and the
+    // paired `escalation_dispatches` row land — partial-commit
+    // races are impossible.
+    record_event(
+        tx,
+        MediationEventKind::EscalationDispatched,
+        session_id,
+        &payload,
+        None,
+        prompt_bundle_id,
+        policy_hash,
+        occurred_at,
+    )
+}
+
+/// FR-212 typed constructor for supersession.
+///
+/// Fires when the dispatcher's FR-208 gate detected the dispute
+/// had already resolved before the send step. No
+/// `escalation_dispatches` row is written alongside — supersession
+/// is a non-event from the dispatch-table's perspective.
+#[allow(clippy::too_many_arguments)]
+pub fn record_escalation_superseded(
+    conn: &Connection,
+    session_id: Option<&str>,
+    dispute_id: &str,
+    handoff_event_id: i64,
+    reason: &str,
+    prompt_bundle_id: Option<&str>,
+    policy_hash: Option<&str>,
+    occurred_at: i64,
+) -> Result<i64> {
+    let payload = json!({
+        "dispute_id": dispute_id,
+        "handoff_event_id": handoff_event_id,
+        "reason": reason,
+    })
+    .to_string();
+    record_event(
+        conn,
+        MediationEventKind::EscalationSuperseded,
+        session_id,
+        &payload,
+        None,
+        prompt_bundle_id,
+        policy_hash,
+        occurred_at,
+    )
+}
+
+/// FR-213 typed constructor for the unroutable dispatch case.
+///
+/// Fires when `[escalation].fallback_to_all_solvers = false` AND
+/// no write-permission solver is configured. The handoff event
+/// stays unconsumed — a later config change re-surfaces it on the
+/// next dispatcher cycle.
+#[allow(clippy::too_many_arguments)]
+pub fn record_escalation_dispatch_unroutable(
+    conn: &Connection,
+    session_id: Option<&str>,
+    dispute_id: &str,
+    handoff_event_id: i64,
+    configured_solver_count: usize,
+    fallback_to_all_solvers: bool,
+    prompt_bundle_id: Option<&str>,
+    policy_hash: Option<&str>,
+    occurred_at: i64,
+) -> Result<i64> {
+    let payload = json!({
+        "dispute_id": dispute_id,
+        "handoff_event_id": handoff_event_id,
+        "configured_solver_count": configured_solver_count,
+        "fallback_to_all_solvers": fallback_to_all_solvers,
+    })
+    .to_string();
+    record_event(
+        conn,
+        MediationEventKind::EscalationDispatchUnroutable,
+        session_id,
+        &payload,
+        None,
+        prompt_bundle_id,
+        policy_hash,
+        occurred_at,
+    )
+}
+
+/// FR-214 typed constructor for the parse-failed dispatch case.
+///
+/// Two sub-shapes disambiguated by `reason`:
+/// - `deserialize_failed` — `payload_json` did not parse into a
+///   `HandoffPackage`.
+/// - `orphan_dispute_reference` — payload parsed but `dispute_id`
+///   has no row in `disputes` (theoretically impossible; defensive).
+///
+/// The event is considered consumed so the queue moves forward;
+/// manual operator action is required to re-dispatch.
+#[allow(clippy::too_many_arguments)]
+pub fn record_escalation_dispatch_parse_failed(
+    conn: &Connection,
+    session_id: Option<&str>,
+    dispute_id: &str,
+    handoff_event_id: i64,
+    reason: &str,
+    detail: &str,
+    prompt_bundle_id: Option<&str>,
+    policy_hash: Option<&str>,
+    occurred_at: i64,
+) -> Result<i64> {
+    let payload = json!({
+        "dispute_id": dispute_id,
+        "handoff_event_id": handoff_event_id,
+        "reason": reason,
+        "detail": detail,
+    })
+    .to_string();
+    record_event(
+        conn,
+        MediationEventKind::EscalationDispatchParseFailed,
+        session_id,
+        &payload,
+        None,
+        prompt_bundle_id,
+        policy_hash,
+        occurred_at,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -493,6 +694,22 @@ mod tests {
                 "resolved_externally_reported",
             ),
             (MediationEventKind::SessionClosed, "session_closed"),
+            (
+                MediationEventKind::EscalationDispatched,
+                "escalation_dispatched",
+            ),
+            (
+                MediationEventKind::EscalationSuperseded,
+                "escalation_superseded",
+            ),
+            (
+                MediationEventKind::EscalationDispatchUnroutable,
+                "escalation_dispatch_unroutable",
+            ),
+            (
+                MediationEventKind::EscalationDispatchParseFailed,
+                "escalation_dispatch_parse_failed",
+            ),
         ];
         for (kind, want) in expected {
             assert_eq!(kind.as_str(), want, "kind {kind:?} string form drifted");
@@ -860,5 +1077,179 @@ mod tests {
             sid.is_none(),
             "FR-124 reasoning-verdict-only case must emit the report with session_id = NULL"
         );
+    }
+
+    // --- Phase 4 typed-constructor payload shape tests ---
+    // The four kinds carry distinct payload shapes; each test pins
+    // the exact keys per contracts/audit-events.md so a
+    // payload-formatting drift fails loudly rather than showing up
+    // as an operator-facing bug.
+
+    #[test]
+    fn escalation_dispatched_payload_carries_required_keys() {
+        let mut conn = fresh_with_session();
+        let tx = conn.transaction().unwrap();
+        let id = record_escalation_dispatched(
+            &tx,
+            Some("sess-1"),
+            "dispatch-abc",
+            "d-ph4",
+            42,
+            "solver-pk",
+            "dispatched",
+            false,
+            Some("phase3-default"),
+            Some("policy-hash"),
+            1000,
+        )
+        .unwrap();
+        tx.commit().unwrap();
+        let (kind, payload): (String, String) = conn
+            .query_row(
+                "SELECT kind, payload_json FROM mediation_events WHERE id = ?1",
+                params![id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(kind, "escalation_dispatched");
+        let v: serde_json::Value = serde_json::from_str(&payload).unwrap();
+        assert_eq!(v["dispatch_id"], "dispatch-abc");
+        assert_eq!(v["dispute_id"], "d-ph4");
+        assert_eq!(v["handoff_event_id"], 42);
+        assert_eq!(v["target_solver"], "solver-pk");
+        assert_eq!(v["status"], "dispatched");
+        assert_eq!(v["fallback_broadcast"], false);
+    }
+
+    #[test]
+    fn escalation_dispatched_payload_preserves_fallback_flag() {
+        let mut conn = fresh_with_session();
+        let tx = conn.transaction().unwrap();
+        let id = record_escalation_dispatched(
+            &tx,
+            None,
+            "dispatch-fb",
+            "d-ph4",
+            99,
+            "pk-1,pk-2,pk-3",
+            "dispatched",
+            true,
+            None,
+            None,
+            1100,
+        )
+        .unwrap();
+        tx.commit().unwrap();
+        let payload: String = conn
+            .query_row(
+                "SELECT payload_json FROM mediation_events WHERE id = ?1",
+                params![id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let v: serde_json::Value = serde_json::from_str(&payload).unwrap();
+        assert_eq!(v["fallback_broadcast"], true);
+        assert_eq!(v["target_solver"], "pk-1,pk-2,pk-3");
+    }
+
+    #[test]
+    fn escalation_superseded_payload_pins_reason_key() {
+        let conn = fresh_with_session();
+        let id = record_escalation_superseded(
+            &conn,
+            Some("sess-1"),
+            "d-ph4",
+            77,
+            "dispute_already_resolved",
+            None,
+            None,
+            1200,
+        )
+        .unwrap();
+        let (kind, payload): (String, String) = conn
+            .query_row(
+                "SELECT kind, payload_json FROM mediation_events WHERE id = ?1",
+                params![id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(kind, "escalation_superseded");
+        let v: serde_json::Value = serde_json::from_str(&payload).unwrap();
+        assert_eq!(v["dispute_id"], "d-ph4");
+        assert_eq!(v["handoff_event_id"], 77);
+        assert_eq!(v["reason"], "dispute_already_resolved");
+    }
+
+    #[test]
+    fn escalation_dispatch_unroutable_payload_shape() {
+        let conn = fresh_without_session();
+        let id = record_escalation_dispatch_unroutable(
+            &conn, None, "d-ph4", 88, 2, false, None, None, 1300,
+        )
+        .unwrap();
+        let payload: String = conn
+            .query_row(
+                "SELECT payload_json FROM mediation_events WHERE id = ?1",
+                params![id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let v: serde_json::Value = serde_json::from_str(&payload).unwrap();
+        assert_eq!(v["dispute_id"], "d-ph4");
+        assert_eq!(v["handoff_event_id"], 88);
+        assert_eq!(v["configured_solver_count"], 2);
+        assert_eq!(v["fallback_to_all_solvers"], false);
+    }
+
+    #[test]
+    fn escalation_dispatch_parse_failed_distinguishes_reasons() {
+        let conn = fresh_without_session();
+        // deserialize_failed
+        let id1 = record_escalation_dispatch_parse_failed(
+            &conn,
+            None,
+            "d-ph4",
+            101,
+            "deserialize_failed",
+            "expected `,` or `}` at line 1 column 12",
+            None,
+            None,
+            1400,
+        )
+        .unwrap();
+        let payload1: String = conn
+            .query_row(
+                "SELECT payload_json FROM mediation_events WHERE id = ?1",
+                params![id1],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let v1: serde_json::Value = serde_json::from_str(&payload1).unwrap();
+        assert_eq!(v1["reason"], "deserialize_failed");
+        assert!(v1["detail"].as_str().unwrap().contains("column 12"));
+
+        // orphan_dispute_reference
+        let id2 = record_escalation_dispatch_parse_failed(
+            &conn,
+            None,
+            "d-orphan",
+            102,
+            "orphan_dispute_reference",
+            "dispute_id not found",
+            None,
+            None,
+            1500,
+        )
+        .unwrap();
+        let payload2: String = conn
+            .query_row(
+                "SELECT payload_json FROM mediation_events WHERE id = ?1",
+                params![id2],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let v2: serde_json::Value = serde_json::from_str(&payload2).unwrap();
+        assert_eq!(v2["reason"], "orphan_dispute_reference");
+        assert_eq!(v2["detail"], "dispute_id not found");
     }
 }
