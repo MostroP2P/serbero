@@ -200,7 +200,10 @@ curl -sSLO https://github.com/MostroP2P/serbero/releases/latest/download/serbero
 curl -sSLO https://github.com/MostroP2P/serbero/releases/latest/download/checksums.sha256
 sha256sum -c checksums.sha256 --ignore-missing
 chmod +x serbero-linux-x86_64
-./serbero-linux-x86_64 --help
+# Rename to `serbero` so the commands in the Run section below work
+# as-is. Alternatively, move the binary to a directory in your PATH.
+mv serbero-linux-x86_64 serbero
+./serbero --help
 ```
 
 On macOS, use `shasum -a 256 -c checksums.sha256 --ignore-missing`. On Windows, compute the hash with `CertUtil -hashfile serbero-windows-x86_64.exe SHA256` and compare manually against the line in `checksums.sha256`.
@@ -249,21 +252,23 @@ renotification_check_interval_seconds = 60    # how often to scan for unattended
 
 ### Run
 
+The examples below assume the binary is named `./serbero` in the current directory — which is what Option 1 produces after the `mv` step, or what you get if you copy `./target/release/serbero` next to your `config.toml` after Option 2. If you built from source and prefer to run from the build directory, replace `./serbero` with `./target/release/serbero` in the commands below.
+
 Serbero reads `config.toml` from the current working directory. Secrets and a few operational parameters can be overridden via environment variables:
 
 ```bash
 # Minimal invocation — expects ./config.toml
-./target/release/serbero
+./serbero
 
 # Override the private key via env (recommended for production)
-SERBERO_PRIVATE_KEY="<hex-encoded private key>" ./target/release/serbero
+SERBERO_PRIVATE_KEY="<hex-encoded private key>" ./serbero
 
 # Point at a different config file (any path)
-SERBERO_CONFIG=/etc/serbero/config.toml ./target/release/serbero
+SERBERO_CONFIG=/etc/serbero/config.toml ./serbero
 
 # Verbose tracing (module-level filters also supported)
-SERBERO_LOG=debug ./target/release/serbero
-SERBERO_LOG="serbero=debug,nostr_sdk=info" ./target/release/serbero
+SERBERO_LOG=debug ./serbero
+SERBERO_LOG="serbero=debug,nostr_sdk=info" ./serbero
 ```
 
 Shut down with `Ctrl-C` (SIGINT). On Unix hosts Serbero also catches SIGTERM (so `systemctl stop`, `kill`, and container shutdowns work). Both paths abort the re-notification timer and exit cleanly.
@@ -299,7 +304,7 @@ Phase 3 layers on top of Phases 1 and 2. To enable it:
 5. **Restart**:
 
    ```bash
-   ./target/release/serbero
+   ./serbero
    ```
 
    At startup you should see (alongside the Phase 1/2 lines):
@@ -611,7 +616,7 @@ Serbero emits structured `tracing` spans and events at every decision point:
 Use `SERBERO_LOG` to tune the filter:
 
 ```bash
-SERBERO_LOG="serbero=debug,nostr_sdk=warn" ./target/release/serbero
+SERBERO_LOG="serbero=debug,nostr_sdk=warn" ./serbero
 ```
 
 ### SQLite tables
