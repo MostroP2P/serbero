@@ -251,22 +251,44 @@ async fn process_one(
             // row is written) so a future operator config change
             // that adds a Write solver dispatches it on the first
             // cycle after the change.
+            //
+            // Audit payload semantics: the `fallback_to_all_solvers`
+            // field (pinned to `false` by
+            // `contracts/audit-events.md`) encodes "did rule 3
+            // fire?" — the read-side analogue of `via_fallback` on
+            // the dispatched path — NOT the raw config flag.
+            // Reaching this arm is itself the router's signal that
+            // rule 3 did not fire, so the payload value is derived
+            // as `cfg.fallback_to_all_solvers && !solvers.is_empty()`,
+            // which is `false` by the router's invariant for every
+            // shape that routes here. Writing `cfg.fallback_to_all_solvers`
+            // directly would leak the "fallback_on + zero solvers"
+            // edge case into the payload as `true` and break
+            // operator dashboards that filter unroutable events
+            // with `WHERE fallback_to_all_solvers = false`. The
+            // fresh ERROR log above still carries the raw config
+            // flag for interactive debugging.
             let configured_count = solvers.len();
+            let audit_fallback = cfg.fallback_to_all_solvers && !solvers.is_empty();
+            debug_assert!(
+                !audit_fallback,
+                "router invariant violated: Unroutable reached while rule 3 conditions hold"
+            );
             error!(
                 dispute_id = %pkg.dispute_id,
                 handoff_event_id = handoff.handoff_event_id,
                 configured_solver_count = configured_count,
-                fallback_to_all_solvers = cfg.fallback_to_all_solvers,
+                config_fallback_to_all_solvers = cfg.fallback_to_all_solvers,
                 "phase4_unroutable — no write-permission solver configured; \
                  handoff remains unconsumed (set [escalation].fallback_to_all_solvers = true \
-                 to broadcast to every configured solver, or add a write-permission solver)"
+                 with at least one configured solver to broadcast, or add a write-permission solver)"
             );
             if let Err(e) = tracker::record_unroutable(
                 conn,
                 &handoff,
                 &pkg.dispute_id,
                 configured_count,
-                cfg.fallback_to_all_solvers,
+                audit_fallback,
                 current_unix_seconds(),
             )
             .await

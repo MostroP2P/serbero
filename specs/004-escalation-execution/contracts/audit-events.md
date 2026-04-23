@@ -95,7 +95,7 @@ solver picks the handoff up on the next cycle.
 | Key                         | Required | Notes                                                          |
 |-----------------------------|----------|----------------------------------------------------------------|
 | `configured_solver_count`   | yes      | Total configured solvers (any permission). Zero is a valid value; the spec's US3 covers the "only read-perm solvers" scenario explicitly. |
-| `fallback_to_all_solvers`   | yes      | Always `false` here by construction (else FR-202 rule 3 would have fired).                   |
+| `fallback_to_all_solvers`   | yes      | Always `false` here by construction — encodes "did FR-202 rule 3 fire?" (the read-side analogue of `via_fallback` on the dispatched path), NOT the raw `[escalation].fallback_to_all_solvers` config flag. Reaching this audit kind means rule 3 did not fire, which holds for both shapes the router collapses onto Unroutable: (a) rule 3 gated off via the config flag, and (b) rule 3 enabled via the config flag but zero solvers configured (nothing to fall back to). Operator queries for "every unroutable event" can filter `WHERE fallback_to_all_solvers = false` confidently. The raw config flag for interactive debugging is carried by the paired `phase4_unroutable` ERROR log line's `config_fallback_to_all_solvers` field. |
 
 ## `escalation_dispatch_parse_failed`
 

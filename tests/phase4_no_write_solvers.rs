@@ -303,6 +303,71 @@ async fn zero_write_solvers_fallback_on_broadcasts_to_everyone() {
 }
 
 #[tokio::test]
+async fn fallback_on_with_zero_solvers_writes_contract_compliant_unroutable() {
+    // Edge case the router collapses onto Unroutable even though
+    // `fallback_to_all_solvers = true`: there are zero solvers
+    // configured at all, so rule 3 has nothing to broadcast to. The
+    // audit payload's `fallback_to_all_solvers` field encodes
+    // "rule 3 fired?" (per contracts/audit-events.md), not the raw
+    // config flag — so the field MUST land as `false` even with
+    // fallback on, otherwise operator dashboards that filter
+    // `WHERE fallback_to_all_solvers = false` to pull every
+    // unroutable event would miss this one. Without the derived-
+    // value fix, the writer used to leak the raw config flag into
+    // the payload and write `true` in this shape, violating the
+    // contract.
+    let harness = TestHarness::new().await;
+    let conn = fresh_conn().await;
+    let client = publisher(&harness.relay_url, harness.serbero_keys.clone()).await;
+    // The defining knob: zero configured solvers at all.
+    let solvers: Vec<SolverConfig> = Vec::new();
+
+    let pkg = sample_package("d-unr-empty-fb-on");
+    let handoff_id = seed_dispute_and_handoff(&conn, "d-unr-empty-fb-on", &pkg).await;
+
+    escalation::run_once(
+        &conn,
+        &client,
+        &harness.serbero_keys,
+        &solvers,
+        &sample_cfg(true), // fallback ON
+    )
+    .await
+    .unwrap();
+
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert_eq!(
+        count(&conn, "SELECT COUNT(*) FROM escalation_dispatches").await,
+        0,
+        "no dispatch row when there is nobody to dispatch to, fallback flag notwithstanding"
+    );
+
+    let (hid, csc, fallback): (i64, i64, bool) = {
+        let c = conn.lock().await;
+        c.query_row(
+            "SELECT json_extract(payload_json, '$.handoff_event_id'),
+                    json_extract(payload_json, '$.configured_solver_count'),
+                    json_extract(payload_json, '$.fallback_to_all_solvers')
+             FROM mediation_events WHERE kind = 'escalation_dispatch_unroutable'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .unwrap()
+    };
+    assert_eq!(hid, handoff_id);
+    assert_eq!(
+        csc, 0,
+        "configured_solver_count mirrors solvers.len() — zero configured here"
+    );
+    assert!(
+        !fallback,
+        "contracts/audit-events.md pins fallback_to_all_solvers to false on every unroutable \
+         row — rule 3 did not fire (there was nothing to fall back to), so the semantic value \
+         is `false` regardless of the raw [escalation].fallback_to_all_solvers config flag"
+    );
+}
+
+#[tokio::test]
 async fn unroutable_handoff_picked_up_after_config_change() {
     // FR-213 re-pickability end-to-end. Cycle 1 runs with only a
     // Read solver + fallback off → unroutable audit row, zero
