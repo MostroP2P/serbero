@@ -210,17 +210,14 @@ async fn process_one(
         }
     };
 
-    if pubkeys.is_empty() {
-        // Fallback-on + zero configured solvers. Treat as a no-op
-        // send; nothing to record at the dispatch-tracking level
-        // (no recipients, so AllFailed would be misleading).
-        warn!(
-            dispute_id = %pkg.dispute_id,
-            handoff_event_id = handoff.handoff_event_id,
-            "phase4_dispatch: fallback broadcast list is empty (zero solvers configured); skipping"
-        );
-        return;
-    }
+    // `pubkeys` is always non-empty here: the router collapses
+    // the "fallback-on + zero configured solvers" edge case to
+    // `Recipients::Unroutable` so the handler above is the only
+    // code path for "can't route", and the two Broadcast arms
+    // (normal write-set and via_fallback) both require at least
+    // one entry. A future router change MUST preserve that
+    // invariant — a bare `debug_assert!` would be appropriate if
+    // this becomes a concern.
 
     // (4) Build the DM body.
     let body = build_dm_body(&pkg);

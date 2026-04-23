@@ -77,14 +77,19 @@ pub fn resolve_recipients(
     }
 
     // Rules 3/4: no write solvers configured.
-    if fallback_to_all {
+    //
+    // `fallback_to_all = true` only produces a real broadcast when
+    // the operator actually configured at least one solver (of any
+    // permission). "Fallback on + zero solvers" is structurally
+    // identical to "no solver at all" — there is nothing to
+    // broadcast to — and collapses to `Unroutable` so the
+    // dispatcher runs exactly one code path for every "can't
+    // route" shape. The alternative (returning `Broadcast { [],
+    // via_fallback: true }`) would bypass the Unroutable audit
+    // handler and re-log every cycle without ever marking the
+    // handoff consumed.
+    if fallback_to_all && !solvers.is_empty() {
         let all_pubkeys: Vec<String> = solvers.iter().map(|s| s.pubkey.clone()).collect();
-        // Even an all-empty config lands here; the dispatcher
-        // treats an empty broadcast list as a send-skip with
-        // zero per-recipient notification rows. An operator who
-        // explicitly set fallback_to_all_solvers = true AND
-        // configured zero solvers gets what they asked for
-        // (nothing) with no extra logging noise at this layer.
         return Recipients::Broadcast {
             pubkeys: all_pubkeys,
             via_fallback: true,
@@ -199,19 +204,18 @@ mod tests {
     }
 
     #[test]
-    fn zero_configured_solvers_with_fallback_on_broadcasts_empty_set() {
-        // An operator who opts into `fallback_to_all_solvers = true`
-        // with zero solvers configured gets an explicit empty
-        // broadcast — the dispatcher treats this as a no-op send
-        // with `via_fallback = true` so the audit trail preserves
-        // the operator intent.
+    fn zero_configured_solvers_with_fallback_on_is_unroutable() {
+        // Fallback-on with zero solvers is structurally identical
+        // to "no one configured" — there is nothing to broadcast
+        // to, so the router collapses it to `Unroutable` and the
+        // dispatcher funnels it through the single can't-route
+        // handler (ERROR log + future T023 audit-row writer).
+        // The earlier implementation returned
+        // `Broadcast { pubkeys: [], via_fallback: true }`, which
+        // bypassed the Unroutable handler AND left the handoff
+        // unconsumed: every cycle re-scanned and re-logged with
+        // no operator-visible terminal state.
         let got = resolve_recipients(&[], None, true);
-        assert_eq!(
-            got,
-            Recipients::Broadcast {
-                pubkeys: Vec::new(),
-                via_fallback: true,
-            }
-        );
+        assert_eq!(got, Recipients::Unroutable);
     }
 }
