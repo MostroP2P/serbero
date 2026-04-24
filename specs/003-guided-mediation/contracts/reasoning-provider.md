@@ -198,4 +198,4 @@ silently falling through to the OpenAI adapter.
 - Streaming responses.
 - Function-calling beyond JSON mode for classification.
 
-These are Phase 5 territory.
+These are tracked as separate issues ([#38](https://github.com/MostroP2P/serbero/issues/38), [#39](https://github.com/MostroP2P/serbero/issues/39)) rather than a formal roadmap phase.
