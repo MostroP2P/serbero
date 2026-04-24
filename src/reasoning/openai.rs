@@ -527,9 +527,7 @@ pub(super) fn parse_classification(
 /// markers explicitly, rejects the inverted order, and slices by
 /// byte index so each section is derived from the canonical position
 /// of its marker.
-pub(super) fn parse_summary(
-    raw: &str,
-) -> std::result::Result<SummaryResponse, ReasoningError> {
+pub(super) fn parse_summary(raw: &str) -> std::result::Result<SummaryResponse, ReasoningError> {
     const NEXT_MARKER: &str = "SUGGESTED_NEXT_STEP:";
     const RATIONALE_MARKER: &str = "RATIONALE:";
 

@@ -45,13 +45,28 @@ use crate::models::ReasoningConfig;
 /// documented in https://docs.anthropic.com/en/api/messages.
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 
-/// Safe upper bound for `max_tokens` on classification and summary
-/// calls. The Messages API requires `max_tokens`; we pick a value
-/// large enough to cover verbose rationales and transcripts but small
-/// enough to bound cost if the model ever runs away. A classification
-/// JSON with all optional fields populated fits comfortably inside
-/// 1024 tokens; summaries are plain text and likewise fit.
-const DEFAULT_MAX_TOKENS: u32 = 2048;
+/// `max_tokens` for classification calls. The Messages API requires
+/// the field; 2048 is ample for the JSON contract (label, confidence,
+/// suggested_action, rationale, flags, and the two per-party
+/// clarification strings all fit well inside this ceiling) while
+/// bounding cost if the model ever runs away.
+const CLASSIFY_MAX_TOKENS: u32 = 2048;
+
+/// `max_tokens` for summary calls. Summaries are prose plus the
+/// `SUGGESTED_NEXT_STEP:` / `RATIONALE:` trailers, so they can run
+/// meaningfully longer than classification JSON before the parser
+/// sees the full output. 4096 keeps the cost ceiling reasonable
+/// while preventing silent `stop_reason="max_tokens"` truncation of
+/// longer dispute summaries.
+const SUMMARY_MAX_TOKENS: u32 = 4096;
+
+/// `max_tokens` for the health-check probe. Large enough that the
+/// model always emits at least one `text` block (max_tokens=1 with
+/// `stop_reason="max_tokens"` can produce an empty text block in
+/// edge cases, which would spuriously trigger MalformedResponse and
+/// fail startup for a live endpoint). Still cheap — eight tokens
+/// is a fraction of a cent per probe.
+const HEALTH_CHECK_MAX_TOKENS: u32 = 8;
 
 /// Anthropic (Claude) reasoning adapter.
 ///
@@ -114,7 +129,13 @@ impl AnthropicProvider {
 struct MessagesRequest<'a> {
     model: &'a str,
     max_tokens: u32,
-    system: &'a str,
+    /// Anthropic treats `system` as optional at the top level. Use
+    /// `None` (which serializes as "omit the key entirely") for the
+    /// health-check probe; reasoning calls always pass the bundle's
+    /// non-empty system prompt so the `policy_hash` invariant
+    /// (SC-103) holds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    system: Option<&'a str>,
     messages: Vec<MessageInput<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     temperature: Option<f64>,
@@ -154,8 +175,8 @@ impl ReasoningProvider for AnthropicProvider {
         let prompt = build_classification_prompt(&request);
         let body = MessagesRequest {
             model: &self.model,
-            max_tokens: DEFAULT_MAX_TOKENS,
-            system: &system,
+            max_tokens: CLASSIFY_MAX_TOKENS,
+            system: Some(&system),
             messages: vec![MessageInput {
                 role: "user",
                 content: &prompt,
@@ -174,8 +195,8 @@ impl ReasoningProvider for AnthropicProvider {
         let prompt = build_summary_prompt(&request);
         let body = MessagesRequest {
             model: &self.model,
-            max_tokens: DEFAULT_MAX_TOKENS,
-            system: &system,
+            max_tokens: SUMMARY_MAX_TOKENS,
+            system: Some(&system),
             messages: vec![MessageInput {
                 role: "user",
                 content: &prompt,
@@ -188,13 +209,16 @@ impl ReasoningProvider for AnthropicProvider {
 
     async fn health_check(&self) -> std::result::Result<(), ReasoningError> {
         // Minimal-cost reachability probe. Anthropic rejects empty
-        // `messages`, so we send a single one-byte user turn and cap
-        // output at one token. A 401 from an invalid key surfaces as
-        // `Unreachable` via `post_messages`'s status handling.
+        // `messages`, so we send a single short user turn and cap
+        // output at `HEALTH_CHECK_MAX_TOKENS` (8). No `system` is
+        // needed for a ping; omitting the key entirely is cheaper
+        // and matches Anthropic's "optional system" convention. A
+        // 401 from an invalid key surfaces as `Unreachable` via
+        // `post_messages`'s status handling.
         let body = MessagesRequest {
             model: &self.model,
-            max_tokens: 1,
-            system: "",
+            max_tokens: HEALTH_CHECK_MAX_TOKENS,
+            system: None,
             messages: vec![MessageInput {
                 role: "user",
                 content: "ping",
@@ -315,9 +339,8 @@ impl AnthropicProvider {
             );
             return Ok(content);
         }
-        Err(last_err.unwrap_or_else(|| {
-            ReasoningError::Unreachable("anthropic: exhausted retries".into())
-        }))
+        Err(last_err
+            .unwrap_or_else(|| ReasoningError::Unreachable("anthropic: exhausted retries".into())))
     }
 }
 

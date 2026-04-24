@@ -163,7 +163,14 @@ async fn classify_parses_mocked_anthropic_response() {
                 .path("/v1/messages")
                 .header("anthropic-version", "2023-06-01")
                 .header_exists("x-api-key")
-                .body_contains("\"system\"")
+                // Assert on the bundle's system marker rather than
+                // the literal key `"system"` — since the struct
+                // serializes `system: Some(...)` the key is always
+                // present, so checking for the key alone would be a
+                // no-op. Checking for the marker proves the adapter
+                // actually forwards the bundle's system text to the
+                // top-level `system` field (SC-103).
+                .body_contains("SYSTEM_MARKER: respond with JSON only")
                 .body_contains("claude-3-5-sonnet-20241022");
             then.status(200)
                 .header("content-type", "application/json")
@@ -285,7 +292,10 @@ async fn classify_rejects_non_json_text_content() {
         ..ReasoningConfig::default()
     };
     let provider = AnthropicProvider::new(&cfg).unwrap();
-    let err = provider.classify(classification_request()).await.unwrap_err();
+    let err = provider
+        .classify(classification_request())
+        .await
+        .unwrap_err();
     assert!(
         matches!(err, ReasoningError::MalformedResponse(_)),
         "non-JSON prose must surface as MalformedResponse, got {err:?}"
