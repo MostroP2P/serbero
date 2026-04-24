@@ -111,6 +111,29 @@ followup_retry_count = 1
 # environment variable the daemon reads at startup — the secret is
 # never stored in this TOML.
 
+# --- PPQ.ai (OpenAI-compatible) example — issue #39 ---
+# PPQ.ai aggregates many upstream models behind a single
+# OpenAI-compatible `/chat/completions` endpoint. Validated against
+# the wire-format documented at https://ppq.ai/api-docs — the
+# existing `openai-compatible` adapter handles it end-to-end with
+# no code changes. To use PPQ.ai, replace the [reasoning] block
+# above with:
+#
+#   [reasoning]
+#   enabled = true
+#   provider = "openai-compatible"
+#   api_base = "https://api.ppq.ai"
+#   api_key_env = "PPQ_API_KEY"
+#   model = "ppq/autoclaw"
+#   request_timeout_seconds = 30
+#   followup_retry_count = 1
+#
+# `api_base` is the bare host (no `/v1` suffix) — the adapter
+# appends `/chat/completions` directly, which matches PPQ.ai's
+# published path. Any model name the aggregator routes works
+# (e.g. `ppq/autoclaw`, `google/gemini-2.5-flash`,
+# `claude-sonnet-4.6`); set `model` accordingly.
+
 [prompts]
 # Default prompt bundle paths shipped in this repository.
 system_instructions_path = "./prompts/phase3-system.md"
