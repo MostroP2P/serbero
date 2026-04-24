@@ -71,10 +71,15 @@ solver_auth_retry_max_attempts = 24
 [reasoning]
 enabled = false
 
-# Phase 3 currently ships the OpenAI-compatible adapter.
+# Supported providers:
+#   "openai"            — hosted OpenAI or any OpenAI-compatible endpoint
+#                         (vLLM, llama.cpp, Ollama, LiteLLM, router proxies)
+#   "openai-compatible" — documented alias for the above
+#   "anthropic"         — native Anthropic Messages API (issue #38);
+#                         no LiteLLM proxy needed for Claude models
 provider = "openai"
 
-# Any model accepted by the configured OpenAI-compatible endpoint.
+# Any model accepted by the configured endpoint.
 model = "gpt-5"
 
 # Hosted OpenAI example. Replace with any OpenAI-compatible endpoint if needed.
@@ -88,6 +93,23 @@ api_key_env = "SERBERO_REASONING_API_KEY"
 # Per-request timeout and bounded retry budget.
 request_timeout_seconds = 30
 followup_retry_count = 1
+
+# --- Native Anthropic (Claude) example ---
+# To use Claude directly (no LiteLLM proxy), replace the block above with:
+#
+#   [reasoning]
+#   enabled = true
+#   provider = "anthropic"
+#   api_base = "https://api.anthropic.com"
+#   api_key_env = "ANTHROPIC_API_KEY"
+#   model = "claude-3-5-sonnet-20241022"
+#   request_timeout_seconds = 30
+#   followup_retry_count = 1
+#
+# The adapter appends `/v1/messages` to `api_base` and sends
+# `x-api-key` + `anthropic-version` headers. `api_key_env` names the
+# environment variable the daemon reads at startup — the secret is
+# never stored in this TOML.
 
 [prompts]
 # Default prompt bundle paths shipped in this repository.

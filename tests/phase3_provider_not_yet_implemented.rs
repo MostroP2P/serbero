@@ -1,10 +1,13 @@
 //! US5 — NYI provider guard (T076).
 //!
 //! Providers declared at the Phase 3 boundary but not yet shipped
-//! (`anthropic`, `ppqai`, `openclaw`) MUST fail loudly at the first
-//! call site with an actionable error that (a) names the requested
-//! provider, (b) names a currently shipped provider, and (c) tells
-//! the operator this is tracked as future work.
+//! (`ppqai`, `openclaw`) MUST fail loudly at the first call site
+//! with an actionable error that (a) names the requested provider,
+//! (b) names a currently shipped provider, and (c) tells the
+//! operator this is tracked as future work.
+//!
+//! (Issue #38 promoted `anthropic` to a shipped adapter, so it was
+//! removed from this list.)
 //!
 //! They MUST NOT silently coerce to the OpenAI adapter, and the
 //! `daemon::phase3_bring_up` branch returns `None` when the health
@@ -30,7 +33,7 @@ async fn nyi_provider_fails_startup_health_check_with_actionable_error() {
     // its health-check branch. If this returns Err, the bring-up
     // returns None, no engine task is spawned, and no
     // `mediation_sessions` row is ever created (proven below).
-    for name in ["anthropic", "ppqai", "openclaw"] {
+    for name in ["ppqai", "openclaw"] {
         let cfg = ReasoningConfig {
             provider: name.into(),
             ..ReasoningConfig::default()
@@ -97,9 +100,11 @@ impl<T, E> UnwrapErrOrPanic<E> for std::result::Result<T, E> {
 #[tokio::test]
 async fn fresh_migrated_db_has_zero_mediation_sessions_after_nyi_health_failure() {
     // (a) Reproduce the exact health-check failure that
-    //     `phase3_bring_up` would observe.
+    //     `phase3_bring_up` would observe. Any still-NYI provider
+    //     exercises the same branch; `ppqai` is used here since
+    //     `anthropic` became a shipped adapter in issue #38.
     let cfg = ReasoningConfig {
-        provider: "anthropic".into(),
+        provider: "ppqai".into(),
         ..ReasoningConfig::default()
     };
     let provider = build_provider(&cfg).unwrap();

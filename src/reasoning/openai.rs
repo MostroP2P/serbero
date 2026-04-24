@@ -334,7 +334,7 @@ impl OpenAiProvider {
     }
 }
 
-fn build_classification_prompt(r: &ClassificationRequest) -> String {
+pub(super) fn build_classification_prompt(r: &ClassificationRequest) -> String {
     // Embed every policy section from the bundle so the model sees
     // the exact bytes the session's `policy_hash` pins. An auditor
     // can later grep the git-committed bundle for this hash and
@@ -390,7 +390,7 @@ fn build_classification_prompt(r: &ClassificationRequest) -> String {
     )
 }
 
-fn build_summary_prompt(r: &SummaryRequest) -> String {
+pub(super) fn build_summary_prompt(r: &SummaryRequest) -> String {
     // As in the classification path, every relevant bundle section
     // flows into the user prompt so the policy_hash pin is honest.
     let transcript = r
@@ -428,7 +428,9 @@ fn build_summary_prompt(r: &SummaryRequest) -> String {
     )
 }
 
-fn parse_classification(raw: &str) -> std::result::Result<ClassificationResponse, ReasoningError> {
+pub(super) fn parse_classification(
+    raw: &str,
+) -> std::result::Result<ClassificationResponse, ReasoningError> {
     let parsed: ClassificationJson = serde_json::from_str(raw).map_err(|e| {
         ReasoningError::MalformedResponse(format!("{e}: body={}", truncate(raw, 200)))
     })?;
@@ -525,7 +527,7 @@ fn parse_classification(raw: &str) -> std::result::Result<ClassificationResponse
 /// markers explicitly, rejects the inverted order, and slices by
 /// byte index so each section is derived from the canonical position
 /// of its marker.
-fn parse_summary(raw: &str) -> std::result::Result<SummaryResponse, ReasoningError> {
+pub(super) fn parse_summary(raw: &str) -> std::result::Result<SummaryResponse, ReasoningError> {
     const NEXT_MARKER: &str = "SUGGESTED_NEXT_STEP:";
     const RATIONALE_MARKER: &str = "RATIONALE:";
 
@@ -578,7 +580,7 @@ fn parse_summary(raw: &str) -> std::result::Result<SummaryResponse, ReasoningErr
 /// UTF-8-safe truncate: returns a prefix of `s` that ends on a char
 /// boundary and contains at most `n` bytes. Plain byte slicing would
 /// panic on multi-byte characters.
-fn truncate(s: &str, n: usize) -> &str {
+pub(super) fn truncate(s: &str, n: usize) -> &str {
     if s.len() <= n {
         return s;
     }
