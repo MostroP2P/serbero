@@ -723,7 +723,7 @@ second outbound within one ingest-tick cycle of Bob's reply.
 - **Foundational (Phase 2)**: Depends on Setup completion — BLOCKS all user stories.
 - **User Story 1 (Phase 3)**: Depends on Foundational — standalone Phase 3 MVP.
 - **User Story 2 (Phase 4)**: Depends on US1 (session open, outbound path, prompt pinning, DB helpers).
-- **User Story 3 (Phase 5)**: Depends on US1 + US2 (needs a session with inbound ingest before summarizing).
+- **User Story 3**: Depends on US1 + US2 (needs a session with inbound ingest before summarizing).
 - **User Story 4 (Phase 6)**: Depends on US1 at minimum; several triggers need US2 (round counter, timeout) and the reasoning adapter (T066). Can be developed in parallel with US3 once US1+US2 land.
 - **User Story 5 (Phase 7)**: Depends on US1 for end-to-end testability; can be developed in parallel with US3/US4 once the OpenAI adapter (T015) exists.
 - **Polish (Phase 8)**: Depends on all shipped user stories being complete.
@@ -800,7 +800,7 @@ Task: "Inline unit tests in src/db/mediation.rs"
 ### Out of Scope for This Tasks File
 
 - Phase 4 escalation execution (routing to write-permission solvers, acknowledgement tracking, re-escalation under load). This tasks file *prepares* the handoff; Phase 4 *consumes* it.
-- Phase 5 reasoning-backend portability beyond the `openai` / `openai-compatible` endpoint (Anthropic, PPQ.ai, OpenClaw adapters).
+- Additional reasoning adapters beyond `openai` / `openai-compatible` (tracked in [#38](https://github.com/MostroP2P/serbero/issues/38), [#39](https://github.com/MostroP2P/serbero/issues/39)).
 - Multi-instance Serbero coordination.
 - Replacing the Phase 1/2 notifier. Solver-facing DMs continue to use it unchanged.
 

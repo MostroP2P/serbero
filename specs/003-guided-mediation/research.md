@@ -138,14 +138,14 @@ shipping four adapters.
   providers including PPQ.ai) requires only `api_base` + env var
   changes — no code.
 - A small adapter trait is cheaper than a full provider plugin
-  framework and can grow naturally in Phase 5 without rewrites.
+  framework and can grow naturally with additional adapters without rewrites.
 
 **Alternatives considered**:
 
 - Hardcoding OpenAI in `mediation/` call sites: rejected, violates
   principle X and locks in a vendor.
 - A trait crate separate from `serbero`: rejected for Phase 3, too
-  much overhead for one adapter. Revisit in Phase 5 if multiple
+  much overhead for one adapter. Revisit if multiple
   adapters actually ship.
 - JSON-shaped config for arbitrary HTTP endpoints: rejected — not
   every provider tolerates the same request shape, and Phase 3 needs

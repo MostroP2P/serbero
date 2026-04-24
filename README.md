@@ -16,8 +16,7 @@ Serbero helps operators and users handle disputes more quickly, more consistentl
 - [What It Does Not Do](#what-it-does-not-do)
 - [Architecture](#architecture)
 - [Implementation Status](#implementation-status)
-- [Install from Release](#install-from-release)
-- [Build from Source](#build-from-source)
+- [Quickstart](#quickstart)
 - [Configuration Reference](#configuration-reference)
 - [How Serbero Behaves at Runtime](#how-serbero-behaves-at-runtime)
 - [Notification Format](#notification-format)
@@ -28,7 +27,6 @@ Serbero helps operators and users handle disputes more quickly, more consistentl
 - [Technical Constraints](#technical-constraints)
 - [Project Principles](#project-principles)
 - [Roadmap](#roadmap)
-- [Release a New Version](#release-a-new-version)
 - [License](#license)
 
 ---
@@ -91,36 +89,28 @@ Mostro operates normally with or without Serbero. If Serbero is offline, operato
 
 ## Implementation Status
 
-Serbero evolves in five phases. `main` currently implements
-**Phases 1, 2, 3, and 4** end-to-end. Phase 3 ships the full
-guided-mediation engine (take-flow, clarifying messages, inbound
-ingest, classification, summary delivery, escalation routing);
-Phase 4 ships the escalation execution surface that consumes
-those handoff packages and dispatches structured DMs to write-
-permission solvers.
+Serbero evolves in four phases. `main` currently implements
+**Phases 1, 2, and 3** end-to-end. Phase 3 ships the full guided-
+mediation engine: take-flow, clarifying messages, inbound ingest,
+classification, summary delivery, and escalation routing.
 
 | Phase | Scope                                                        | Status on `main`                                                                                  |
 |-------|--------------------------------------------------------------|---------------------------------------------------------------------------------------------------|
 | 1     | Always-on dispute listener and solver notification           | **Implemented**                                                                                   |
 | 2     | Intake tracking, assignment visibility, re-notification      | **Implemented**                                                                                   |
 | 3     | Guided mediation for low-risk disputes                       | **Implemented** (88 / 88 tasks): US1–US5 + foundational + polish all closed                       |
-| 4     | Escalation execution for write-permission operators          | **Implemented** (34 / 34 tasks): US1 dispatch pipeline, US2 supersession, US3 unroutable, FR-214 parse-failed handlers, all closed |
-| 5     | Optional reasoning backend                                   | OpenAI-compatible adapter shipped (covers hosted OpenAI, vLLM, llama.cpp, Ollama, LiteLLM, etc.); other vendor adapters are future work |
+| 4     | Escalation support for write-permission operators            | Planned (Phase 3 prepares the handoff package; Phase 4 will execute it)                           |
+| —     | Additional reasoning adapters (Anthropic, PPQ.ai)            | Tracked as separate issues: [#38](https://github.com/MostroP2P/serbero/issues/38), [#39](https://github.com/MostroP2P/serbero/issues/39) |
 
 ### What Phase 3 ships
 
 Setting `[mediation].enabled = true` and `[reasoning].enabled = true`
 spawns the mediation engine task. On every tick it:
 
-- **Opens sessions** for new disputes that pass the mediation-
-  eligibility gate. The reasoning provider classifies the dispute
-  first; only if the verdict is positive does Serbero issue
-  `TakeDispute` and commit a session row (FR-122 / SC-110). The
-  first clarifying message is dispatched to each party's **shared
-  (per-trade) pubkey** — never their primary pubkey. If the
-  reasoning verdict is negative (e.g. suspected fraud), no take is
-  issued and the dispute is escalated with a dispute-scoped handoff
-  to all configured solvers.
+- **Opens sessions** (`open_dispute_session`) for new disputes that
+  pass the mediation-eligibility gate, executes the dispute-chat
+  take-flow, and dispatches the first clarifying message to each
+  party's **shared (per-trade) pubkey** — never their primary pubkey.
 - **Ingests inbound replies** (`fetch_inbound` + `ingest_inbound`)
   with author authentication, dedup by `(session_id,
   inner_event_id)`, transcript recomputation, and per-party last-seen
@@ -172,61 +162,14 @@ Phase 3 specification:
 
 ---
 
-## Install from Release
+## Quickstart
 
-The fastest way to get Serbero is to download a pre-built binary.
+### Prerequisites
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/MostroP2P/serbero/main/install.sh | sh
-```
-
-The install script detects your OS and architecture, downloads the latest release, verifies the SHA-256 checksum of your specific asset (not with `--ignore-missing`, so a malformed release fails loudly), and installs the binary.
-
-**Install location:** `/usr/local/bin` when that directory is writable by the running user, or when the script is running as root; otherwise `~/.local/bin` (created if missing). If the chosen directory is not already on your `PATH`, the installer prints the exact `export PATH="..."` line to add to your shell profile. Set `SERBERO_INSTALL_DIR` before running to pick a different location.
-
-**Installer requirements:** a POSIX shell (`sh`, `dash`, `bash` all work) plus `curl` or `wget`. No `jq`, no Python, no other runtimes. Checksum verification additionally needs `sha256sum` (Linux, GNU coreutils) or `shasum -a 256` (macOS). If neither is present the installer prints a warning and continues without verifying.
-
-**Runtime requirements for the binary:** none — not even Rust. The release binary is statically linked against musl (Linux) or the platform's system libraries (macOS / Windows) and is fully self-contained.
-
-**Before you run it**, you will still need to have ready:
-
-- A **hex-encoded** Nostr key pair for Serbero. You can generate one with [rana](https://github.com/grunch/rana) or any Nostr key tool; Bech32 keys (`nsec...`, `npub...`) must be converted to hex. The public key of this pair is the identity Serbero uses on Nostr — register it as a solver on the target Mostro instance before enabling Phase 3 (see [Enable Phase 3](#enable-phase-3-guided-mediation)).
-- The **hex-encoded** public key of the Mostro instance you want to monitor, plus hex public keys for every solver you want to notify.
-- At least one Nostr relay URL that carries Mostro dispute events.
-
-After installing, fetch the sample config and edit it. The binary-only install does not pull repository files, so download the sample directly from the repo:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/MostroP2P/serbero/main/config.sample.toml -o config.toml
-# Edit config.toml with your keys, relays, and solvers
-serbero
-```
-
-If you cloned the repository (e.g. for Build from Source below), `cp config.sample.toml config.toml` works too — the file is checked in at the repo root.
-
-### Manual download
-
-If you prefer not to pipe to `sh`, download the binary for your platform from the [Releases](https://github.com/MostroP2P/serbero/releases) page, verify the checksum against `checksums.sha256`, make it executable, and place it somewhere on your `PATH`.
-
-### Available platforms
-
-| Platform            | Binary name                  |
-|---------------------|------------------------------|
-| Linux x86_64        | `serbero-linux-x86_64`       |
-| Linux ARM64         | `serbero-linux-arm64`        |
-| macOS Intel         | `serbero-macos-x86_64`       |
-| macOS Apple Silicon | `serbero-macos-arm64`        |
-| Windows x64         | `serbero-windows-x86_64.exe` |
-
----
-
-## Build from Source
-
-If you prefer to compile Serbero yourself (e.g. for development, debugging, or running an unreleased commit):
-
-### Prerequisites (for building from source)
-
-- **Rust toolchain**, stable, edition 2021. Install via [rustup](https://rustup.rs/). Only needed if you compile from source. Users who install the pre-built binary do not need Rust.
+- **Rust toolchain**, stable, edition 2021. Install via [`rustup`](https://rustup.rs/).
+- Access to at least one Nostr relay that carries Mostro's dispute events.
+- A **hex-encoded** Nostr key pair for Serbero. If you hold your keys in Bech32 form (`nsec...`, `npub...`), convert them to hex before placing them in the config.
+- **Hex-encoded** Nostr public keys for the Mostro instance you monitor and for every solver you want to notify.
 
 ### Build
 
@@ -238,7 +181,7 @@ The binary is produced at `./target/release/serbero`.
 
 ### Configure
 
-Create `config.toml` in the working directory. A reference template is provided at [`config.sample.toml`](config.sample.toml) — copy it and fill in your values (see [Configuration Reference](#configuration-reference) for the full surface):
+Create `config.toml` in the working directory (see [Configuration Reference](#configuration-reference) for the full surface):
 
 ```toml
 [serbero]
@@ -268,7 +211,7 @@ renotification_seconds                = 300   # re-notify disputes unattended th
 renotification_check_interval_seconds = 60    # how often to scan for unattended disputes
 ```
 
-**About the `permission` field:** Phase 1 and Phase 2 notify **every** configured solver regardless of this value. Phase 4 (escalation execution) routes on it: when a Phase 3 session produces a `handoff_prepared` event, the structured `escalation_handoff/v1` DM goes to `write` solvers. `read` solvers are only targeted as a fallback and only when `[escalation].fallback_to_all_solvers = true` (see FR-202 in `specs/004-escalation-execution/spec.md` for the full recipient rule table). Setting the correct permission on every `[[solvers]]` entry is load-bearing.
+**About the `permission` field:** Phase 1 and Phase 2 notify **every** configured solver regardless of this value. Permission is parsed, stored, and surfaced to later phases — Phase 4 (escalation routing) will target write-permission solvers specifically. Setting it today is future-proofing, not gating.
 
 ### Run
 
@@ -310,7 +253,7 @@ Shut down with `Ctrl-C` (SIGINT). On Unix hosts Serbero also catches SIGTERM (so
 
 Phase 3 layers on top of Phases 1 and 2. To enable it:
 
-1. **Register Serbero as a solver** on the target Mostro instance with at least `read` permission. Serbero's public key is derived from the `private_key` field in `[serbero]` — you can obtain it with any Nostr key tool (e.g. `nak key public <hex-secret-key>`). In **Mostrix**, go to **Settings → Solvers**, paste the hex pubkey, and select `read` permission. Serbero never holds fund-moving credentials.
+1. **Register Serbero as a solver** on the target Mostro instance (operator action — at least `read` permission). Serbero never holds fund-moving credentials.
 2. **Provision a reasoning endpoint** (any OpenAI-compatible HTTPS endpoint: hosted OpenAI, self-hosted vLLM / llama.cpp / Ollama, LiteLLM, or any router proxy exposing `/chat/completions`).
 3. **Export the API key** under the env-var name configured in `[reasoning].api_key_env` (default: `SERBERO_REASONING_API_KEY`):
 
@@ -372,7 +315,7 @@ For the full operator walkthrough see [`specs/003-guided-mediation/quickstart.md
 | `[mostro]`       | `pubkey`                                   | string   | ✓        | Hex-encoded public key of the Mostro instance to monitor.                                   |
 | `[[relays]]`     | `url`                                      | string   | ≥ 1      | One or more `wss://…` relay URLs. Serbero connects to all of them.                          |
 | `[[solvers]]`    | `pubkey`                                   | string   |          | Hex-encoded solver public key.                                                              |
-| `[[solvers]]`    | `permission`                               | string   |          | `"read"` or `"write"`. Not used for filtering in Phases 1–2; Phase 4 routes structured escalation DMs to `write` solvers per FR-202. |
+| `[[solvers]]`    | `permission`                               | string   |          | `"read"` or `"write"`. Not used for filtering in Phases 1–2; reserved for Phase 4 routing.  |
 | `[timeouts]`     | `renotification_seconds`                   | integer  |          | Defaults to `300`. Disputes in `notified` state older than this are re-notified.            |
 | `[timeouts]`     | `renotification_check_interval_seconds`    | integer  |          | Defaults to `60`. How often the re-notification timer scans the DB.                         |
 
@@ -581,35 +524,7 @@ Mediation session <session_id> (dispute <dispute_id>) escalated —
 trigger: <snake_case_trigger>. Needs human judgment.
 ```
 
-The compact body keeps DMs readable across Nostr clients; the full handoff package (evidence refs, rationale refs, prompt bundle id, policy hash, assembled-at timestamp) lives alongside in `mediation_events` as a `handoff_prepared` row, which Phase 4 consumes to dispatch a structured `escalation_handoff/v1` DM to the write-permission solver.
-
-### Dispute-scoped escalation (FR-122, pre-take)
-
-`notif_type='mediation_escalation_recommended'`, broadcast to **all** configured solvers (no session was opened, so there is no assigned solver):
-
-```text
-Dispute <dispute_id> escalated before mediation take —
-trigger: <snake_case_trigger>. Serbero ran the reasoning verdict and
-the policy layer said this dispute is not a mediation candidate.
-No session was opened. Needs human judgment.
-```
-
-This fires when the reasoning verdict at session-open time is negative (e.g. `suspected_fraud` or `not_suitable_for_mediation`). No `TakeDispute` is issued and no `mediation_sessions` row is committed (SC-110).
-
-### Final resolution report (FR-124)
-
-`notif_type='mediation_resolution_report'`, broadcast to all configured solvers:
-
-```text
-Final resolution report for dispute <dispute_id>.
-resolution: <settled|cancelled|...>
-escalation_count: <N>
-rounds: <N>
-duration_seconds: <N>
-handoff: <true|false>
-```
-
-Emitted once when a dispute that had any Phase 3 mediation context (session rows, dispute-scoped handoff events, or mediation messages) transitions to a resolved terminal state. Idempotent: duplicate `dispute_resolved` events do not trigger additional reports. Contains no rationale text (FR-120).
+The compact body keeps DMs readable across Nostr clients; the full handoff package (evidence refs, rationale refs, prompt bundle id, policy hash, assembled-at timestamp) lives alongside in `mediation_events` as a `handoff_prepared` row for Phase 4 to consume.
 
 Notifications **never include** the initiator's primary pubkey — only their trade role (buyer / seller). Outbound mediation gift wraps address parties' **shared (per-trade) pubkeys**, never their primary pubkeys (SC-107). This matches the privacy clarification in `spec.md` Session 2026-04-16.
 
@@ -625,11 +540,6 @@ Serbero emits structured `tracing` spans and events at every decision point:
 - `assignment_detected` (with `assigned_solver`)
 - `assignment_notification_sent` / `assignment_notification_failed`
 - `renotification_tick` (with `count`)
-- `start_attempt_started` / `start_attempt_stopped` (with `trigger`, `stop_reason`)
-- `reasoning_verdict` / `reasoning_verdict_negative`
-- `take_dispute_issued` (with `outcome: success|failure`)
-- `solver_dispute_escalation_notified` (FR-122 dispute-scoped handoff)
-- `solver_final_resolution_report_sent` (FR-124)
 
 Use `SERBERO_LOG` to tune the filter:
 
@@ -767,14 +677,9 @@ Combined with the constitutional invariant that Serbero holds no credentials for
 │   │   ├── mod.rs                       # run_engine, draft_and_send_initial_message,
 │   │   │                                # deliver_summary, notify_solvers_escalation,
 │   │   │                                # startup_resume_pass
-│   │   ├── session.rs                   # open_session + auth gate
-│   │   ├── start.rs                     # try_start_for: unified entry for event-driven + tick
+│   │   ├── session.rs                   # open_dispute_session + auth gate
 │   │   ├── auth_retry.rs                # bounded solver-auth revalidation
 │   │   ├── policy.rs                    # classification → action decision
-│   │   ├── eligibility.rs               # composed eligibility predicate (FR-123)
-│   │   ├── follow_up.rs                 # mid-session ingest + classify loop
-│   │   ├── transcript.rs                # transcript builder for reasoning calls
-│   │   ├── report.rs                    # FR-124 final solver-facing resolution report
 │   │   ├── summarizer.rs                # summarize + AUTHORITY_BOUNDARY_PHRASES
 │   │   ├── router.rs                    # targeted vs broadcast solver routing
 │   │   └── escalation.rs                # 12 triggers + handoff package
@@ -803,11 +708,7 @@ Combined with the constitutional invariant that Serbero holds no credentials for
 │   ├── phase3_response_ingest.rs        ├── phase3_escalation_triggers.rs
 │   ├── phase3_response_dedup_restart.rs ├── phase3_provider_swap.rs
 │   ├── phase3_stale_message.rs          ├── phase3_provider_not_yet_implemented.rs
-│   ├── phase3_routing_model.rs          ├── phase3_cooperative_summary.rs
-│   ├── phase3_event_driven_start.rs     ├── phase3_superseded_by_human.rs
-│   ├── phase3_take_reasoning_coupling.rs├── phase3_external_resolution_report.rs
-│   ├── phase3_followup_round.rs         ├── phase3_followup_summary.rs
-│   ├── phase3_followup_reasoning_failure.rs
+│   ├── phase3_routing_model.rs          └── phase3_cooperative_summary.rs
 │   └── fixtures/prompts/                # stable bundle for tests (untouched)
 └── specs/
     ├── 002-phased-dispute-coordination/ # Phase 1/2 spec + plan + tasks
@@ -818,9 +719,7 @@ Combined with the constitutional invariant that Serbero holds no credentials for
 
 ## Running the Test Suite
 
-> **Note:** Tests require the Rust toolchain. If you installed Serbero via the release binary and want to run tests, clone the repo and build from source.
-
-The crate ships **228 tests**: 179 inline `#[cfg(test)]` lib unit tests (covering parsers, policy decisions, audit-store invariants, migrations, prompt loading, …) plus 49 integration tests that spin up an in-process `nostr-relay-builder::MockRelay` (and, where relevant, an `httpmock` reasoning endpoint) and exercise the daemon end-to-end.
+The crate ships **155 tests**: 123 inline `#[cfg(test)]` lib unit tests (covering parsers, policy decisions, audit-store invariants, migrations, prompt loading, …) plus 32 integration tests that spin up an in-process `nostr-relay-builder::MockRelay` (and, where relevant, an `httpmock` reasoning endpoint) and exercise the daemon end-to-end.
 
 ```bash
 # Unit tests only (fast)
@@ -863,13 +762,6 @@ cargo build --release
 | `phase3_authority_boundary.rs`                  | Fund-moving / dispute-closing output suppressed; session escalates with `authority_boundary_attempt`               |
 | `phase3_escalation_triggers.rs`                 | All applicable triggers fire correctly: `conflicting_claims`, `fraud_indicator`, `low_confidence`, `party_unresponsive`, `round_limit`, `reasoning_unavailable`, `authorization_lost` |
 | `phase3_provider_swap.rs`                       | Two `OpenAiProvider`s pointing at distinct httpmock endpoints both work; `openai-compatible` routes to the same adapter (US5) |
-| `phase3_event_driven_start.rs`                  | SC-109: event-driven path opens session without the background tick running                                        |
-| `phase3_superseded_by_human.rs`                 | External resolution (human solver) closes session + fires FR-124 final report to all solvers                       |
-| `phase3_take_reasoning_coupling.rs`             | FR-122 / SC-110: negative reasoning verdict (fraud flag or model escalate) skips TakeDispute entirely              |
-| `phase3_external_resolution_report.rs`          | FR-124: final solver-facing report emitted for every dispute with Phase 3 context; idempotent on re-fire           |
-| `phase3_followup_round.rs`                      | SC-112: mid-session happy path — party replies trigger second outbound within one ingest tick                      |
-| `phase3_followup_summary.rs`                    | SC-114: mid-session summarize branch fires exactly once and closes session                                         |
-| `phase3_followup_reasoning_failure.rs`           | SC-115: three consecutive reasoning failures escalate with `reasoning_unavailable`                                 |
 | `phase3_provider_not_yet_implemented.rs`        | Unshipped vendor names (`anthropic`, `ppqai`, `openclaw`) fail loudly at startup with an actionable error          |
 
 ---
@@ -910,37 +802,8 @@ Serbero is governed by a [constitution](.specify/memory/constitution.md) that de
 - **Phase 1 — Detection + notification**: shipped.
 - **Phase 2 — Lifecycle + re-notification + assignment visibility**: shipped.
 - **Phase 3 — Guided Mediation** (low-risk coordination failures): shipped on `main`. Contacts dispute parties via gift wraps to their shared pubkeys, runs bounded clarifying rounds, classifies through a versioned prompt bundle + reasoning provider, and either delivers a cooperative summary to the assigned solver or escalates with a Phase 4 handoff package. Strict policy-layer validation suppresses any output that would cross Serbero's authority boundary.
-- **Phase 4 — Escalation Execution**: shipped on `main`. Consumes the `handoff_prepared` packages Phase 3 produces (evidence refs, rationale refs, prompt bundle id, policy hash) and dispatches them as structured `escalation_handoff/v1` DMs to write-permission solvers. FR-202 recipient routing (targeted → write-set broadcast → fallback-to-all → unroutable), FR-208 supersession when a dispute resolves before the dispatcher's send step, FR-211 send-failed status, and FR-214 parse-failed / orphan-dispute audit shapes are all live. Phase 4 deliberately does NOT track solver acks, retry, or re-escalate — Phase 1/2's existing re-notification loop covers follow-up. There is no dedicated operator UI: inspection lives in the `sqlite3` query recipes documented in `specs/004-escalation-execution/quickstart.md`.
-- **Phase 5 — Additional Reasoning Adapters**: the OpenAI-compatible adapter shipped in Phase 3 already covers hosted OpenAI, vLLM, llama.cpp, Ollama, LiteLLM, and any router proxy exposing `/chat/completions`. Vendor-specific adapters (Anthropic, PPQai, OpenClaw) are tracked as future work behind a `not_yet_implemented` guard that fails loudly at startup so operators get an actionable message rather than silent coercion.
-
----
-
-## Release a New Version
-
-Serbero uses [cargo-release](https://github.com/crate-ci/cargo-release) to automate versioning and tagging.
-
-```bash
-# Install cargo-release (once)
-cargo install cargo-release
-
-# Bump patch version (0.1.0 → 0.1.1), commit, tag, and push
-cargo release patch --execute
-
-# Or bump minor (0.1.0 → 0.2.0)
-cargo release minor --execute
-
-# Or bump major (0.1.0 → 1.0.0)
-cargo release major --execute
-```
-
-Pushing a tag `v*.*.*` triggers a [GitHub Actions workflow](.github/workflows/release.yml) that builds binaries for all supported platforms and publishes them to the [Releases](https://github.com/MostroP2P/serbero/releases) page. Tags containing `-rc` or `-beta` are marked as pre-releases automatically.
-
-You can also create a release manually with `git tag`:
-
-```bash
-git tag v0.1.0
-git push origin v0.1.0
-```
+- **Phase 4 — Escalation Execution**: planned. Phase 3 already prepares the `handoff_prepared` package (evidence refs, rationale refs, prompt bundle id, policy hash); Phase 4 will consume it — routing to write-permission solvers, re-escalation on no-acknowledge, and the operator UI surface.
+- **Additional Reasoning Adapters**: vendor-specific adapters (Anthropic, PPQ.ai) are tracked as separate issues rather than a formal roadmap phase. See [#38](https://github.com/MostroP2P/serbero/issues/38) (Anthropic) and [#39](https://github.com/MostroP2P/serbero/issues/39) (PPQ.ai validation). The OpenAI-compatible adapter already covers hosted OpenAI, vLLM, llama.cpp, Ollama, LiteLLM, and any router proxy exposing `/chat/completions`.
 
 ---
 

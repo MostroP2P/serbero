@@ -61,7 +61,7 @@ reasoning rationales.
 ### Scope-control notes (carried forward to tasks)
 
 - **Solver authorization revalidation loop**: implement as the minimal surface the spec requires — one background `tokio::task` with truncated exponential backoff between `solver_auth_retry_initial_seconds` and `solver_auth_retry_max_interval_seconds`, terminating at the first of `solver_auth_retry_max_total_seconds` / `solver_auth_retry_max_attempts`, emitting one WARN-or-higher terminal alert on termination. Handful of config knobs, single task, terminal-alert logging. No generic retry framework. No state machine beyond "authorized" / "unauthorized" / "terminated". No plugin surface.
-- **Reasoning provider adapter**: ship exactly one adapter in Phase 3 (`openai`, which also covers "openai-compatible" endpoints by changing `api_base`). Leave Anthropic / PPQ.ai adapters as `NotYetImplemented` entries in the enum so the mediation call sites stay generic but the code surface is small. Phase 5 can land additional adapters without touching mediation logic.
+- **Reasoning provider adapter**: ship exactly one adapter in Phase 3 (`openai`, which also covers "openai-compatible" endpoints by changing `api_base`). Leave Anthropic / PPQ.ai adapters as `NotYetImplemented` entries in the enum so the mediation call sites stay generic but the code surface is small. Additional adapters can land without touching mediation logic (see [#38](https://github.com/MostroP2P/serbero/issues/38), [#39](https://github.com/MostroP2P/serbero/issues/39)).
 
 ## Project Structure
 

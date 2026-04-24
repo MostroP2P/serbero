@@ -40,7 +40,7 @@ assignment visibility + re-notification).
 | VII. Graceful Degradation | PASS | Mostro operates independently. Relay disconnect = reconnect with backoff. SQLite failure = halt notifications. |
 | VIII. Privacy | PASS | Notifications contain initiator role (buyer/seller), not pubkey. Minimum necessary info. |
 | IX. Nostr-Native | PASS | All communication via gift-wrap encrypted messages on Nostr. |
-| X. Portable Backends | PASS | Reasoning backend boundary described as a planning/contracts artifact only; no trait or module is scaffolded into the crate until Phase 5 actually implements it. |
+| X. Portable Backends | PASS | Reasoning backend boundary described as a planning/contracts artifact only; the trait and module were shipped in Phase 3 (`src/reasoning/mod.rs`). Additional vendor adapters are tracked as separate issues. |
 | XI. Incremental Scope | PASS | Phased implementation. Phase 1 → Phase 2 → future phases via explicit specs. |
 | XII. Honest Behavior | PASS | No classification or mediation in Phases 1-2. Later phases surface uncertainty. |
 | XIII. Mostro Compatibility | PASS | Serbero reads events, never writes dispute-closing actions. Clear boundary. |
@@ -268,7 +268,7 @@ differentiated messaging but does not restrict who is notified.
 | `SERBERO_DB_PATH` | `serbero.db_path` | Database file location |
 | `SERBERO_LOG` | `serbero.log_level` | Log level (trace/debug/info/warn/error) |
 
-## Reasoning Backend Interface (Phase 5 — Planning Artifact Only)
+## Reasoning Backend Interface (future adapter work — Planning Artifact Only)
 
 Described in [contracts/reasoning-backend.md](contracts/reasoning-backend.md).
 
@@ -278,15 +278,15 @@ architectural boundary and to give future phases a stable target to
 design against. It is **not** scaffolded into the Rust source tree
 during Phase 1 or Phase 2 — no `trait ReasoningBackend`, no
 `reasoning/` module, and no reasoning-related types are added to the
-crate until Phase 5 actually needs them. This avoids dead
+crate until future adapter work actually needs them. This avoids dead
 architectural scaffolding that Phase 1 and Phase 2 do not exercise.
 
-When Phase 5 is planned, the trait definition in
+When future adapter work is planned, the trait definition in
 `contracts/reasoning-backend.md` becomes the starting point for the
 actual Rust implementation; any refinements discovered then supersede
 the contract as documented today.
 
-**Key separation (applies once the backend is implemented in Phase 5)**:
+**Key separation (applies once the backend is implemented in future adapter work)**:
 - Serbero's policy layer (dispatcher, handlers) owns all decisions.
 - The reasoning backend provides advisory structured outputs.
 - The policy layer validates all reasoning output before acting.
@@ -360,7 +360,7 @@ Implementation sequence (extends Phase 1):
   classification, mediation session tracking.
 - **Phase 4**: Escalation support — escalation triggers, structured
   summaries, write-operator routing.
-- **Phase 5**: Reasoning backend — trait implementation for direct API
+- **future adapter work**: Reasoning backend — trait implementation for direct API
   and optional OpenClaw, policy validation layer.
 
 These phases will be planned through separate specification amendments.
