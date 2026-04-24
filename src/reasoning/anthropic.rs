@@ -93,7 +93,16 @@ impl AnthropicProvider {
     }
 
     fn messages_url(&self) -> String {
-        format!("{}/v1/messages", self.api_base)
+        // Tolerate both root bases (`https://api.anthropic.com`) and
+        // version-suffixed bases (`https://api.anthropic.com/v1`) —
+        // the latter is a natural copy-paste from the OpenAI config
+        // style, and naively appending `/v1/messages` would produce
+        // `/v1/v1/messages` and a guaranteed 404.
+        let base = self.api_base.trim_end_matches('/');
+        match base.strip_suffix("/v1") {
+            Some(stripped) => format!("{stripped}/v1/messages"),
+            None => format!("{base}/v1/messages"),
+        }
     }
 }
 
@@ -323,6 +332,54 @@ mod tests {
             provider.messages_url(),
             "https://api.anthropic.com/v1/messages",
             "trailing slash on api_base must not produce a double slash"
+        );
+    }
+
+    #[test]
+    fn messages_url_normalizes_version_suffixed_api_base() {
+        // Operators often paste an OpenAI-style `.../v1` base into
+        // the Anthropic config. Naively appending `/v1/messages`
+        // would yield `/v1/v1/messages` and a hard 404 at health
+        // check. The builder must produce the same URL whether the
+        // base ends at the root or at `/v1`, with or without a
+        // trailing slash.
+        for base in [
+            "https://api.anthropic.com/v1",
+            "https://api.anthropic.com/v1/",
+        ] {
+            let cfg = ReasoningConfig {
+                provider: "anthropic".into(),
+                api_base: base.into(),
+                api_key: "k".into(),
+                ..ReasoningConfig::default()
+            };
+            let provider = AnthropicProvider::new(&cfg).unwrap();
+            assert_eq!(
+                provider.messages_url(),
+                "https://api.anthropic.com/v1/messages",
+                "api_base `{base}` must normalize to a single `/v1/messages` suffix"
+            );
+        }
+    }
+
+    #[test]
+    fn messages_url_preserves_non_v1_path_suffix() {
+        // A custom prefix that merely *contains* `v1` must not be
+        // stripped — only an exact trailing `/v1` segment is. This
+        // guards against overzealous matching for self-hosted
+        // proxies that live under paths like `/proxy-v1` or
+        // `/whatever/v12`.
+        let cfg = ReasoningConfig {
+            provider: "anthropic".into(),
+            api_base: "https://proxy.example.com/v12".into(),
+            api_key: "k".into(),
+            ..ReasoningConfig::default()
+        };
+        let provider = AnthropicProvider::new(&cfg).unwrap();
+        assert_eq!(
+            provider.messages_url(),
+            "https://proxy.example.com/v12/v1/messages",
+            "bases whose last segment is not exactly `v1` must keep their suffix intact"
         );
     }
 
