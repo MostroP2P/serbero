@@ -91,7 +91,7 @@ Mostro operates normally with or without Serbero. If Serbero is offline, operato
 
 ## Implementation Status
 
-Serbero evolves in five phases. `main` currently implements
+Serbero evolves in four phases. `main` currently implements
 **Phases 1, 2, 3, and 4** end-to-end. Phase 3 ships the full
 guided-mediation engine (take-flow, clarifying messages, inbound
 ingest, classification, summary delivery, escalation routing);
@@ -105,7 +105,7 @@ permission solvers.
 | 2     | Intake tracking, assignment visibility, re-notification      | **Implemented**                                                                                   |
 | 3     | Guided mediation for low-risk disputes                       | **Implemented** (88 / 88 tasks): US1–US5 + foundational + polish all closed                       |
 | 4     | Escalation execution for write-permission operators          | **Implemented** (34 / 34 tasks): US1 dispatch pipeline, US2 supersession, US3 unroutable, FR-214 parse-failed handlers, all closed |
-| 5     | Optional reasoning backend                                   | OpenAI-compatible adapter shipped (covers hosted OpenAI, vLLM, llama.cpp, Ollama, LiteLLM, etc.); other vendor adapters are future work |
+| —     | Additional reasoning adapters (Anthropic, PPQ.ai)            | Tracked as separate issues: [#38](https://github.com/MostroP2P/serbero/issues/38), [#39](https://github.com/MostroP2P/serbero/issues/39) |
 
 ### What Phase 3 ships
 
@@ -911,7 +911,7 @@ Serbero is governed by a [constitution](.specify/memory/constitution.md) that de
 - **Phase 2 — Lifecycle + re-notification + assignment visibility**: shipped.
 - **Phase 3 — Guided Mediation** (low-risk coordination failures): shipped on `main`. Contacts dispute parties via gift wraps to their shared pubkeys, runs bounded clarifying rounds, classifies through a versioned prompt bundle + reasoning provider, and either delivers a cooperative summary to the assigned solver or escalates with a Phase 4 handoff package. Strict policy-layer validation suppresses any output that would cross Serbero's authority boundary.
 - **Phase 4 — Escalation Execution**: shipped on `main`. Consumes the `handoff_prepared` packages Phase 3 produces (evidence refs, rationale refs, prompt bundle id, policy hash) and dispatches them as structured `escalation_handoff/v1` DMs to write-permission solvers. FR-202 recipient routing (targeted → write-set broadcast → fallback-to-all → unroutable), FR-208 supersession when a dispute resolves before the dispatcher's send step, FR-211 send-failed status, and FR-214 parse-failed / orphan-dispute audit shapes are all live. Phase 4 deliberately does NOT track solver acks, retry, or re-escalate — Phase 1/2's existing re-notification loop covers follow-up. There is no dedicated operator UI: inspection lives in the `sqlite3` query recipes documented in `specs/004-escalation-execution/quickstart.md`.
-- **Phase 5 — Additional Reasoning Adapters**: the OpenAI-compatible adapter shipped in Phase 3 already covers hosted OpenAI, vLLM, llama.cpp, Ollama, LiteLLM, and any router proxy exposing `/chat/completions`. Vendor-specific adapters (Anthropic, PPQai, OpenClaw) are tracked as future work behind a `not_yet_implemented` guard that fails loudly at startup so operators get an actionable message rather than silent coercion.
+- **Additional Reasoning Adapters**: vendor-specific adapters (Anthropic, PPQ.ai) are tracked as separate issues rather than a formal roadmap phase. See [#38](https://github.com/MostroP2P/serbero/issues/38) (Anthropic) and [#39](https://github.com/MostroP2P/serbero/issues/39) (PPQ.ai validation). The OpenAI-compatible adapter already covers hosted OpenAI, vLLM, llama.cpp, Ollama, LiteLLM, and any router proxy exposing `/chat/completions`.
 
 ---
 

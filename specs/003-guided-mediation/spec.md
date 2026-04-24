@@ -1567,7 +1567,7 @@ Environment variable overrides (including `SERBERO_PRIVATE_KEY`,
   under load). Phase 3 prepares the handoff; Phase 4 consumes it.
 - Implementing a reasoning-backend-agnostic trait layer beyond what
   the provider configuration already requires. Deeper backend
-  portability (e.g. OpenClaw routing) is Phase 5.
+  portability (e.g. additional vendor adapters) is tracked as separate issues.
 - Direct negotiation or settlement coordination between parties where
   funds are involved — this remains Mostro's authority.
 - Multi-instance Serbero coordination.
@@ -1743,7 +1743,7 @@ Environment variable overrides (including `SERBERO_PRIVATE_KEY`,
   only.
 - Generic reasoning-backend abstraction beyond the provider-neutral
   configuration surface specified here (deeper abstraction is
-  Phase 5).
+  future work).
 - Shipping reasoning adapters other than OpenAI / OpenAI-compatible
   in this phase. Anthropic, PPQ.ai, and OpenClaw adapters are
   declared as `NotYetImplemented` at the boundary so the mediation

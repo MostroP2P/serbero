@@ -150,7 +150,7 @@ past the timeout and verify exactly one re-notification fires with
 
 ---
 
-## Phase 5: Polish & Cross-Cutting Concerns
+## Polish & Cross-Cutting Concerns
 
 **Purpose**: Final validation and hygiene before Phase 3 planning.
 
@@ -170,7 +170,7 @@ past the timeout and verify exactly one re-notification fires with
 - **Foundational (Phase 2)**: Depends on Setup completion — BLOCKS all user stories.
 - **User Story 1 (Phase 3)**: Depends on Foundational — standalone Phase 1 MVP.
 - **User Story 2 (Phase 4)**: Depends on User Story 1 (extends Phase 1 schema, handlers, and subscriptions).
-- **Polish (Phase 5)**: Depends on both user stories being complete.
+- **Polish (future work)**: Depends on both user stories being complete.
 
 ### User Story Dependencies
 
@@ -228,7 +228,7 @@ Task: "Inline unit tests in src/db/notifications.rs"
 
 ### Out of Scope for This Tasks File
 
-Phases 3, 4, and 5 (guided mediation, escalation support, reasoning
+Phases 3 and 4, plus adapter improvements (guided mediation, escalation support, reasoning
 backend) are explicitly out of scope. User Stories 3, 4, and 5 in
 `spec.md` and the `contracts/reasoning-backend.md` interface are
 planning artifacts only for this implementation round — no

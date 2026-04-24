@@ -1,7 +1,7 @@
 # Contract: Reasoning Backend Interface
 
-**Phase**: 5 (defined early for architectural alignment)
-**Status**: Interface definition only — not implemented until Phase 5
+**Phase**: 3 (shipped); additional adapters tracked as separate issues
+**Status**: Implemented in `src/reasoning/mod.rs` and `src/reasoning/openai.rs`. Additional vendor adapters (Anthropic, PPQ.ai) are tracked in [#38](https://github.com/MostroP2P/serbero/issues/38) and [#39](https://github.com/MostroP2P/serbero/issues/39).
 
 ## Purpose
 
