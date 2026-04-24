@@ -6,7 +6,8 @@ use crate::models::reasoning::{
 };
 
 /// Adapter stub for providers declared at the boundary but not yet
-/// implemented in Phase 3 (`anthropic`, `ppqai`, `openclaw`).
+/// implemented (`ppqai`, `openclaw`). `anthropic` was promoted to a
+/// shipped adapter in issue #38 and no longer lands here.
 ///
 /// Selecting one of these in `config.toml` surfaces an actionable
 /// error at the first call site (health check, classify, or
@@ -25,7 +26,7 @@ impl NotYetImplementedProvider {
     fn err<T>(&self) -> std::result::Result<T, ReasoningError> {
         Err(ReasoningError::Unreachable(format!(
             "reasoning provider '{name}' is declared at the Phase 3 boundary but not yet \
-             implemented; currently shipped providers: openai, openai-compatible. \
+             implemented; currently shipped providers: openai, openai-compatible, anthropic. \
              Landing {name} adapter support is tracked as future work beyond Phase 3.",
             name = self.provider_name
         )))
