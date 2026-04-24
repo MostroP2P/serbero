@@ -274,14 +274,35 @@ impl AnthropicProvider {
             let parsed: MessagesResponse = serde_json::from_str(&text).map_err(|e| {
                 ReasoningError::MalformedResponse(format!("{e}: body={}", truncate(&text, 200)))
             })?;
-            let content = parsed
-                .content
-                .into_iter()
-                .find(|b| b.kind == "text")
-                .and_then(|b| b.text)
-                .ok_or_else(|| {
-                    ReasoningError::MalformedResponse("no text block in anthropic response".into())
-                })?;
+            // Anthropic responses are an array of blocks and may
+            // legally include multiple `text` segments (the model
+            // can split its output — for classify, a JSON object
+            // split across two text blocks would fail to parse if
+            // we only took the first). Concatenate every text block
+            // in order, skipping non-text blocks (e.g. `tool_use`,
+            // `thinking`). The `text` field of a text block is
+            // required by the Anthropic contract, so a text block
+            // whose `text` is missing means the wire shape has
+            // drifted — flag it as MalformedResponse.
+            let mut saw_text_block = false;
+            let mut content = String::new();
+            for block in parsed.content {
+                if block.kind != "text" {
+                    continue;
+                }
+                saw_text_block = true;
+                let Some(text) = block.text else {
+                    return Err(ReasoningError::MalformedResponse(
+                        "text block in anthropic response is missing the `text` field".into(),
+                    ));
+                };
+                content.push_str(&text);
+            }
+            if !saw_text_block {
+                return Err(ReasoningError::MalformedResponse(
+                    "no text block in anthropic response".into(),
+                ));
+            }
             use nostr_sdk::hashes::Hash as _;
             let content_hash = nostr_sdk::hashes::sha256::Hash::hash(content.as_bytes());
             let content_hash_prefix = &content_hash.to_string()[..16];

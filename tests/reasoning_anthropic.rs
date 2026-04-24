@@ -292,6 +292,115 @@ async fn classify_rejects_non_json_text_content() {
     );
 }
 
+/// Regression: Anthropic responses may legally contain multiple
+/// `text` blocks (the model can split its output, or interleave
+/// text with other block types). Taking only the first block would
+/// drop the rest of the payload — for `classify` this would turn a
+/// valid split-JSON response into `MalformedResponse`, and for
+/// `summarize` it would silently truncate the summary. The adapter
+/// must concatenate every text block in order and skip non-text
+/// blocks without error.
+#[tokio::test]
+async fn classify_concatenates_multiple_text_blocks() {
+    let mock = MockServer::start_async().await;
+    // The classification JSON is split across two text blocks; a
+    // non-text block in the middle must be tolerated and skipped.
+    // Only by concatenating all text blocks does the resulting
+    // string form valid JSON.
+    let _hit = mock
+        .mock_async(|when, then| {
+            when.method(POST).path("/v1/messages");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(
+                    r#"{
+                        "id":"msg_test",
+                        "type":"message",
+                        "role":"assistant",
+                        "content":[
+                            {"type":"text","text":"{\"classification\":\"coordination_failure_resolvable\",\"confidence\":0.73,"},
+                            {"type":"thinking","thinking":"internal trace not meant for the parser"},
+                            {"type":"text","text":"\"suggested_action\":\"summarize\",\"rationale\":\"ok\",\"flags\":[]}"}
+                        ]
+                    }"#,
+                );
+        })
+        .await;
+
+    let cfg = ReasoningConfig {
+        provider: "anthropic".into(),
+        api_base: mock.base_url(),
+        api_key: "k".into(),
+        model: "claude-3-5-sonnet-20241022".into(),
+        request_timeout_seconds: 5,
+        followup_retry_count: 0,
+        ..ReasoningConfig::default()
+    };
+    let provider = AnthropicProvider::new(&cfg).unwrap();
+    let resp = provider
+        .classify(classification_request())
+        .await
+        .expect("split-JSON across multiple text blocks must parse after concatenation");
+    assert_eq!(
+        resp.classification,
+        ClassificationLabel::CoordinationFailureResolvable
+    );
+    assert!((resp.confidence - 0.73).abs() < f64::EPSILON);
+    assert_eq!(resp.suggested_action, SuggestedAction::Summarize);
+}
+
+#[tokio::test]
+async fn summarize_concatenates_multiple_text_blocks() {
+    let mock = MockServer::start_async().await;
+    // Prose summary split across two text blocks. Taking only the
+    // first would lose both the SUGGESTED_NEXT_STEP and RATIONALE
+    // markers and produce an empty-next-step / empty-rationale
+    // result. The adapter must join them so the parser sees the
+    // original full output.
+    let _hit = mock
+        .mock_async(|when, then| {
+            when.method(POST).path("/v1/messages");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(
+                    r#"{
+                        "id":"msg_test",
+                        "type":"message",
+                        "role":"assistant",
+                        "content":[
+                            {"type":"text","text":"Buyer confirmed receipt, seller confirmed funds released.\n"},
+                            {"type":"text","text":"SUGGESTED_NEXT_STEP: close the dispute in favor of buyer.\nRATIONALE: both parties aligned on the timeline."}
+                        ]
+                    }"#,
+                );
+        })
+        .await;
+
+    let cfg = ReasoningConfig {
+        provider: "anthropic".into(),
+        api_base: mock.base_url(),
+        api_key: "k".into(),
+        model: "claude-3-5-sonnet-20241022".into(),
+        request_timeout_seconds: 5,
+        followup_retry_count: 0,
+        ..ReasoningConfig::default()
+    };
+    let provider = AnthropicProvider::new(&cfg).unwrap();
+    let resp = provider
+        .summarize(summary_request())
+        .await
+        .expect("multi-block summary must succeed after concatenation");
+    assert!(resp.summary_text.starts_with("Buyer confirmed"));
+    assert!(
+        resp.suggested_next_step.contains("close the dispute"),
+        "second-block content (SUGGESTED_NEXT_STEP) must survive multi-block concatenation"
+    );
+    assert!(
+        resp.rationale.0.contains("aligned"),
+        "second-block content (RATIONALE) must survive multi-block concatenation"
+    );
+}
+
 /// Regression for the routing table in `build_provider`: a fully
 /// unknown provider name must still fail with `Error::Config`, NOT
 /// silently coerce to anthropic or openai.
