@@ -436,7 +436,7 @@ Per-field notes:
 | `[mediation]`  | `party_response_timeout_seconds`          | Triggers `party_unresponsive` escalation. Defaults to `1800` (30 min). Set to `0` to disable the timer.  |
 | `[mediation]`  | `solver_auth_retry_*`                     | Bounded revalidation loop for Serbero's solver registration in Mostro. Defaults: 60s→3600s, 24h/24 caps. |
 | `[reasoning]`  | `enabled`                                 | Must be `true` (alongside `[mediation].enabled`) for the engine task to spawn.                           |
-| `[reasoning]`  | `provider`                                | `openai` (also covers OpenAI-compatible endpoints — vLLM, llama.cpp, Ollama, LiteLLM, any router proxy). `anthropic` / `ppqai` / `openclaw` are placeholders that fail loudly at startup. |
+| `[reasoning]`  | `provider`                                | `openai` / `openai-compatible` (hosted OpenAI, vLLM, llama.cpp, Ollama, LiteLLM, router proxies, PPQ.ai) or `anthropic` (native Messages API). See [Reasoning provider compatibility](#reasoning-provider-compatibility). `ppqai` / `openclaw` are NYI placeholders; use `openai-compatible` with the appropriate `api_base` instead. |
 | `[reasoning]`  | `model`                                   | Whatever model the configured endpoint accepts (e.g., `gpt-5`, `gpt-4o-mini`, a self-hosted model name). |
 | `[reasoning]`  | `api_base`                                | Where the HTTP client points. Change this to swap to any OpenAI-compatible endpoint without a rebuild.   |
 | `[reasoning]`  | `api_key_env`                             | **Environment variable name** whose value holds the credential. Defaults to `SERBERO_REASONING_API_KEY`. The variable name is just configuration — point it at any var your secrets pipeline already sets. |
@@ -444,6 +444,20 @@ Per-field notes:
 | `[reasoning]`  | `followup_retry_count`                    | Adapter-owned bounded retry budget (FR-104). Additional attempts after the initial request on retryable errors. `0` = no retry. |
 | `[prompts]`    | `*_path`                                  | Paths to the versioned prompt bundle files. The default paths match the `prompts/` tree in this repo.    |
 | `[chat]`       | `inbound_fetch_interval_seconds`          | Mostro-chat inbound polling cadence used by the engine ingest loop.                                      |
+
+### Reasoning provider compatibility
+
+Two adapters ship today. The `openai` / `openai-compatible` adapter covers anything exposing `POST {api_base}/chat/completions` with OpenAI's request and response shape; the `anthropic` adapter speaks the native Messages API. Swap providers by changing `[reasoning].provider` and `[reasoning].api_base` — no rebuild needed.
+
+| Provider                              | Config `provider`   | `api_base`                        | Notes                                                                                                               |
+|---------------------------------------|---------------------|-----------------------------------|---------------------------------------------------------------------------------------------------------------------|
+| OpenAI                                | `openai`            | `https://api.openai.com/v1`       | Default. Azure OpenAI works by pointing `api_base` at the Azure deployment URL.                                     |
+| Self-hosted (vLLM, Ollama, llama.cpp) | `openai-compatible` | your local endpoint, e.g. `http://localhost:8080/v1` | Any server exposing `/chat/completions` with OpenAI's request/response shape.                                       |
+| LiteLLM proxy                         | `openai-compatible` | your proxy URL                    | Same OpenAI wire format; LiteLLM fronts mixed upstream providers.                                                   |
+| **PPQ.ai** (issue #39)                | `openai-compatible` | `https://api.ppq.ai`              | Aggregator that routes many models (`ppq/autoclaw`, `google/gemini-2.5-flash`, `claude-sonnet-4.6`, …) behind a single OpenAI-compatible `/chat/completions` path. The adapter appends `/chat/completions` to `api_base` verbatim, so set `api_base` to the bare host (`https://api.ppq.ai`) — appending `/v1` would produce `https://api.ppq.ai/v1/chat/completions` and a 404, since PPQ.ai does not version its endpoint. |
+| Anthropic (issue #38)                 | `anthropic`         | `https://api.anthropic.com`       | Native Messages API. Uses `x-api-key` + `anthropic-version` headers and top-level `system` string. Any model name the account can invoke (e.g. `claude-3-5-sonnet-20241022`). |
+
+`ppqai` and `openclaw` remain reserved provider names that currently route to a loud "not yet implemented" stub; configure PPQ.ai (including OpenClaw-style deployments) via `openai-compatible` with `api_base = "https://api.ppq.ai"` as per the table above.
 
 ### Secrets and environment variable resolution
 
