@@ -311,7 +311,11 @@ Shut down with `Ctrl-C` (SIGINT). On Unix hosts Serbero also catches SIGTERM (so
 Phase 3 layers on top of Phases 1 and 2. To enable it:
 
 1. **Register Serbero as a solver** on the target Mostro instance with at least `read` permission. Serbero's public key is derived from the `private_key` field in `[serbero]` — you can obtain it with any Nostr key tool (e.g. `nak key public <hex-secret-key>`). In **Mostrix**, go to **Settings → Solvers**, paste the hex pubkey, and select `read` permission. Serbero never holds fund-moving credentials.
-2. **Provision a reasoning endpoint** (any OpenAI-compatible HTTPS endpoint: hosted OpenAI, self-hosted vLLM / llama.cpp / Ollama, LiteLLM, or any router proxy exposing `/chat/completions`).
+2. **Provision a reasoning endpoint.** Any of the following works — pick whichever is easiest for you:
+   - **PPQ.ai** (recommended, hosted, single key for many models) — sign up at <https://ppq.ai>; see the [PPQ.ai quick start](#quick-start-ppqai-easiest-hosted-option) below.
+   - **Hosted OpenAI** — an account at <https://platform.openai.com> with billing enabled.
+   - **Anthropic (Claude) directly** — an account at <https://console.anthropic.com>.
+   - **Self-hosted** — vLLM, llama.cpp, Ollama, LiteLLM, or any router proxy exposing `/chat/completions`.
 3. **Export the API key** under the env-var name configured in `[reasoning].api_key_env` (default: `SERBERO_REASONING_API_KEY`):
 
    ```bash
@@ -357,6 +361,77 @@ If the initial solver-auth check fails, Phase 3 refuses to open new sessions and
 4. **Restart resume (FR-117)** — kill the daemon mid-session and restart. The startup-resume pass rebuilds the per-session key cache from the database, so inbound replies are deduped correctly and outbound responses go to the right shared keys.
 
 For the full operator walkthrough see [`specs/003-guided-mediation/quickstart.md`](specs/003-guided-mediation/quickstart.md).
+
+### Quick start: PPQ.ai (easiest hosted option)
+
+If you just want Phase 3 working with the minimum amount of setup, **PPQ.ai** is the path of least resistance: a single account, a single API key, and access to dozens of upstream models (OpenAI, Anthropic, Google, Mistral, DeepSeek, …) behind one OpenAI-compatible endpoint. You pay PPQ.ai; they handle the relationships with the upstream providers.
+
+**Step 1 — get a key.** Sign up at <https://ppq.ai>, top up credits, and create an API key in the dashboard.
+
+**Step 2 — export the key.**
+
+```bash
+export SERBERO_REASONING_API_KEY="your-ppq-key"
+```
+
+**Step 3 — paste this into `config.toml`** (replacing the existing `[mediation]` and `[reasoning]` blocks if present):
+
+```toml
+[mediation]
+enabled = true
+max_rounds = 2
+party_response_timeout_seconds = 1800
+
+[reasoning]
+enabled                 = true
+provider                = "openai-compatible"
+api_base                = "https://api.ppq.ai"
+api_key_env             = "SERBERO_REASONING_API_KEY"
+model                   = "autoclaw"
+request_timeout_seconds = 30
+followup_retry_count    = 1
+```
+
+**Step 4 — restart Serbero.** You should see at startup:
+
+```text
+Phase 3 prompt bundle loaded ...
+reasoning provider health check ok
+Phase 3 mediation is fully configured; engine task will be spawned
+```
+
+**Common pitfalls (read these first if it doesn't work):**
+
+- ❌ `provider = "PPQ.AI"` — wrong. The string is case-sensitive and there is no provider named that. Use `"openai-compatible"`.
+- ❌ `provider = "ppqai"` — wrong. That name exists in code but routes to a "not yet implemented" stub on purpose. Use `"openai-compatible"`.
+- ❌ `api_base = "https://api.ppq.ai/v1"` — wrong. PPQ.ai does not version its endpoint; the `/v1` suffix produces a 404. Use the bare host `https://api.ppq.ai`.
+- ❌ `model = "ppq/autoclaw"` — wrong. PPQ.ai's auto-router is the bare string `"autoclaw"` (no `ppq/` prefix). Most other models, however, *do* use a vendor prefix like `openai/...`, `anthropic/...`, `google/...`.
+
+**Picking a model.** `autoclaw` lets PPQ.ai pick the upstream model for you (a sensible default). If you want a specific model, pull the authoritative current list with:
+
+```bash
+curl -s https://api.ppq.ai/v1/models \
+  -H "Authorization: Bearer $SERBERO_REASONING_API_KEY" \
+  | jq '.data[].id' | sort
+```
+
+Use any ID from that list verbatim as `model = "..."`. Examples that PPQ.ai routinely exposes (subject to their catalog at any given time):
+
+| Model ID                          | What it is                                  |
+|-----------------------------------|---------------------------------------------|
+| `autoclaw`                        | PPQ.ai's auto-router (default-friendly)     |
+| `auto`                            | Alternate auto-router                       |
+| `claude-sonnet-4.6`               | Anthropic Claude Sonnet (bare alias)        |
+| `claude-opus-4.7`                 | Anthropic Claude Opus (bare alias)          |
+| `claude-haiku-4.5`                | Anthropic Claude Haiku (bare alias)         |
+| `openai/gpt-5`                    | OpenAI GPT-5                                |
+| `openai/gpt-4o-mini`              | OpenAI GPT-4o mini (cheap, fast)            |
+| `anthropic/claude-sonnet-4.5`     | Anthropic Claude Sonnet (prefixed alias)    |
+| `google/gemini-2.5-flash`         | Google Gemini 2.5 Flash                     |
+| `deepseek/deepseek-v3.2`          | DeepSeek V3.2                               |
+| `x-ai/grok-4`                     | xAI Grok 4                                  |
+
+If a model name returns `400 "<name> is not a valid model ID"`, it has been renamed or deprecated upstream — re-run the `/v1/models` query and pick a current ID.
 
 ---
 
@@ -409,7 +484,7 @@ solver_auth_retry_max_attempts         = 24
 
 [reasoning]
 enabled                 = true
-provider                = "openai"                    # only shipped adapter
+provider                = "openai"                    # "openai" / "openai-compatible" / "anthropic"
 model                   = "gpt-5"                     # anything the endpoint supports
 api_base                = "https://api.openai.com/v1" # swap for any OpenAI-compatible endpoint
 api_key_env             = "SERBERO_REASONING_API_KEY" # vendor-neutral on purpose
@@ -454,7 +529,7 @@ Two adapters ship today. The `openai` / `openai-compatible` adapter covers anyth
 | OpenAI                                | `openai`            | `https://api.openai.com/v1`       | Default. Azure OpenAI works by pointing `api_base` at the Azure deployment URL.                                     |
 | Self-hosted (vLLM, Ollama, llama.cpp) | `openai-compatible` | your local endpoint, e.g. `http://localhost:8080/v1` | Any server exposing `/chat/completions` with OpenAI's request/response shape.                                       |
 | LiteLLM proxy                         | `openai-compatible` | your proxy URL                    | Same OpenAI wire format; LiteLLM fronts mixed upstream providers.                                                   |
-| **PPQ.ai** (issue #39)                | `openai-compatible` | `https://api.ppq.ai`              | Aggregator that routes many models (`ppq/autoclaw`, `google/gemini-2.5-flash`, `claude-sonnet-4.6`, …) behind a single OpenAI-compatible `/chat/completions` path. The adapter appends `/chat/completions` to `api_base` verbatim, so set `api_base` to the bare host (`https://api.ppq.ai`) — appending `/v1` would produce `https://api.ppq.ai/v1/chat/completions` and a 404, since PPQ.ai does not version its endpoint. |
+| **PPQ.ai** (issue #39)                | `openai-compatible` | `https://api.ppq.ai`              | Aggregator that routes many models (`autoclaw`, `claude-sonnet-4.6`, `openai/gpt-5`, `google/gemini-2.5-flash`, …) behind a single OpenAI-compatible `/chat/completions` path. The adapter appends `/chat/completions` to `api_base` verbatim, so set `api_base` to the bare host (`https://api.ppq.ai`) — appending `/v1` would produce `https://api.ppq.ai/v1/chat/completions` and a 404, since PPQ.ai does not version its endpoint. Get the live model list with `curl -s https://api.ppq.ai/v1/models -H "Authorization: Bearer $KEY"`. See [PPQ.ai quick start](#quick-start-ppqai-easiest-hosted-option) for a beginner-friendly walkthrough. |
 | Anthropic (issue #38)                 | `anthropic`         | `https://api.anthropic.com`       | Native Messages API. Uses `x-api-key` + `anthropic-version` headers and top-level `system` string. Any model name the account can invoke (e.g. `claude-3-5-sonnet-20241022`). |
 
 `ppqai` and `openclaw` remain reserved provider names that currently route to a loud "not yet implemented" stub; configure PPQ.ai (including OpenClaw-style deployments) via `openai-compatible` with `api_base = "https://api.ppq.ai"` as per the table above.

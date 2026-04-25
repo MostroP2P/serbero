@@ -68,71 +68,151 @@ solver_auth_retry_max_interval_seconds = 3600
 solver_auth_retry_max_total_seconds = 86400
 solver_auth_retry_max_attempts = 24
 
+# ---------------------------------------------------------------------------
+# [reasoning] — the AI provider that classifies disputes and drafts
+# clarifying messages during Phase 3 guided mediation.
+#
+# Phase 3 is OPT-IN. If you only want Phase 1/2 (dispute detection +
+# solver notification), leave `[mediation].enabled = false` above and
+# this whole block can stay disabled.
+#
+# To turn Phase 3 on you need TWO things:
+#   1. `[mediation].enabled = true` (the feature flag above)
+#   2. `[reasoning].enabled = true` plus a working API endpoint here
+#
+# Pick ONE provider profile below. The simplest path for most users
+# is PPQ.ai — see "Profile A" right after this comment.
+# ---------------------------------------------------------------------------
+
 [reasoning]
+# Master switch. Set to `true` and fill in the rest of the block.
 enabled = false
 
-# Supported providers:
-#   "openai"            — hosted OpenAI or any OpenAI-compatible endpoint
-#                         (vLLM, llama.cpp, Ollama, LiteLLM, router proxies)
-#   "openai-compatible" — documented alias for the above
-#   "anthropic"         — native Anthropic Messages API (issue #38);
-#                         no LiteLLM proxy needed for Claude models
+# Which adapter to use. Valid values:
+#
+#   "openai"            — hosted OpenAI (api.openai.com) and any
+#                         server speaking the same wire format.
+#   "openai-compatible" — exact same adapter as "openai"; use this
+#                         label when you point at PPQ.ai, vLLM,
+#                         llama.cpp, Ollama, LiteLLM, OpenRouter,
+#                         Azure OpenAI, etc. — anything exposing
+#                         POST {api_base}/chat/completions.
+#   "anthropic"         — native Anthropic Messages API (Claude).
+#                         No proxy needed for Claude models.
+#
+# The strings "ppqai" and "openclaw" exist in the code as reserved
+# names, but they DO NOT WORK — they fail loudly on purpose. To use
+# PPQ.ai, set provider = "openai-compatible" (see Profile A below).
 provider = "openai"
 
-# Any model accepted by the configured endpoint.
+# Which model to use. The exact string depends on the provider.
+# The defaults below match `provider = "openai"`.
 model = "gpt-5"
 
-# Hosted OpenAI example. Replace with any OpenAI-compatible endpoint if needed.
+# Where the HTTP client points. The adapter appends `/chat/completions`
+# (OpenAI-style) or `/v1/messages` (Anthropic) to this URL.
 api_base = "https://api.openai.com/v1"
 
-# Name of the environment variable holding the reasoning API credential.
-# Example:
-#   export SERBERO_REASONING_API_KEY="your-real-key"
+# Name of the environment variable that holds your API key.
+# Serbero never reads the key from this TOML — only from the
+# environment — so the file is safe to commit.
+#
+# Example shell setup:
+#   export SERBERO_REASONING_API_KEY="sk-...your-real-key..."
+#
+# You can rename this variable to fit your secrets pipeline; whatever
+# string you put here must match the exported env var.
 api_key_env = "SERBERO_REASONING_API_KEY"
 
-# Per-request timeout and bounded retry budget.
+# Per-HTTP-call timeout (≥ 1 s) and bounded retry budget. `1` means
+# "one retry on a transient failure" — the adapter owns the budget,
+# so this is the entire retry surface for a single reasoning call.
 request_timeout_seconds = 30
 followup_retry_count = 1
 
-# --- Native Anthropic (Claude) example ---
-# To use Claude directly (no LiteLLM proxy), replace the block above with:
+# ===========================================================================
+# Profile A — PPQ.ai (recommended, easiest hosted option)
+# ===========================================================================
+# PPQ.ai is an OpenAI-compatible aggregator that fronts dozens of
+# upstream models (OpenAI, Anthropic, Google, Mistral, DeepSeek, …)
+# behind a single endpoint and a single API key. You pay PPQ.ai;
+# they handle the upstream provider relationships.
+#
+# Sign up: https://ppq.ai     ·     API docs: https://ppq.ai/api-docs
+#
+# To use PPQ.ai, REPLACE the [reasoning] block above with:
 #
 #   [reasoning]
-#   enabled = true
-#   provider = "anthropic"
-#   api_base = "https://api.anthropic.com"
-#   api_key_env = "ANTHROPIC_API_KEY"
-#   model = "claude-3-5-sonnet-20241022"
+#   enabled     = true
+#   provider    = "openai-compatible"
+#   api_base    = "https://api.ppq.ai"
+#   api_key_env = "SERBERO_REASONING_API_KEY"
+#   model       = "autoclaw"
 #   request_timeout_seconds = 30
-#   followup_retry_count = 1
+#   followup_retry_count    = 1
 #
-# The adapter appends `/v1/messages` to `api_base` and sends
-# `x-api-key` + `anthropic-version` headers. `api_key_env` names the
-# environment variable the daemon reads at startup — the secret is
-# never stored in this TOML.
+# Then export your PPQ.ai key under that env var:
+#   export SERBERO_REASONING_API_KEY="your-ppq-key"
+#
+# Notes:
+# - `api_base` is the BARE HOST, with no `/v1` suffix. PPQ.ai does
+#   not version its endpoint; appending `/v1` produces a 404.
+# - `model = "autoclaw"` is PPQ.ai's auto-router (it picks an
+#   upstream model for you). Other useful bare names include:
+#     "auto", "claude-sonnet-4.6", "claude-opus-4.7",
+#     "claude-haiku-4.5", "gpt-5.4", "gemini-3-flash-preview".
+#   Most other models use a vendor prefix, e.g.:
+#     "openai/gpt-5", "openai/gpt-4o-mini",
+#     "anthropic/claude-sonnet-4.5", "google/gemini-2.5-flash",
+#     "deepseek/deepseek-v3.2", "x-ai/grok-4".
+#
+# - To get the AUTHORITATIVE current model list, run:
+#     curl -s https://api.ppq.ai/v1/models \
+#       -H "Authorization: Bearer $SERBERO_REASONING_API_KEY" \
+#       | jq '.data[].id' | sort
+#   Use any ID from that list verbatim as `model`. If a name
+#   produces `400 "<name> is not a valid model ID"`, it's gone or
+#   was renamed — pick a replacement from the list.
 
-# --- PPQ.ai (OpenAI-compatible) example — issue #39 ---
-# PPQ.ai aggregates many upstream models behind a single
-# OpenAI-compatible `/chat/completions` endpoint. Validated against
-# the wire-format documented at https://ppq.ai/api-docs — the
-# existing `openai-compatible` adapter handles it end-to-end with
-# no code changes. To use PPQ.ai, replace the [reasoning] block
-# above with:
+# ===========================================================================
+# Profile B — Native Anthropic (Claude) API
+# ===========================================================================
+# Use this if you have an anthropic.com account and want to call
+# Claude directly with no proxy. To use it, REPLACE the [reasoning]
+# block above with:
 #
 #   [reasoning]
-#   enabled = true
-#   provider = "openai-compatible"
-#   api_base = "https://api.ppq.ai"
-#   api_key_env = "PPQ_API_KEY"
-#   model = "ppq/autoclaw"
+#   enabled     = true
+#   provider    = "anthropic"
+#   api_base    = "https://api.anthropic.com"
+#   api_key_env = "ANTHROPIC_API_KEY"
+#   model       = "claude-3-5-sonnet-20241022"
 #   request_timeout_seconds = 30
-#   followup_retry_count = 1
+#   followup_retry_count    = 1
 #
-# `api_base` is the bare host (no `/v1` suffix) — the adapter
-# appends `/chat/completions` directly, which matches PPQ.ai's
-# published path. Any model name the aggregator routes works
-# (e.g. `ppq/autoclaw`, `google/gemini-2.5-flash`,
-# `claude-sonnet-4.6`); set `model` accordingly.
+# Then export your Anthropic key:
+#   export ANTHROPIC_API_KEY="sk-ant-...your-real-key..."
+#
+# The adapter appends `/v1/messages` to `api_base` and sends the
+# `x-api-key` and `anthropic-version` headers automatically.
+
+# ===========================================================================
+# Profile C — Self-hosted (vLLM, llama.cpp, Ollama, LiteLLM, …)
+# ===========================================================================
+# Anything exposing OpenAI's `/chat/completions` shape works without
+# code changes. Example for a local Ollama:
+#
+#   [reasoning]
+#   enabled     = true
+#   provider    = "openai-compatible"
+#   api_base    = "http://localhost:11434/v1"
+#   api_key_env = "SERBERO_REASONING_API_KEY"   # any non-empty value
+#   model       = "llama3.1:8b"
+#   request_timeout_seconds = 30
+#   followup_retry_count    = 1
+#
+# Most local servers ignore the API key but still require one to be
+# present — export any non-empty string.
 
 [prompts]
 # Default prompt bundle paths shipped in this repository.
