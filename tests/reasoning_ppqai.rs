@@ -36,8 +36,10 @@ use serbero::models::reasoning::{
 };
 use serbero::models::ReasoningConfig;
 use serbero::prompts::PromptBundle;
-use serbero::reasoning::openai::OpenAiProvider;
-use serbero::reasoning::{build_provider, ReasoningProvider};
+// `ReasoningProvider` is intentionally not imported: `build_provider`
+// returns `Arc<dyn ReasoningProvider>`, and trait methods on a `dyn`
+// trait object are reachable without bringing the trait into scope.
+use serbero::reasoning::build_provider;
 
 fn fixture_bundle() -> Arc<PromptBundle> {
     Arc::new(PromptBundle {
@@ -141,13 +143,18 @@ async fn classify_parses_ppqai_json_mode_response() {
             when.method(POST)
                 .path("/chat/completions")
                 .header_exists("authorization")
-                // The adapter must request JSON mode; PPQ.ai relies
-                // on the upstream model to honor it. A test that
-                // didn't check this would not notice a silent
-                // response_format regression.
-                .body_contains("\"response_format\"")
-                .body_contains("\"json_object\"")
-                .body_contains("ppq/autoclaw");
+                // Structural assertion (not substring): the request
+                // body must include the `model` and the
+                // `response_format: { type: "json_object" }` shape.
+                // A silent regression that switched JSON mode off
+                // or routed to a different model would no longer
+                // satisfy this partial-JSON match.
+                .json_body_partial(
+                    r#"{
+                        "model": "ppq/autoclaw",
+                        "response_format": { "type": "json_object" }
+                    }"#,
+                );
             then.status(200)
                 .header("content-type", "application/json")
                 .body(
@@ -169,7 +176,7 @@ async fn classify_parses_ppqai_json_mode_response() {
         .await;
 
     let cfg = ppqai_cfg(mock.base_url());
-    let provider = OpenAiProvider::new(&cfg).unwrap();
+    let provider = build_provider(&cfg).expect("openai-compatible must route to OpenAI adapter");
     let resp = provider
         .classify(classification_request())
         .await
@@ -215,7 +222,7 @@ async fn summarize_parses_ppqai_response() {
         .await;
 
     let cfg = ppqai_cfg(mock.base_url());
-    let provider = OpenAiProvider::new(&cfg).unwrap();
+    let provider = build_provider(&cfg).expect("openai-compatible must route to OpenAI adapter");
     let resp = provider
         .summarize(summary_request())
         .await
@@ -247,7 +254,7 @@ async fn invalid_key_maps_to_unreachable() {
     let mut cfg = ppqai_cfg(mock.base_url());
     cfg.followup_retry_count = 3;
 
-    let provider = OpenAiProvider::new(&cfg).unwrap();
+    let provider = build_provider(&cfg).expect("openai-compatible must route to OpenAI adapter");
     let err = provider.health_check().await.unwrap_err();
     match err {
         ReasoningError::Unreachable(msg) => {
@@ -265,6 +272,13 @@ async fn invalid_key_maps_to_unreachable() {
 /// retryable per the adapter's status table, so with a retry budget
 /// of 2 the mock should see 3 attempts (initial + 2 retries) before
 /// the caller sees the final error.
+///
+/// Note: the OpenAI adapter does NOT honor the `Retry-After`
+/// response header — it retries immediately within its bounded
+/// for-loop. The mock therefore omits that header so the test does
+/// not imply a backoff behavior the adapter never had. Adding
+/// Retry-After-aware backoff would be a separate change with its
+/// own test.
 #[tokio::test]
 async fn rate_limit_retries_and_eventually_surfaces_unreachable() {
     let mock = MockServer::start_async().await;
@@ -273,7 +287,6 @@ async fn rate_limit_retries_and_eventually_surfaces_unreachable() {
             when.method(POST).path("/chat/completions");
             then.status(429)
                 .header("content-type", "application/json")
-                .header("retry-after", "7")
                 .body(r#"{"error":{"message":"Rate limit exceeded","type":"rate_limit_error"}}"#);
         })
         .await;
@@ -281,7 +294,7 @@ async fn rate_limit_retries_and_eventually_surfaces_unreachable() {
     let mut cfg = ppqai_cfg(mock.base_url());
     cfg.followup_retry_count = 2;
 
-    let provider = OpenAiProvider::new(&cfg).unwrap();
+    let provider = build_provider(&cfg).expect("openai-compatible must route to OpenAI adapter");
     let err = provider.health_check().await.unwrap_err();
     assert!(
         matches!(err, ReasoningError::Unreachable(_)),
@@ -312,7 +325,7 @@ async fn model_not_found_maps_to_unreachable_without_retry() {
     cfg.model = "ppq/does-not-exist".into();
     cfg.followup_retry_count = 3;
 
-    let provider = OpenAiProvider::new(&cfg).unwrap();
+    let provider = build_provider(&cfg).expect("openai-compatible must route to OpenAI adapter");
     let err = provider.health_check().await.unwrap_err();
     match err {
         ReasoningError::Unreachable(msg) => {
