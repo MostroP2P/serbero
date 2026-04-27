@@ -215,24 +215,40 @@ pub async fn draft_and_send_initial_message(
     buyer_text: &str,
     seller_text: &str,
 ) -> Result<()> {
-    let buyer_content = format!("Buyer: {}", buyer_text);
-    let seller_content = format!("Seller: {}", seller_text);
+    // The opening message is the parties' first contact with Serbero,
+    // so we prefix a one-line self-introduction (FR-141 user-trust:
+    // see prompts/phase3-message-templates.md "First Clarifying
+    // Question"). The greeting is hardcoded here rather than left to
+    // the model so a flaky model output cannot drop it.
+    //
+    // No `Buyer: ` / `Seller: ` content prefixes any more — those
+    // were leaking transcript role labels into the user-facing chat
+    // (observed 2026-04-27, screenshot from real session). Inner
+    // event id collisions when buyer_text == seller_text are now
+    // prevented by the per-party `m-aud` tag passed to
+    // `build_wrap_with_audience` below.
+    let greeting = "Hello, I'm Serbero, an automated mediation assistant helping the \
+                    assigned solver review this dispute. ";
+    let buyer_content = format!("{greeting}{}", buyer_text.trim());
+    let seller_content = format!("{greeting}{}", seller_text.trim());
 
     // SC-107: addresses shared pubkey, not primary — `buyer_shared_keys`
     // / `seller_shared_keys` are the ECDH-derived per-trade keys
     // surfaced via the Mostro key-material adapter; the parties'
     // primary pubkeys never appear as recipients on outbound mediation
     // wraps.
-    let buyer_wrap = outbound::build_wrap(
+    let buyer_wrap = outbound::build_wrap_with_audience(
         serbero_keys,
         &buyer_shared_keys.public_key(),
         &buyer_content,
+        Some("buyer"),
     )
     .await?;
-    let seller_wrap = outbound::build_wrap(
+    let seller_wrap = outbound::build_wrap_with_audience(
         serbero_keys,
         &seller_shared_keys.public_key(),
         &seller_content,
+        Some("seller"),
     )
     .await?;
 
@@ -391,19 +407,33 @@ pub async fn draft_and_send_followup_message(
     buyer_text: &str,
     seller_text: &str,
 ) -> Result<()> {
-    let buyer_content = format!("Round {round_number}. Buyer: {buyer_text}");
-    let seller_content = format!("Round {round_number}. Seller: {seller_text}");
+    // No more `Round N. Buyer: …` / `Round N. Seller: …` content
+    // prefixes — those were internal counters leaking into the
+    // user-facing chat (observed 2026-04-27 screenshot). The
+    // round number stays as the `round_number` parameter for audit
+    // logs and the trace span, but is NOT mixed into the content
+    // shown to parties. Inner event id distinctness when buyer_text
+    // == seller_text is preserved via the `m-aud` tag passed to
+    // `build_wrap_with_audience`.
+    let _ = round_number; // round_number is now used only via the
+                          // tracing span; keep the binding alive so
+                          // refactors don't accidentally drop the
+                          // function arg.
+    let buyer_content = buyer_text.trim().to_string();
+    let seller_content = seller_text.trim().to_string();
 
-    let buyer_wrap = outbound::build_wrap(
+    let buyer_wrap = outbound::build_wrap_with_audience(
         serbero_keys,
         &buyer_shared_keys.public_key(),
         &buyer_content,
+        Some("buyer"),
     )
     .await?;
-    let seller_wrap = outbound::build_wrap(
+    let seller_wrap = outbound::build_wrap_with_audience(
         serbero_keys,
         &seller_shared_keys.public_key(),
         &seller_content,
+        Some("seller"),
     )
     .await?;
 
@@ -1264,12 +1294,28 @@ pub async fn deliver_summary(
         );
     }
 
-    // (6) `summary_pending → summary_delivered → closed`, only if
-    //     at least one recipient accepted the DM. Otherwise the
-    //     session is escalated the same way as the no-recipients
-    //     branch above — a persisted-but-undelivered summary
-    //     needs human attention, not an indefinite
-    //     `summary_pending` state.
+    // (6) `summary_pending → summary_delivered`, only if at least
+    //     one recipient accepted the DM. Otherwise the session is
+    //     escalated the same way as the no-recipients branch above
+    //     — a persisted-but-undelivered summary needs human
+    //     attention, not an indefinite `summary_pending` state.
+    //
+    //     The session intentionally STAYS in `summary_delivered`
+    //     here. We do NOT auto-flip to `closed`: the eligibility
+    //     predicate in `mediation::eligibility` treats `closed` as
+    //     "session ended, a fresh one may open" (e.g. re-dispute),
+    //     which would incorrectly let the engine tick reopen a
+    //     duplicate session against the same dispute right after we
+    //     just delivered a summary to the solver. Keeping the
+    //     session at `summary_delivered` blocks re-eligibility
+    //     (since `summary_delivered` is treated as live by the
+    //     eligibility EXISTS clause) while still being recognised
+    //     as terminal by `list_live_sessions` and
+    //     `latest_open_session_for`. The legal `summary_delivered
+    //     → closed` transition is taken later by the
+    //     `dispute_resolved` handler when Mostro closes the
+    //     dispute, or stays put indefinitely if the dispute never
+    //     resolves externally.
     if !any_sent {
         warn!(
             session_id = %session_id,
@@ -1294,7 +1340,6 @@ pub async fn deliver_summary(
         now,
     )
     .await?;
-    transition_session(conn, session_id, MediationSessionState::Closed, now).await?;
 
     Ok(())
 }

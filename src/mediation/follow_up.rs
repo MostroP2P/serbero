@@ -40,10 +40,14 @@
 //!    - `Summarize { classification, confidence }` →
 //!      [`deliver_summary`] owns the cooperative-summary progression
 //!      (`awaiting_response → classified → summary_pending →
-//!      summary_delivered → closed`). After `deliver_summary`
-//!      returns `Ok`, we advance the marker in a separate,
-//!      short-lived transaction because `deliver_summary` owns its
-//!      own transaction scope.
+//!      summary_delivered`). The legal `summary_delivered → closed`
+//!      transition is intentionally NOT taken here so the
+//!      eligibility predicate keeps blocking re-mediation; it fires
+//!      later from the `dispute_resolved` handler when Mostro
+//!      closes the dispute. After `deliver_summary` returns `Ok`,
+//!      we advance the marker in a separate, short-lived
+//!      transaction because `deliver_summary` owns its own
+//!      transaction scope.
 //!    - `Escalate(trigger)` → [`escalation::recommend`] transitions
 //!      the session to `escalation_recommended` and records the
 //!      handoff. The marker is irrelevant after that — the session

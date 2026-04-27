@@ -291,7 +291,12 @@ async fn summarize_branch_delivers_summary_once_and_closes_session() {
 
     // --- Assertions ---------------------------------------------
 
-    // (a) session ends `closed`, marker advanced.
+    // (a) session ends `summary_delivered`, marker advanced.
+    //     `deliver_summary` deliberately stops at `summary_delivered`
+    //     so the eligibility predicate keeps blocking re-mediation
+    //     for this dispute (the legal `summary_delivered → closed`
+    //     transition is taken later by the `dispute_resolved`
+    //     handler when Mostro closes the dispute).
     let (state, round_count, marker): (String, i64, i64) = {
         let c = conn.lock().await;
         c.query_row(
@@ -303,8 +308,8 @@ async fn summarize_branch_delivers_summary_once_and_closes_session() {
         .unwrap()
     };
     assert_eq!(
-        state, "closed",
-        "SC-114: deliver_summary must walk the session all the way to closed"
+        state, "summary_delivered",
+        "SC-114: deliver_summary must walk the session to summary_delivered"
     );
     assert_eq!(round_count, 1);
     assert_eq!(

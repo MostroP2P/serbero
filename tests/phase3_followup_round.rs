@@ -26,8 +26,11 @@
 //!   this call), the session is back in `awaiting_response`, and
 //!   `round_count_last_evaluated = 2` (two fresh inbounds
 //!   evaluated — the column name is historical; see FR-127). Each
-//!   round-1 row carries a `"Round 1. "` body prefix (the drafter's
-//!   marker, derived from the pre-advance value of the column).
+//!   round-1 row body equals the model-supplied follow-up text
+//!   verbatim — the round-number is no longer prefixed into the
+//!   user-visible content (it was leaking transcript scaffolding
+//!   into the chat), and is now carried out-of-band via the inner
+//!   event's `m-aud` audience tag instead.
 //! - SC-113: calling `advance_session_round` a second time without
 //!   a new Fresh ingest produces ZERO new outbound rows and leaves
 //!   the marker at `2`.
@@ -316,15 +319,22 @@ async fn second_round_outbound_fires_once_and_is_idempotent() {
         outbound_rows
     );
     // Last two rows are the round-1 pair. Both MUST carry the
-    // "Round 1. " prefix and the follow-up question.
+    // follow-up question verbatim — the visible "Round 1. " /
+    // "Buyer:" / "Seller:" prefixes were dropped (observed
+    // 2026-04-27 leaking transcript scaffolding into the chat).
+    // The round-number / audience now ride the inner event's
+    // `m-aud` tag instead, which keeps the
+    // `(session_id, inner_event_id)` uniqueness invariant on
+    // `mediation_messages` while leaving the user-visible body
+    // clean.
     for (_party, content) in &outbound_rows[2..] {
-        assert!(
-            content.starts_with("Round 1. "),
-            "SC-112: follow-up row must carry the round-number marker; got {content:?}"
-        );
         assert!(
             content.contains(follow_up_question),
             "SC-112: follow-up row must contain the question; got {content:?}"
+        );
+        assert!(
+            !content.starts_with("Round "),
+            "SC-112: follow-up row must NOT carry a Round-N prefix in user-visible body; got {content:?}"
         );
     }
     let round_1_parties: Vec<String> = outbound_rows[2..]

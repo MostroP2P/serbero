@@ -62,6 +62,26 @@ pub async fn build_wrap(
     shared_pubkey: &PublicKey,
     message: &str,
 ) -> Result<BuiltWrap> {
+    build_wrap_with_audience(sender_keys, shared_pubkey, message, None).await
+}
+
+/// Variant of [`build_wrap`] that adds a per-party `audience` tag to
+/// the inner event. The tag is non-content metadata and is NOT
+/// rendered by Mostro chat clients (which display only `inner.content`),
+/// but it changes the inner event id — so two simultaneous outbound
+/// messages whose text is identical between buyer and seller still
+/// produce distinct ids and don't violate the
+/// `(session_id, inner_event_id)` uniqueness invariant on
+/// `mediation_messages`. This is what lets the mediation drafters
+/// drop the visible `Buyer: ` / `Seller: ` / `Round N.` content
+/// prefixes that previously leaked transcript scaffolding into the
+/// user-facing message stream (observed 2026-04-27).
+pub async fn build_wrap_with_audience(
+    sender_keys: &Keys,
+    shared_pubkey: &PublicKey,
+    message: &str,
+    audience: Option<&str>,
+) -> Result<BuiltWrap> {
     // Guard empty / whitespace-only content here (not just in
     // `send_chat_message`) so direct callers like
     // `mediation::session::open_session` cannot persist a
@@ -77,7 +97,18 @@ pub async fn build_wrap(
     // keys (Mostrix comment: "Message is just sent inside rumor as
     // per https://mostro.network/protocol/chat.html please check
     // that.").
-    let inner_event = EventBuilder::text_note(message)
+    let mut inner_builder = EventBuilder::text_note(message);
+    if let Some(aud) = audience {
+        // `m-aud` = "mediation audience". Two-letter prefix avoids
+        // collisions with single-letter NIP-defined tag kinds and
+        // signals "metadata, not user-visible content" to anything
+        // walking the event tags.
+        inner_builder = inner_builder.tag(Tag::custom(
+            TagKind::custom("m-aud"),
+            [aud.to_string()],
+        ));
+    }
+    let inner_event = inner_builder
         .build(sender_keys.public_key())
         .sign(sender_keys)
         .await
