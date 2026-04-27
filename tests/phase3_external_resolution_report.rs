@@ -610,3 +610,126 @@ async fn idempotency_no_double_send() {
         "replay must not write a second notifications row"
     );
 }
+
+#[tokio::test]
+async fn summary_delivered_session_is_closed_on_resolution() {
+    // Regression for the post-2026-04-27 lifecycle change: after
+    // `deliver_summary` stops at `summary_delivered` (instead of
+    // auto-flipping to `closed`), the handler MUST still close the
+    // session when Mostro genuinely resolves the dispute.
+    // Otherwise the session would sit in `summary_delivered`
+    // forever, leaving the state machine asymmetric vs every other
+    // open-session shape.
+    let harness = TestHarness::new().await;
+    let solver = SolverListener::start(&harness.relay_url).await;
+    let conn = fresh_conn().await;
+    seed_dispute(
+        &conn,
+        "dispute-fr124-sd",
+        "notified",
+        Some(&solver.pubkey_hex()),
+    )
+    .await;
+    seed_session(
+        &conn,
+        "sess-fr124-sd",
+        "dispute-fr124-sd",
+        "summary_delivered",
+    )
+    .await;
+    seed_classification_event(
+        &conn,
+        "sess-fr124-sd",
+        "coordination_failure_resolvable",
+        0.83,
+    )
+    .await;
+
+    let client = publisher(&harness.relay_url, harness.serbero_keys.clone()).await;
+    let event = build_resolution_event(&harness.mostro_keys, "dispute-fr124-sd", "settled");
+
+    dispute_resolved::handle(
+        &ctx(
+            conn.clone(),
+            client,
+            vec![solver_cfg(solver.pubkey_hex(), SolverPermission::Read)],
+        ),
+        &event,
+    )
+    .await
+    .unwrap();
+
+    // Session must have transitioned `summary_delivered → closed`
+    // via the legal direct edge (no SupersededByHuman step — that
+    // variant is reserved for sessions still in an open state when
+    // a human pre-empted mediation).
+    let session_state: String = {
+        let guard = conn.lock().await;
+        guard
+            .query_row(
+                "SELECT state FROM mediation_sessions WHERE session_id = 'sess-fr124-sd'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap()
+    };
+    assert_eq!(
+        session_state, "closed",
+        "summary_delivered session MUST be closed on dispute_resolved"
+    );
+
+    // Exactly one `session_closed` audit row referencing this
+    // session, with the new `from_state = summary_delivered`
+    // discriminator so future debuggers can distinguish this close
+    // path from the open-session supersede-then-close path.
+    let (closed_count, payload): (i64, String) = {
+        let guard = conn.lock().await;
+        let count: i64 = guard
+            .query_row(
+                "SELECT COUNT(*) FROM mediation_events
+                 WHERE kind = 'session_closed' AND session_id = 'sess-fr124-sd'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let payload: String = guard
+            .query_row(
+                "SELECT payload_json FROM mediation_events
+                 WHERE kind = 'session_closed' AND session_id = 'sess-fr124-sd'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        (count, payload)
+    };
+    assert_eq!(closed_count, 1);
+    assert!(
+        payload.contains("\"from_state\":\"summary_delivered\""),
+        "session_closed payload must record from_state=summary_delivered; got: {payload}"
+    );
+
+    // No `superseded_by_human` event should fire — direct close
+    // skips that step (and the `SummaryDelivered → SupersededByHuman`
+    // transition is not legal anyway).
+    let supersede_count: i64 = {
+        let guard = conn.lock().await;
+        guard
+            .query_row(
+                "SELECT COUNT(*) FROM mediation_events
+                 WHERE kind = 'superseded_by_human' AND session_id = 'sess-fr124-sd'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap()
+    };
+    assert_eq!(
+        supersede_count, 0,
+        "summary_delivered close path must NOT write superseded_by_human"
+    );
+
+    // FR-124 final-report DM still fires for this dispute, same as
+    // every other shape.
+    assert!(solver.wait_for(1, 10).await);
+    assert_eq!(final_report_event_count(&conn).await, 1);
+    assert_eq!(notif_count(&conn, "dispute-fr124-sd").await, 1);
+}

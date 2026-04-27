@@ -270,6 +270,91 @@ pub async fn handle(ctx: &HandlerContext, event: &Event) -> Result<()> {
             closed_session_id = Some(session_id);
         }
 
+        // Phase 3 follow-up: a session that already reached
+        // `summary_delivered` is excluded from `latest_open_session_for`
+        // (and from `list_live_sessions`) because Serbero's mediation
+        // job for it is finished — but we still want it to land in
+        // `closed` once Mostro genuinely resolves the dispute, so the
+        // state machine doesn't leave summarized sessions parked at
+        // `summary_delivered` forever. The legal `summary_delivered
+        // → closed` direct transition is exactly what's needed here
+        // (no SupersededByHuman step — that variant is reserved for
+        // sessions still in an open state when a human pre-empted
+        // mediation). Eligibility was already blocked via the
+        // lifecycle move to `Resolved` above; this is purely a
+        // state-machine-hygiene close.
+        let summarized_session: Option<(String, String, String)> = match tx
+            .query_row(
+                "SELECT session_id, prompt_bundle_id, policy_hash
+                 FROM mediation_sessions
+                 WHERE dispute_id = ?1 AND state = 'summary_delivered'
+                 ORDER BY started_at DESC
+                 LIMIT 1",
+                rusqlite::params![dispute_id],
+                |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)),
+            ) {
+            Ok(row) => Some(row),
+            Err(rusqlite::Error::QueryReturnedNoRows) => None,
+            Err(e) => {
+                error!(
+                    dispute_id = %dispute_id,
+                    event_id = %event_id_hex,
+                    error = %e,
+                    "dispute_resolved: lookup of summary_delivered session failed"
+                );
+                return Ok(());
+            }
+        };
+
+        if let Some((session_id, pinned_bundle_id, pinned_policy_hash)) = summarized_session {
+            let closed_payload = json!({
+                "reason": "dispute_resolved_externally",
+                "dispute_id": dispute_id,
+                "from_state": "summary_delivered",
+            })
+            .to_string();
+            if let Err(e) = db::mediation::set_session_state(
+                &tx,
+                &session_id,
+                MediationSessionState::Closed,
+                now,
+            ) {
+                error!(
+                    session_id = %session_id,
+                    event_id = %event_id_hex,
+                    error = %e,
+                    "dispute_resolved: set_session_state(Closed from summary_delivered) failed"
+                );
+                return Ok(());
+            }
+            if let Err(e) = db::mediation_events::record_event(
+                &tx,
+                MediationEventKind::SessionClosed,
+                Some(&session_id),
+                &closed_payload,
+                None,
+                Some(&pinned_bundle_id),
+                Some(&pinned_policy_hash),
+                now,
+            ) {
+                error!(
+                    session_id = %session_id,
+                    event_id = %event_id_hex,
+                    error = %e,
+                    "dispute_resolved: record_event(SessionClosed from summary_delivered) failed"
+                );
+                return Ok(());
+            }
+            // Don't overwrite `closed_session_id` if the open-session
+            // branch above already set it — that would be a session
+            // table inconsistency (two non-terminal sessions for one
+            // dispute), but if it ever happens we want to keep the
+            // first close in the structured log.
+            if closed_session_id.is_none() {
+                closed_session_id = Some(session_id);
+            }
+        }
+
         if let Err(e) = tx.commit() {
             error!(
                 dispute_id = %dispute_id,
