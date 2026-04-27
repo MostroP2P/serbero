@@ -183,8 +183,12 @@ pub async fn open_dispute_session(
 /// keys), not one that also runs the take-flow.
 ///
 /// Contract:
-/// - Builds per-party gift-wraps with role prefixes so the inner
-///   event ids cannot collide on identical content.
+/// - Builds per-party gift-wraps. Inner event id uniqueness across
+///   buyer / seller wraps with otherwise identical body text comes
+///   from the `m-aud` audience tag attached to the inner event
+///   (see [`crate::chat::outbound::build_wrap_with_audience`]) —
+///   the user-visible content is NOT prefixed with role labels,
+///   which previously leaked transcript scaffolding into the chat.
 /// - Persists both outbound rows + the idempotent session-state
 ///   sync in a single DB transaction (transactional outbox: a
 ///   crash between commit and publish leaves the rows in place so a
@@ -354,11 +358,18 @@ pub async fn draft_and_send_initial_message(
 /// Sibling of [`draft_and_send_initial_message`] for the round-2+
 /// clarifying exchange. Differences from the initial drafter:
 ///
-/// 1. **Round-number marker in the body.** Each party-facing content
-///    is prefixed with `"Round {N}. {role}: "` so parties can
-///    distinguish a follow-up question from the opening one.
-///    `round_number` is the 1-based round counter (round 1 is the
-///    first follow-up, *after* the opening round).
+/// 1. **Round-number is tracing-only.** The `round_number` argument
+///    is *not* prefixed into the user-visible body any more (the
+///    visible `"Round {N}. {role}: "` marker leaked transcript
+///    scaffolding into the chat — observed 2026-04-27). It now
+///    exists only as a `round` field on the function's
+///    `#[instrument]` span. Audience uniqueness on the wire is
+///    handled out-of-band by the `m-aud` audience tag attached to
+///    the inner event (see
+///    [`crate::chat::outbound::build_wrap_with_audience`]), which
+///    keeps the `(session_id, inner_event_id)` invariant on
+///    `mediation_messages` intact even when buyer and seller
+///    receive identical body text.
 ///
 /// 2. **Idempotency marker.** The same transaction that commits the
 ///    two `mediation_messages` rows also calls
@@ -390,8 +401,10 @@ pub async fn draft_and_send_initial_message(
 /// The prompt bundle is NOT modified by this path: the `content`
 /// pushed through the gift-wrap is the per-party text (`buyer_text`
 /// / `seller_text`) as returned by `policy::evaluate` from the same
-/// pinned bundle the session was opened with. The round-number and
-/// role prefixes are cosmetic and do not affect `policy_hash`.
+/// pinned bundle the session was opened with. No body prefix is
+/// added (round and role are tracked via the span and the `m-aud`
+/// tag respectively), so this drafter does not perturb
+/// `policy_hash`.
 #[instrument(skip_all, fields(session_id = %session_id, round = round_number))]
 #[allow(clippy::too_many_arguments)]
 pub async fn draft_and_send_followup_message(
@@ -410,15 +423,11 @@ pub async fn draft_and_send_followup_message(
     // No more `Round N. Buyer: …` / `Round N. Seller: …` content
     // prefixes — those were internal counters leaking into the
     // user-facing chat (observed 2026-04-27 screenshot). The
-    // round number stays as the `round_number` parameter for audit
-    // logs and the trace span, but is NOT mixed into the content
-    // shown to parties. Inner event id distinctness when buyer_text
-    // == seller_text is preserved via the `m-aud` tag passed to
+    // round number is consumed only by the `#[instrument(...,
+    // fields(round = round_number))]` span on this function; inner
+    // event id distinctness when `buyer_text == seller_text` is
+    // preserved out-of-band via the `m-aud` tag passed to
     // `build_wrap_with_audience`.
-    let _ = round_number; // round_number is now used only via the
-                          // tracing span; keep the binding alive so
-                          // refactors don't accidentally drop the
-                          // function arg.
     let buyer_content = buyer_text.trim().to_string();
     let seller_content = seller_text.trim().to_string();
 
@@ -1052,10 +1061,16 @@ async fn run_engine_tick(
 
 /// Deliver a cooperative summary for a just-opened session (T060).
 ///
-/// State machine: `classified → summary_pending → summary_delivered
-/// → closed`. Each transition is written with
-/// [`db::mediation::set_session_state`] (which `debug_assert!`s
-/// legality in debug builds).
+/// State machine: `classified → summary_pending → summary_delivered`.
+/// The function intentionally STOPS at `summary_delivered`. The
+/// legal `summary_delivered → closed` transition is taken later by
+/// the `dispute_resolved` handler (when Mostro closes the dispute);
+/// keeping the session at `summary_delivered` is what makes the
+/// `mediation::eligibility` predicate keep blocking re-mediation in
+/// the meantime, since `closed` is treated as "session ended,
+/// re-dispute may open a fresh one." Each transition this function
+/// performs is written via [`db::mediation::set_session_state`]
+/// (which `debug_assert!`s legality in debug builds).
 ///
 /// Failure handling:
 /// - `summarizer::summarize` returning `Error::PolicyViolation(_)` →

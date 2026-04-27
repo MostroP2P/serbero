@@ -213,4 +213,124 @@ mod tests {
             );
         }
     }
+
+    /// The whole point of [`build_wrap_with_audience`] is to keep the
+    /// `(session_id, inner_event_id)` uniqueness invariant on
+    /// `mediation_messages` even when the user-visible body is
+    /// identical between the buyer and seller wraps. The `m-aud`
+    /// tag is metadata-only (Mostro chat clients render only
+    /// `inner.content`), but it changes the inner event id because
+    /// the id is `sha256(serialized_event)` and the tag is part of
+    /// the serialization.
+    #[tokio::test]
+    async fn audience_tag_makes_inner_event_id_unique_for_identical_body() {
+        let sender = Keys::generate();
+        let shared = Keys::generate();
+        let body = "Please confirm the fiat payment timing for this trade.";
+
+        let buyer_wrap = build_wrap_with_audience(&sender, &shared.public_key(), body, Some("buyer"))
+            .await
+            .unwrap();
+        let seller_wrap =
+            build_wrap_with_audience(&sender, &shared.public_key(), body, Some("seller"))
+                .await
+                .unwrap();
+
+        assert_ne!(
+            buyer_wrap.inner_event_id, seller_wrap.inner_event_id,
+            "different audience values MUST yield distinct inner event ids; otherwise the \
+             (session_id, inner_event_id) uniqueness on mediation_messages would collide \
+             when buyer and seller receive identical body text in the same round"
+        );
+    }
+
+    /// Decrypt the outer wrap with the shared key and re-parse the
+    /// inner Event so the test can inspect tags directly. Mirrors
+    /// what `unwrap_with_shared_key` does internally, but returns
+    /// the raw `Event` so the caller can poke at `event.tags`.
+    fn decrypt_inner(shared: &Keys, outer: &Event) -> Event {
+        let decrypted = nip44::decrypt(shared.secret_key(), &outer.pubkey, &outer.content)
+            .expect("NIP-44 decrypt must succeed");
+        Event::from_json(&decrypted).expect("inner JSON must parse")
+    }
+
+    /// Round-trip a wrap built with `Some("buyer")`: decrypt with the
+    /// shared key and verify (a) the user-visible body is unchanged
+    /// (the `m-aud` tag is metadata, not content) and (b) the inner
+    /// event carries an `m-aud` tag whose value matches the
+    /// audience we passed in.
+    #[tokio::test]
+    async fn audience_tag_is_attached_to_inner_event_and_body_is_unchanged() {
+        let serbero = Keys::generate();
+        let buyer = Keys::generate();
+        let shared = derive_shared_keys(&serbero, &buyer.public_key()).unwrap();
+        let body = "Could you share the fiat reference id and timezone?";
+
+        let built = build_wrap_with_audience(&serbero, &shared.public_key(), body, Some("buyer"))
+            .await
+            .unwrap();
+
+        // Body is verbatim — `m-aud` does not leak into the
+        // user-visible content rendered by Mostro chat clients.
+        let inner = unwrap_with_shared_key(&shared, &built.outer).unwrap();
+        assert_eq!(inner.content, body);
+        assert_eq!(inner.event_id, built.inner_event_id);
+
+        // The `m-aud` tag is present on the inner event with the
+        // expected audience value. Mostro chat clients ignore it,
+        // but the audit pipeline can read it back if needed.
+        let raw_inner = decrypt_inner(&shared, &built.outer);
+        let aud_values: Vec<String> = raw_inner
+            .tags
+            .iter()
+            .filter_map(|t| match t.kind() {
+                TagKind::Custom(name) if name.as_ref() == "m-aud" => {
+                    t.content().map(|s| s.to_string())
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            aud_values,
+            vec!["buyer".to_string()],
+            "inner event must carry exactly one `m-aud` tag with the audience we passed in"
+        );
+    }
+
+    /// Backward compatibility: `build_wrap_with_audience(.., None)`
+    /// MUST keep the user-visible body identical to the legacy
+    /// [`build_wrap`] entry point and MUST NOT attach an `m-aud`
+    /// tag, so older callers that don't care about per-party
+    /// uniqueness keep observing the historical behaviour.
+    /// (The exact `inner_event_id` cannot match across two calls
+    /// because `created_at` is wall-clock and the ephemeral signer
+    /// keys are regenerated per call; the contract we need here is
+    /// "no `m-aud` tag and same content".)
+    #[tokio::test]
+    async fn audience_none_matches_legacy_build_wrap_output() {
+        let sender = Keys::generate();
+        let shared = Keys::generate();
+        let body = "shared body for both calls";
+
+        let legacy = build_wrap(&sender, &shared.public_key(), body).await.unwrap();
+        let same = build_wrap_with_audience(&sender, &shared.public_key(), body, None)
+            .await
+            .unwrap();
+
+        let legacy_inner = unwrap_with_shared_key(&shared, &legacy.outer).unwrap();
+        let same_inner = unwrap_with_shared_key(&shared, &same.outer).unwrap();
+        assert_eq!(legacy_inner.content, same_inner.content);
+        assert_eq!(legacy_inner.content, body);
+
+        for outer in [&legacy.outer, &same.outer] {
+            let raw_inner = decrypt_inner(&shared, outer);
+            assert!(
+                !raw_inner.tags.iter().any(|t| matches!(
+                    t.kind(),
+                    TagKind::Custom(name) if name.as_ref() == "m-aud"
+                )),
+                "audience=None must NOT attach an `m-aud` tag (legacy compat)"
+            );
+        }
+    }
 }

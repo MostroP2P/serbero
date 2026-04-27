@@ -6,7 +6,10 @@
 //! - pre-transitions the session `awaiting_response → classified`;
 //! - invokes `deliver_summary` exactly once, which walks the
 //!   session through `classified → summary_pending →
-//!   summary_delivered → closed`;
+//!   summary_delivered` (the legal `summary_delivered → closed`
+//!   step is intentionally deferred to the `dispute_resolved`
+//!   handler so the eligibility predicate keeps blocking
+//!   re-mediation for the same dispute);
 //! - writes one `mediation_summaries` row;
 //! - delivers the solver DM (via the existing Phase 1/2 notifier);
 //! - advances `round_count_last_evaluated` via the post-commit marker
@@ -391,8 +394,8 @@ async fn summarize_branch_delivers_summary_once_and_closes_session() {
     );
 
     // (e) Idempotency for extra safety — calling advance_session_round
-    //     again on a closed session must skip (state gate blocks) and
-    //     NOT add more rows.
+    //     again on a session in `summary_delivered` must skip (state
+    //     gate blocks) and NOT add more rows.
     advance_session_round(
         &conn,
         &serbero_client,
@@ -406,7 +409,7 @@ async fn summarize_branch_delivers_summary_once_and_closes_session() {
         "mock-model",
     )
     .await
-    .expect("second call on a closed session must be a no-op");
+    .expect("second call on a session in summary_delivered must be a no-op");
 
     let (summary_rows_after, sg_after): (i64, i64) = {
         let c = conn.lock().await;

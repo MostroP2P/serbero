@@ -363,12 +363,18 @@ impl OpenAiProvider {
                             body = e.is_body(),
                         ),
                     );
-                    last_err = Some(ReasoningError::MalformedResponse(format!(
-                        "body bytes read failed (status={status}): {e}"
+                    // A body-read failure is a transport-layer
+                    // issue (mid-stream proxy hiccup, connection
+                    // reset, TLS drop) — the response was not
+                    // structurally malformed because we never got
+                    // far enough to parse it. Classify as
+                    // `Unreachable` so the public error contract
+                    // matches the actual failure mode and so the
+                    // retry budget treats it as transient (which it
+                    // already does via the `continue` below).
+                    last_err = Some(ReasoningError::Unreachable(format!(
+                        "body bytes read failed (status={status}): {e} | error_chain=[{chain}]"
                     )));
-                    // Body-read failures often correlate with
-                    // mid-stream proxy hiccups; treat as transient
-                    // and let the retry budget try again.
                     continue;
                 }
             };
@@ -581,7 +587,12 @@ pub(super) fn extract_json_object(raw: &str) -> &str {
                 depth += 1;
             }
             b'}' => {
-                depth -= 1;
+                // Clamp at zero so a stray leading `}` (before the
+                // first real `{`) cannot push depth negative — that
+                // would shift the depth==0 check off by one and
+                // cause the next opening brace to be skipped as a
+                // candidate `start`.
+                depth = (depth - 1).max(0);
                 if depth == 0 {
                     if let Some(s) = start {
                         return &raw[s..=i];
@@ -775,13 +786,16 @@ fn error_chain(err: &(dyn std::error::Error + 'static)) -> String {
 }
 
 /// One-stop diagnostic dump for a failed PPQ.ai/OpenAI-compatible
-/// response. Logs HTTP status, the headers operators most often
-/// need (`content-type`, `content-encoding`, `transfer-encoding`,
-/// `content-length`), and a truncated body preview so the next test
-/// run gives us actionable bytes instead of reqwest's generic
-/// "error decoding response body" string. Goes through `info!` so
-/// the default RUST_LOG=info config picks it up without operators
-/// having to re-run with debug.
+/// response. The `info!` line carries only PII-safe metadata —
+/// status, the headers operators most often need (`content-type`,
+/// `content-encoding`, `transfer-encoding`, `content-length`),
+/// body length, and a truncated SHA-256 prefix of the body — so
+/// the default `RUST_LOG=info` config gives operators something
+/// actionable without spilling the raw response. The truncated
+/// body preview is gated to `debug!` because the failure body can
+/// contain model-generated rationale text, which carries the same
+/// FR-120 / TC-103 sensitivity as a successful response and must
+/// not appear in general logs.
 fn log_response_failure(
     attempt: u32,
     status: reqwest::StatusCode,
@@ -796,6 +810,14 @@ fn log_response_failure(
             .unwrap_or("(absent)")
             .to_string()
     };
+    let (body_len, body_sha256_prefix) = match body_preview {
+        Some(s) => {
+            use nostr_sdk::hashes::Hash as _;
+            let h = nostr_sdk::hashes::sha256::Hash::hash(s.as_bytes());
+            (s.len(), h.to_string()[..16].to_string())
+        }
+        None => (0, "(none)".to_string()),
+    };
     info!(
         attempt,
         %status,
@@ -803,11 +825,19 @@ fn log_response_failure(
         content_encoding = %header("content-encoding"),
         transfer_encoding = %header("transfer-encoding"),
         content_length = %header("content-length"),
-        body_len = body_preview.map(|s| s.len()).unwrap_or(0),
-        body_preview = body_preview.map(|s| truncate(s, 800)).unwrap_or(""),
+        body_len,
+        body_sha256_prefix = %body_sha256_prefix,
         note = note,
         "openai-compatible response failure (diagnostic dump)"
     );
+    if let Some(s) = body_preview {
+        debug!(
+            attempt,
+            %status,
+            body_preview = truncate(s, 800),
+            "openai-compatible response failure (body preview at debug)"
+        );
+    }
 }
 
 /// UTF-8-safe truncate: returns a prefix of `s` that ends on a char
