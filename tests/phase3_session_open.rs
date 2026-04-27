@@ -240,10 +240,13 @@ async fn opens_session_and_dispatches_first_clarifying_message_to_both_parties()
     assert_eq!(rows.len(), 2, "expected one outbound row per party");
     let base = "Please confirm the fiat payment timing for this trade.";
     for (party, sp, content) in &rows {
-        // Each row's content must contain the clarifying question and
-        // identify the party. The exact prefix is a US1 implementation
-        // detail; the assertion is behavioral: the base text is there
-        // and the row's party label is honored.
+        // Each row's content must contain the clarifying question.
+        // The party label is no longer mirrored into the user-visible
+        // body (the "Buyer:" / "Seller:" prefixes were dropped on
+        // 2026-04-27 because they leaked transcript scaffolding into
+        // the chat); audience now rides the inner event's `m-aud` tag
+        // out-of-band, and the `party` column on `mediation_messages`
+        // remains the source of truth for routing assertions.
         assert!(
             content.contains(base),
             "content missing base text: {content}"
@@ -251,11 +254,9 @@ async fn opens_session_and_dispatches_first_clarifying_message_to_both_parties()
         match party.as_str() {
             "buyer" => {
                 assert_eq!(sp, &buyer_shared.public_key().to_hex());
-                assert!(content.to_lowercase().contains("buyer"));
             }
             "seller" => {
                 assert_eq!(sp, &seller_shared.public_key().to_hex());
-                assert!(content.to_lowercase().contains("seller"));
             }
             other => panic!("unexpected party {other}"),
         }

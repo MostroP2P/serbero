@@ -11,9 +11,10 @@
 use std::time::Duration;
 
 use async_trait::async_trait;
+use reqwest::header::{HeaderMap, ACCEPT_ENCODING};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use tracing::{debug, error, warn};
+use tracing::{debug, error, info, warn};
 
 use super::ReasoningProvider;
 use crate::error::Result;
@@ -59,6 +60,24 @@ impl OpenAiProvider {
         let timeout = Duration::from_secs(config.request_timeout_seconds.max(1));
         let http = Client::builder()
             .timeout(timeout)
+            // Disable connection pooling. Observed 2026-04-27 against
+            // PPQ.ai: the healthcheck request returns and the
+            // connection goes back to the pool; the next /chat/completions
+            // call reuses it and ~9 s later fails with hyper's generic
+            // "error decoding response body" on a chunked body of
+            // length 0. The pattern is consistent with a gateway that
+            // closes or half-closes idle keep-alive connections without
+            // signalling cleanly. A fresh TCP+TLS handshake per call is
+            // pennies compared to a failed mediation start.
+            .pool_max_idle_per_host(0)
+            // Force HTTP/1.1. PPQ.ai's TLS terminator may negotiate
+            // HTTP/2 via ALPN, but we have no way to debug an HTTP/2
+            // stream-level failure from the application layer; the
+            // observed body-decode failures could equally come from a
+            // RST_STREAM the client cannot surface. Pinning HTTP/1.1
+            // makes the wire predictable and matches what `curl
+            // --http1.1` shows when reproducing manually.
+            .http1_only()
             .build()
             .map_err(|e| crate::error::Error::Config(format!("reqwest build failed: {e}")))?;
         Ok(Self {
@@ -82,14 +101,43 @@ impl OpenAiProvider {
     }
 
     /// Some models (notably `gpt-5*`) reject explicit temperature
-    /// values and require the server-side default instead. In those
-    /// cases we omit the field entirely.
+    /// values and require the server-side default instead. PPQ.ai's
+    /// router/auto models (`autoclaw`, `auto`, `switchpoint/router`)
+    /// publish `supported_parameters: []` and silently mishandle any
+    /// extra field — observed 2026-04-27 with autoclaw, where sending
+    /// `response_format=json_object` produced a chunked body reqwest
+    /// could not decode. For those we omit both temperature AND
+    /// response_format; see [`Self::request_response_format`].
     fn request_temperature(&self, value: f64) -> Option<f64> {
-        if self.model.starts_with("gpt-5") {
+        if Self::is_minimal_param_model(&self.model) {
             None
         } else {
             Some(value)
         }
+    }
+
+    /// Whether to send `response_format = json_object`. Same caveat as
+    /// `request_temperature`: routers/auto models on PPQ.ai reject
+    /// this. The classifier still gets a JSON-shaped output because
+    /// the user prompt explicitly demands JSON; `parse_classification`
+    /// is tolerant of markdown fences via [`extract_json_object`].
+    fn request_response_format(&self) -> Option<ResponseFormat> {
+        if Self::is_minimal_param_model(&self.model) {
+            None
+        } else {
+            Some(ResponseFormat {
+                kind: "json_object".into(),
+            })
+        }
+    }
+
+    fn is_minimal_param_model(model: &str) -> bool {
+        // Curated list of models that publish `supported_parameters: []`
+        // (or a near-empty set) on the PPQ.ai catalog. Hardcoded
+        // because querying `/v1/models` per request would add latency
+        // and a failure mode for a near-static fact. Extend as new
+        // router/auto SKUs appear.
+        matches!(model, "autoclaw" | "auto" | "switchpoint/router") || model.starts_with("gpt-5")
     }
 }
 
@@ -193,9 +241,7 @@ impl ReasoningProvider for OpenAiProvider {
                     content: &prompt,
                 },
             ],
-            response_format: Some(ResponseFormat {
-                kind: "json_object".into(),
-            }),
+            response_format: self.request_response_format(),
             temperature: self.request_temperature(0.0),
         };
         let raw = self.post_chat(&body).await?;
@@ -251,16 +297,28 @@ impl OpenAiProvider {
         let mut last_err: Option<ReasoningError> = None;
         let total_attempts = self.retries.saturating_add(1);
         for attempt in 0..total_attempts {
+            // Pre-call diagnostics — operators correlating PPQ.ai
+            // failures need to know which knobs we sent.
             debug!(
                 attempt,
                 api_base = self.api_base,
                 model = self.model,
+                response_format = body.response_format.is_some(),
+                temperature = ?body.temperature,
+                message_count = body.messages.len(),
                 "openai reasoning call"
             );
             let resp = self
                 .http
                 .post(&url)
                 .bearer_auth(&self.api_key)
+                // reqwest is built without gzip/brotli/deflate/zstd
+                // features (see Cargo.toml). If a gateway like PPQ.ai
+                // gzipped the body anyway, `.bytes()` would surface a
+                // generic "error decoding response body" with no clue
+                // which content-encoding was at fault. Asking for
+                // identity makes that class of failure impossible.
+                .header(ACCEPT_ENCODING, "identity")
                 .json(body)
                 .timeout(self.timeout)
                 .send()
@@ -278,11 +336,62 @@ impl OpenAiProvider {
                     continue;
                 }
             };
-            if !resp.status().is_success() {
-                let status = resp.status();
-                let body = resp.text().await.unwrap_or_default();
-                let err =
-                    ReasoningError::Unreachable(format!("http {status}: {}", truncate(&body, 200)));
+            let status = resp.status();
+            let headers = resp.headers().clone();
+            // Read raw bytes BEFORE attempting any decoding. Two
+            // motivations: (1) we want one place that reports HTTP
+            // status + headers + body so a body-read failure is
+            // actionable; (2) `text()` previously masked everything
+            // behind the generic reqwest "error decoding response
+            // body" message — observed 2026-04-27 against PPQ.ai's
+            // `autoclaw` model.
+            let bytes = match resp.bytes().await {
+                Ok(b) => b,
+                Err(e) => {
+                    let chain = error_chain(&e);
+                    log_response_failure(
+                        attempt,
+                        status,
+                        &headers,
+                        None,
+                        &format!(
+                            "body bytes read failed: {e} | error_chain=[{chain}] | \
+                             is_timeout={timeout} is_connect={connect} is_body={body}",
+                            timeout = e.is_timeout(),
+                            connect = e.is_connect(),
+                            body = e.is_body(),
+                        ),
+                    );
+                    // A body-read failure is a transport-layer
+                    // issue (mid-stream proxy hiccup, connection
+                    // reset, TLS drop) — the response was not
+                    // structurally malformed because we never got
+                    // far enough to parse it. Classify as
+                    // `Unreachable` so the public error contract
+                    // matches the actual failure mode and so the
+                    // retry budget treats it as transient (which it
+                    // already does via the `continue` below).
+                    last_err = Some(ReasoningError::Unreachable(format!(
+                        "body bytes read failed (status={status}): {e} | error_chain=[{chain}]"
+                    )));
+                    continue;
+                }
+            };
+            // UTF-8 with replacement chars: never panic on bad bytes,
+            // just give us something we can log and parse.
+            let text_str = String::from_utf8_lossy(&bytes).into_owned();
+            if !status.is_success() {
+                log_response_failure(
+                    attempt,
+                    status,
+                    &headers,
+                    Some(&text_str),
+                    "non-success HTTP status",
+                );
+                let err = ReasoningError::Unreachable(format!(
+                    "http {status}: {}",
+                    truncate(&text_str, 200)
+                ));
                 // Retryable: request timeout (408), rate limited (429),
                 // or any 5xx server error. Everything else is a
                 // permanent client error — fail fast instead of
@@ -298,19 +407,37 @@ impl OpenAiProvider {
                     return Err(err);
                 }
             }
-            let text = resp
-                .text()
-                .await
-                .map_err(|e| ReasoningError::MalformedResponse(e.to_string()))?;
-            let parsed: ChatResponse = serde_json::from_str(&text).map_err(|e| {
-                ReasoningError::MalformedResponse(format!("{e}: body={}", truncate(&text, 200)))
-            })?;
+            let parsed: ChatResponse = match serde_json::from_str(&text_str) {
+                Ok(p) => p,
+                Err(e) => {
+                    log_response_failure(
+                        attempt,
+                        status,
+                        &headers,
+                        Some(&text_str),
+                        &format!("response envelope JSON parse failed: {e}"),
+                    );
+                    return Err(ReasoningError::MalformedResponse(format!(
+                        "{e}: body={}",
+                        truncate(&text_str, 200)
+                    )));
+                }
+            };
             let content = parsed
                 .choices
                 .into_iter()
                 .next()
                 .and_then(|c| c.message.content)
-                .ok_or_else(|| ReasoningError::MalformedResponse("empty choices".into()))?;
+                .ok_or_else(|| {
+                    log_response_failure(
+                        attempt,
+                        status,
+                        &headers,
+                        Some(&text_str),
+                        "OpenAI envelope had no choices[0].message.content",
+                    );
+                    ReasoningError::MalformedResponse("empty choices".into())
+                })?;
             // FR-120 / TC-103 invariant: the full model output may
             // contain party statements and a free-text rationale that
             // the spec forbids in general logs. We emit metadata only
@@ -428,10 +555,62 @@ pub(super) fn build_summary_prompt(r: &SummaryRequest) -> String {
     )
 }
 
+/// Walk the response body looking for a balanced top-level JSON
+/// object. Tolerates models that wrap their JSON in markdown fences,
+/// preamble like `Here is the response:`, or trailing chatter — all
+/// of which we observed against PPQ.ai's router models when
+/// `response_format = json_object` cannot be sent. Returns the
+/// original input unchanged when no balanced object is found, so
+/// `serde_json::from_str` can still produce its native error message.
+pub(super) fn extract_json_object(raw: &str) -> &str {
+    let bytes = raw.as_bytes();
+    let mut depth: i32 = 0;
+    let mut start: Option<usize> = None;
+    let mut in_string = false;
+    let mut escape = false;
+    for (i, &b) in bytes.iter().enumerate() {
+        if in_string {
+            if escape {
+                escape = false;
+            } else if b == b'\\' {
+                escape = true;
+            } else if b == b'"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match b {
+            b'"' => in_string = true,
+            b'{' => {
+                if depth == 0 {
+                    start = Some(i);
+                }
+                depth += 1;
+            }
+            b'}' => {
+                // Clamp at zero so a stray leading `}` (before the
+                // first real `{`) cannot push depth negative — that
+                // would shift the depth==0 check off by one and
+                // cause the next opening brace to be skipped as a
+                // candidate `start`.
+                depth = (depth - 1).max(0);
+                if depth == 0 {
+                    if let Some(s) = start {
+                        return &raw[s..=i];
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    raw
+}
+
 pub(super) fn parse_classification(
     raw: &str,
 ) -> std::result::Result<ClassificationResponse, ReasoningError> {
-    let parsed: ClassificationJson = serde_json::from_str(raw).map_err(|e| {
+    let candidate = extract_json_object(raw);
+    let parsed: ClassificationJson = serde_json::from_str(candidate).map_err(|e| {
         ReasoningError::MalformedResponse(format!("{e}: body={}", truncate(raw, 200)))
     })?;
     let classification = match parsed.classification.as_str() {
@@ -575,6 +754,91 @@ pub(super) fn parse_summary(raw: &str) -> std::result::Result<SummaryResponse, R
         suggested_next_step,
         rationale: RationaleText(rationale_text),
     })
+}
+
+/// Walk `std::error::Error::source()` and join the chain into one
+/// string. reqwest's top-level `Display` is the famously useless
+/// "error decoding response body"; the actionable detail (hyper
+/// stream errors, rustls trailers, etc.) is one or two `source()`
+/// hops down. Format: ` -> caused by: <next> -> caused by: <next>`.
+fn error_chain(err: &(dyn std::error::Error + 'static)) -> String {
+    let mut out = String::new();
+    let mut cur: Option<&(dyn std::error::Error + 'static)> = err.source();
+    let mut depth = 0;
+    while let Some(s) = cur {
+        if depth > 0 {
+            out.push_str(" | ");
+        }
+        out.push_str(&format!("caused by: {s}"));
+        cur = s.source();
+        depth += 1;
+        // Defensive cap: error chains beyond ~8 hops mean someone is
+        // boxing in a loop, not a real diagnostic signal.
+        if depth > 8 {
+            out.push_str(" | (truncated)");
+            break;
+        }
+    }
+    if out.is_empty() {
+        "(no source chain)".into()
+    } else {
+        out
+    }
+}
+
+/// One-stop diagnostic dump for a failed PPQ.ai/OpenAI-compatible
+/// response. The `info!` line carries only PII-safe metadata —
+/// status, the headers operators most often need (`content-type`,
+/// `content-encoding`, `transfer-encoding`, `content-length`),
+/// body length, and a truncated SHA-256 prefix of the body — so
+/// the default `RUST_LOG=info` config gives operators something
+/// actionable without spilling the raw response. The truncated
+/// body preview is gated to `debug!` because the failure body can
+/// contain model-generated rationale text, which carries the same
+/// FR-120 / TC-103 sensitivity as a successful response and must
+/// not appear in general logs.
+fn log_response_failure(
+    attempt: u32,
+    status: reqwest::StatusCode,
+    headers: &HeaderMap,
+    body_preview: Option<&str>,
+    note: &str,
+) {
+    let header = |name: &str| -> String {
+        headers
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("(absent)")
+            .to_string()
+    };
+    let (body_len, body_sha256_prefix) = match body_preview {
+        Some(s) => {
+            use nostr_sdk::hashes::Hash as _;
+            let h = nostr_sdk::hashes::sha256::Hash::hash(s.as_bytes());
+            (s.len(), h.to_string()[..16].to_string())
+        }
+        None => (0, "(none)".to_string()),
+    };
+    info!(
+        attempt,
+        %status,
+        content_type = %header("content-type"),
+        content_encoding = %header("content-encoding"),
+        transfer_encoding = %header("transfer-encoding"),
+        content_length = %header("content-length"),
+        body_len,
+        body_sha256_prefix = %body_sha256_prefix,
+        note = note,
+        "openai-compatible response failure (diagnostic dump)"
+    );
+    if let Some(s) = body_preview {
+        debug!(
+            attempt,
+            %status,
+            body_preview = truncate(s, 800),
+            "openai-compatible response failure (body preview at debug)"
+        );
+    }
 }
 
 /// UTF-8-safe truncate: returns a prefix of `s` that ends on a char
@@ -771,6 +1035,82 @@ mod tests {
         }"#;
         let err = parse_classification(raw).unwrap_err();
         assert!(matches!(err, ReasoningError::MalformedResponse(_)));
+    }
+
+    #[test]
+    fn extract_json_object_strips_markdown_fences() {
+        // PPQ.ai router models that ignore `response_format` often
+        // wrap JSON in ```json ... ``` fences. The classifier must
+        // still parse it.
+        let raw = "Sure! Here is the response:\n\
+                   ```json\n\
+                   {\"classification\":\"unclear\",\"confidence\":0.5,\"suggested_action\":\"summarize\",\"rationale\":\"\"}\n\
+                   ```\n\
+                   Let me know if you need more.";
+        let extracted = extract_json_object(raw);
+        assert!(extracted.starts_with('{') && extracted.ends_with('}'));
+        let parsed = parse_classification(raw).unwrap();
+        assert_eq!(parsed.classification, ClassificationLabel::Unclear);
+    }
+
+    #[test]
+    fn extract_json_object_handles_nested_braces_and_strings() {
+        // Strings containing `{` / `}` must not throw off the
+        // brace-balancing scan, otherwise we'd cut JSON in half.
+        let raw = r#"prelude {"a":"x{y}z","b":{"c":1}} trailing"#;
+        let extracted = extract_json_object(raw);
+        assert_eq!(extracted, r#"{"a":"x{y}z","b":{"c":1}}"#);
+    }
+
+    #[test]
+    fn extract_json_object_passthrough_when_no_object_found() {
+        // Bare text → return as-is so serde's own error message wins.
+        let raw = "no json here at all";
+        assert_eq!(extract_json_object(raw), raw);
+    }
+
+    #[test]
+    fn minimal_param_models_omit_response_format_and_temperature() {
+        // PPQ.ai routers (`autoclaw` etc.) publish supported_parameters
+        // = []. Sending response_format/temperature against them
+        // produced "error decoding response body" on 2026-04-27.
+        for model in ["autoclaw", "auto", "switchpoint/router", "gpt-5.4-mini"] {
+            let cfg = ReasoningConfig {
+                api_key: "k".into(),
+                model: model.to_string(),
+                ..ReasoningConfig::default()
+            };
+            let provider = OpenAiProvider::new(&cfg).unwrap();
+            assert!(
+                provider.request_response_format().is_none(),
+                "{model}: response_format must be omitted"
+            );
+            assert!(
+                provider.request_temperature(0.0).is_none(),
+                "{model}: temperature must be omitted"
+            );
+        }
+    }
+
+    #[test]
+    fn full_param_models_keep_response_format_and_temperature() {
+        for model in ["gpt-4o-mini", "claude-opus-4.7", "gpt-4.1"] {
+            let cfg = ReasoningConfig {
+                api_key: "k".into(),
+                model: model.to_string(),
+                ..ReasoningConfig::default()
+            };
+            let provider = OpenAiProvider::new(&cfg).unwrap();
+            assert!(
+                provider.request_response_format().is_some(),
+                "{model}: response_format must be sent"
+            );
+            assert_eq!(
+                provider.request_temperature(0.0),
+                Some(0.0),
+                "{model}: temperature must be sent"
+            );
+        }
     }
 
     #[test]

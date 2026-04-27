@@ -8,7 +8,7 @@
 //! Pins the observable outcomes listed in the task spec:
 //! - Exactly one `mediation_summaries` row for the session.
 //! - Its `rationale_id` matches the SHA-256 of the rationale text.
-//! - `mediation_sessions.state = 'closed'`.
+//! - `mediation_sessions.state = 'summary_delivered'`.
 //! - Exactly one `notifications` row, `notif_type = 'mediation_summary'`,
 //!   `solver_pubkey = '<assigned solver>'` (targeted routing because
 //!   `assigned_solver` is set).
@@ -210,7 +210,12 @@ async fn cooperative_summary_closes_session_and_notifies_assigned_solver() {
     assert_eq!(rationale_id, sha256_hex(rationale));
     assert_eq!(summary_text_db, summary_text);
 
-    // (b) mediation_sessions.state = 'closed'
+    // (b) mediation_sessions.state = 'summary_delivered'.
+    //     `deliver_summary` deliberately stops here; the legal
+    //     `summary_delivered → closed` transition is taken later by
+    //     the `dispute_resolved` handler so the eligibility predicate
+    //     keeps blocking re-mediation until Mostro actually closes
+    //     the dispute.
     let state: String = {
         let c = conn.lock().await;
         c.query_row(
@@ -220,7 +225,7 @@ async fn cooperative_summary_closes_session_and_notifies_assigned_solver() {
         )
         .unwrap()
     };
-    assert_eq!(state, "closed");
+    assert_eq!(state, "summary_delivered");
 
     // (c) Exactly one `notifications` row, targeted to the assigned
     //     solver, with notif_type = mediation_summary AND

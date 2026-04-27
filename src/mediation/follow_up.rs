@@ -40,10 +40,14 @@
 //!    - `Summarize { classification, confidence }` →
 //!      [`deliver_summary`] owns the cooperative-summary progression
 //!      (`awaiting_response → classified → summary_pending →
-//!      summary_delivered → closed`). After `deliver_summary`
-//!      returns `Ok`, we advance the marker in a separate,
-//!      short-lived transaction because `deliver_summary` owns its
-//!      own transaction scope.
+//!      summary_delivered`). The legal `summary_delivered → closed`
+//!      transition is intentionally NOT taken here so the
+//!      eligibility predicate keeps blocking re-mediation; it fires
+//!      later from the `dispute_resolved` handler when Mostro
+//!      closes the dispute. After `deliver_summary` returns `Ok`,
+//!      we advance the marker in a separate, short-lived
+//!      transaction because `deliver_summary` owns its own
+//!      transaction scope.
 //!    - `Escalate(trigger)` → [`escalation::recommend`] transitions
 //!      the session to `escalation_recommended` and records the
 //!      handoff. The marker is irrelevant after that — the session
@@ -373,10 +377,14 @@ pub async fn advance_session_round(
                 .await;
                 return Ok(());
             }
-            // Mark the round evaluated. Even though the session is
-            // now terminal (closed), keeping the marker current is
-            // a cheap invariant — a future tick never mistakes an
-            // evaluated round for an unevaluated one.
+            // Mark the round evaluated. The session has just landed
+            // in `summary_delivered` (the legal `summary_delivered →
+            // closed` transition is deferred to the
+            // `dispute_resolved` handler so the eligibility predicate
+            // keeps blocking re-mediation), but keeping the marker
+            // current is a cheap invariant either way — a future
+            // tick never mistakes an evaluated round for an
+            // unevaluated one.
             let new_marker = total_fresh_inbounds;
             let mut guard = conn.lock().await;
             let tx = guard.transaction()?;
