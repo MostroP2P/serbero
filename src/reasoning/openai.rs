@@ -137,8 +137,7 @@ impl OpenAiProvider {
         // because querying `/v1/models` per request would add latency
         // and a failure mode for a near-static fact. Extend as new
         // router/auto SKUs appear.
-        matches!(model, "autoclaw" | "auto" | "switchpoint/router")
-            || model.starts_with("gpt-5")
+        matches!(model, "autoclaw" | "auto" | "switchpoint/router") || model.starts_with("gpt-5")
     }
 }
 
@@ -389,8 +388,10 @@ impl OpenAiProvider {
                     Some(&text_str),
                     "non-success HTTP status",
                 );
-                let err =
-                    ReasoningError::Unreachable(format!("http {status}: {}", truncate(&text_str, 200)));
+                let err = ReasoningError::Unreachable(format!(
+                    "http {status}: {}",
+                    truncate(&text_str, 200)
+                ));
                 // Retryable: request timeout (408), rate limited (429),
                 // or any 5xx server error. Everything else is a
                 // permanent client error — fail fast instead of

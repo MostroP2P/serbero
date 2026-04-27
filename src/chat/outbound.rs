@@ -103,10 +103,7 @@ pub async fn build_wrap_with_audience(
         // collisions with single-letter NIP-defined tag kinds and
         // signals "metadata, not user-visible content" to anything
         // walking the event tags.
-        inner_builder = inner_builder.tag(Tag::custom(
-            TagKind::custom("m-aud"),
-            [aud.to_string()],
-        ));
+        inner_builder = inner_builder.tag(Tag::custom(TagKind::custom("m-aud"), [aud.to_string()]));
     }
     let inner_event = inner_builder
         .build(sender_keys.public_key())
@@ -228,9 +225,10 @@ mod tests {
         let shared = Keys::generate();
         let body = "Please confirm the fiat payment timing for this trade.";
 
-        let buyer_wrap = build_wrap_with_audience(&sender, &shared.public_key(), body, Some("buyer"))
-            .await
-            .unwrap();
+        let buyer_wrap =
+            build_wrap_with_audience(&sender, &shared.public_key(), body, Some("buyer"))
+                .await
+                .unwrap();
         let seller_wrap =
             build_wrap_with_audience(&sender, &shared.public_key(), body, Some("seller"))
                 .await
@@ -312,7 +310,9 @@ mod tests {
         let shared = Keys::generate();
         let body = "shared body for both calls";
 
-        let legacy = build_wrap(&sender, &shared.public_key(), body).await.unwrap();
+        let legacy = build_wrap(&sender, &shared.public_key(), body)
+            .await
+            .unwrap();
         let same = build_wrap_with_audience(&sender, &shared.public_key(), body, None)
             .await
             .unwrap();

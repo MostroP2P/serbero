@@ -283,16 +283,21 @@ pub async fn handle(ctx: &HandlerContext, event: &Event) -> Result<()> {
         // mediation). Eligibility was already blocked via the
         // lifecycle move to `Resolved` above; this is purely a
         // state-machine-hygiene close.
-        let summarized_session: Option<(String, String, String)> = match tx
-            .query_row(
-                "SELECT session_id, prompt_bundle_id, policy_hash
+        let summarized_session: Option<(String, String, String)> = match tx.query_row(
+            "SELECT session_id, prompt_bundle_id, policy_hash
                  FROM mediation_sessions
                  WHERE dispute_id = ?1 AND state = 'summary_delivered'
                  ORDER BY started_at DESC
                  LIMIT 1",
-                rusqlite::params![dispute_id],
-                |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)),
-            ) {
+            rusqlite::params![dispute_id],
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                ))
+            },
+        ) {
             Ok(row) => Some(row),
             Err(rusqlite::Error::QueryReturnedNoRows) => None,
             Err(e) => {
