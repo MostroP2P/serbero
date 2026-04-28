@@ -66,27 +66,44 @@ case the parties might have resolved themselves.
 
 ## Rust-Side Parsing
 
-`ClassificationResponse` (`src/models/reasoning.rs`) gains:
+`ClassificationResponse` (`src/models/reasoning.rs`) gains three
+additive plain Rust fields:
 
 ```rust
 pub struct ClassificationResponse {
     // ... existing fields ...
 
-    #[serde(default)]
     pub human_requested: bool,
+    pub buyer_language: Option<String>,
+    pub seller_language: Option<String>,
 }
 ```
 
-`serde(default)` covers two scenarios:
+`ClassificationResponse` itself has no `serde` derives — it is the
+adapter-facing shape, not a wire type. The actual wire-format
+deserialization lives in each adapter's intermediate struct
+(`ClassificationJson` in `src/reasoning/openai.rs`, mirrored on the
+Anthropic adapter via the shared parser); those structs DO carry
+`#[serde(default)]` on `human_requested`, `buyer_language`, and
+`seller_language`. The default-fallback covers two scenarios:
 
 1. A provider that hasn't yet been updated to emit the field.
-   The struct deserialises with `human_requested = false`; the
-   opt-in path silently never fires for that provider until the
-   provider's prompt + parser are updated. A startup-time health-
-   check (R-003 in `research.md`) logs a warning when the
-   provider doesn't echo a probe.
+   The wire struct deserialises with `human_requested = false` (and
+   `buyer_language`/`seller_language` as `None`); the opt-in path
+   silently never fires for that provider until the provider's
+   prompt + parser are updated. A startup-time health-check (R-003
+   in `research.md`) logs a warning when the provider doesn't echo
+   a probe.
 2. Round 0 / round 1 responses where the prompt didn't request
    the field. Same default; no false escalation.
+
+The adapter is responsible for translating the wire struct into a
+`ClassificationResponse` with the explicit fields populated — i.e.
+mapping a missing/false `human_requested` to
+`human_requested: false`. New adapters that hand-build a
+`ClassificationResponse` (e.g. test fixtures) must therefore set
+the three fields explicitly; the type system enforces this since
+the struct has no `Default` impl.
 
 ## Policy-Side Behaviour
 

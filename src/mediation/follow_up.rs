@@ -313,10 +313,22 @@ pub async fn advance_session_round(
     if is_post_invitation_summary_delivered
         && !matches!(decision, policy::PolicyDecision::Escalate(_))
     {
+        // Advance the evaluator marker before returning. Otherwise
+        // FR-127's idempotency gate at the top of the next tick
+        // would still see `total_fresh_inbounds > round_count_last_evaluated`
+        // and re-classify the same reply on every cycle — burning
+        // reasoning-provider budget on a session that's already
+        // settled into "wait silently for a possible human-assistance
+        // request".
+        let mut guard = conn.lock().await;
+        let tx = guard.transaction()?;
+        db::mediation::advance_evaluator_marker(&tx, session_id, total_fresh_inbounds)?;
+        tx.commit()?;
         debug!(
             state = %info.state,
             ?decision,
-            "advance_session_round: post-invitation reply did not request human; staying in summary_delivered"
+            round_count_marked = total_fresh_inbounds,
+            "advance_session_round: post-invitation reply did not request human; staying in summary_delivered (marker advanced)"
         );
         return Ok(());
     }
@@ -709,14 +721,13 @@ async fn draft_and_send_self_resolution_invitation(
                 persisted_at: now,
             },
         )?;
-        // Self-resolution audit row. The `rationale_id` is the
-        // producing classification's content hash; the `confidence`
-        // and per-party language codes go into the structured
-        // payload so a forensic replay can reconstruct exactly which
-        // template section each party received. `None` for
-        // rationale_id is allowed (defensive: a session with a
-        // missing classification_produced row still gets the audit
-        // row, just without the FK link).
+        // Self-resolution audit row. `rationale_id` is the producing
+        // classification's content hash, embedded inside `payload_json`
+        // per the contract (the dedicated `mediation_events.rationale_id`
+        // column stays NULL on this kind). The `classification_confidence`
+        // and per-party language codes go into the structured payload
+        // so a forensic replay can reconstruct exactly which template
+        // section each party received.
         db::mediation_events::record_self_resolution_offered(
             &tx,
             session_id,
@@ -724,7 +735,6 @@ async fn draft_and_send_self_resolution_invitation(
             confidence,
             buyer_language,
             seller_language,
-            &prompt_bundle.self_resolution.fallback_language,
             &prompt_bundle.id,
             &prompt_bundle.policy_hash,
             now,

@@ -86,9 +86,20 @@ audit-row sequence MUST be:
 5. session_closed                (existing — emitted later by dispute_resolved)
 ```
 
-Steps 3 and 4 land in the same transaction. Step 5 lands later
-when Mostro genuinely resolves the underlying dispute (existing
-`dispute_resolved` handler).
+Step 3 (`self_resolution_offered`) lands in the **same**
+transaction as the two outbound `mediation_messages` rows — the
+self-resolution audit row and the per-party gift-wrap drafts
+commit atomically so a crash between them is impossible. Step 4
+(`summary_generated`) lands in a **subsequent** transaction owned
+by `deliver_summary`, because the summarizer runs an LLM HTTP call
+between the two. A crash between TX1 and TX2 leaves the audit row
++ outbound rows in place; the next tick's idempotency check sees
+the `self_resolution_offered` row, falls through the cooperative
+branch's pre-condition (`!prior_offered`), and the legacy
+`Summarize` path picks up the still-pending summary delivery.
+
+Step 5 lands later when Mostro genuinely resolves the underlying
+dispute (existing `dispute_resolved` handler).
 
 ## Audit-Row Sequence on the Opt-In Path
 

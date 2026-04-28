@@ -89,11 +89,14 @@ solver_auth_retry_max_attempts = 24
 # kill-switch below).
 self_resolution_threshold = 0.75
 
-# Master kill-switch. When false, the branch is bypassed entirely
-# and Serbero behaves byte-for-byte as before this feature shipped
-# (the legacy cooperative-summary path runs unchanged). Use during
-# incident windows or audit reviews when you want to force every
-# cooperative case through human review.
+# Master kill-switch. When `self_resolution_enabled = false`, the
+# cooperative branch is bypassed entirely and Serbero behaves
+# byte-for-byte as before this feature shipped: a high-confidence
+# `coordination_failure_resolvable` round falls through to the
+# legacy cooperative-summary path (the LLM still summarizes for the
+# solver; the parties just don't receive the templated invitation).
+# Use during incident windows or audit reviews when you want the
+# legacy summarize-only flow without any party-facing nudge.
 self_resolution_enabled = true
 
 # ---------------------------------------------------------------------------

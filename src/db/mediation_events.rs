@@ -673,39 +673,52 @@ pub fn record_escalation_dispatch_parse_failed(
 /// self-resolution invitation audit row.
 ///
 /// Emitted before the outbound gift-wraps publish so the audit row is
-/// durable even if relay publishing fails. Payload carries the
-/// per-party language codes the dispatch arm resolved (used for
-/// forensic replay per `quickstart.md`); the full rationale text
-/// stays in `reasoning_rationales`, referenced by `rationale_id`,
-/// per FR-120.
+/// durable even if relay publishing fails. Payload shape matches
+/// `specs/005-cooperative-self-resolution/contracts/audit-events.md`:
+/// `classification_confidence` (not `confidence`),
+/// `rationale_id` lives **inside** the payload (the dedicated
+/// `mediation_events.rationale_id` column stays NULL — that column
+/// is reserved for rationales whose lifecycle is owned by the audit
+/// row itself, while here the rationale is owned by the round-N
+/// classification call), and `languages` carries only `buyer` and
+/// `seller` codes (no `fallback`).
+///
+/// Takes `&Transaction<'_>` (not `&Connection`) so the audit row can
+/// only be written inside an outer transaction — same shape as
+/// `record_escalation_dispatched` and matching the FR-001 invariant
+/// that the audit row + the two outbound `mediation_messages` rows
+/// commit atomically.
 #[allow(clippy::too_many_arguments)]
 pub fn record_self_resolution_offered(
-    conn: &Connection,
+    tx: &Transaction<'_>,
     session_id: &str,
     rationale_id: Option<&str>,
-    confidence: f64,
+    classification_confidence: f64,
     buyer_language: Option<&str>,
     seller_language: Option<&str>,
-    fallback_language: &str,
     prompt_bundle_id: &str,
     policy_hash: &str,
     occurred_at: i64,
 ) -> Result<i64> {
     let payload = json!({
-        "confidence": confidence,
+        "session_id": session_id,
+        "classification_confidence": classification_confidence,
+        "rationale_id": rationale_id,
         "languages": {
             "buyer": buyer_language,
             "seller": seller_language,
-            "fallback": fallback_language,
         },
     })
     .to_string();
+    // Per the contract, the dedicated `rationale_id` column stays
+    // NULL on this kind — the rationale-id reference travels in the
+    // payload only.
     record_event(
-        conn,
+        tx,
         MediationEventKind::SelfResolutionOffered,
         Some(session_id),
         &payload,
-        rationale_id,
+        None,
         Some(prompt_bundle_id),
         Some(policy_hash),
         occurred_at,

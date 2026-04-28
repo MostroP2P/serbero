@@ -319,7 +319,11 @@ pub async fn evaluate(
             confidence,
         } if mediation_cfg.self_resolution_enabled
             && templates_present
-            && (confidence as f32) >= mediation_cfg.self_resolution_threshold
+            // Compare in f64 to avoid losing precision on the
+            // higher-precision classifier confidence — the threshold
+            // is f32 by config-contract but the comparison stays
+            // honest.
+            && confidence >= f64::from(mediation_cfg.self_resolution_threshold)
             && !prior_offered =>
         {
             debug!(

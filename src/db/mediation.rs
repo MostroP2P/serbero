@@ -393,6 +393,13 @@ pub fn set_session_state(
 /// `superseded_by_human`) are excluded — a dispute that was closed
 /// or escalated earlier must not block a later session open.
 ///
+/// Feature 005 carve-out (mirrors [`list_live_sessions`]): a session
+/// in `summary_delivered` that received the cooperative-self-resolution
+/// invitation is still considered live so the human-assistance opt-in
+/// path can fire on a later party reply. The carve-out is scoped by
+/// the `self_resolution_offered` audit row, so legacy
+/// `summary_delivered` sessions stay terminal.
+///
 /// Used by the engine to gate session opens and, crucially, re-checked
 /// inside the final open-session DB transaction to close the
 /// check-then-act race.
@@ -403,15 +410,25 @@ pub fn latest_open_session_for(
     use std::str::FromStr;
 
     match conn.query_row(
-        "SELECT session_id, state FROM mediation_sessions
-         WHERE dispute_id = ?1
-           AND state NOT IN (
-               'closed',
-               'summary_delivered',
-               'escalation_recommended',
-               'superseded_by_human'
+        "SELECT s.session_id, s.state FROM mediation_sessions s
+         WHERE s.dispute_id = ?1
+           AND (
+               s.state NOT IN (
+                   'closed',
+                   'summary_delivered',
+                   'escalation_recommended',
+                   'superseded_by_human'
+               )
+               OR (
+                   s.state = 'summary_delivered'
+                   AND EXISTS (
+                       SELECT 1 FROM mediation_events e
+                       WHERE e.session_id = s.session_id
+                         AND e.kind = 'self_resolution_offered'
+                   )
+               )
            )
-         ORDER BY started_at DESC
+         ORDER BY s.started_at DESC
          LIMIT 1",
         params![dispute_id],
         |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),

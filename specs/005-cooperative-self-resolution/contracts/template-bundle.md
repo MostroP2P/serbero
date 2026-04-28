@@ -77,15 +77,25 @@ shipping value: `"en"`.
 The keyword-audit unit test (`tests/phase3_self_resolution_template_audit.rs`)
 loads the bundle and walks every `(language, entry)` cell, asserting
 that the rendered string `format!("{} {}", template,
-human_assistance_optin)` does **NOT** contain any of the following
-substrings (case-insensitive, ASCII-folded for the diacritic
-languages):
+human_assistance_optin)` does **NOT** contain any of the language's
+banned substrings.
 
-| Language tag | Banned substrings |
-|--------------|-------------------|
-| `en` | `release`, `settle`, `cancel`, `disburse`, `transfer`, `refund`, `payout` |
-| `es` | `liberar`, `liberación`, `liquidar`, `cancelar`, `transferir`, `reembolsar`, `desembolsar` |
-| `pt` | `liberar`, `libertar`, `liquidar`, `cancelar`, `transferir`, `reembolsar`, `desembolsar` |
+Comparison normalization: both the rendered string and each banned
+substring are passed through `str::to_ascii_lowercase` before the
+substring check. ASCII byte case is folded; non-ASCII bytes
+(diacritics like `ñ`, `ç`, `á`) are preserved verbatim in both
+sides of the comparison. This is intentional — adding Unicode
+normalization would pull a new dependency for negligible coverage
+gain (the banned list already enumerates the diacritic-bearing
+forms, and translators submit copy in NFC the keyboard input
+methods produce). New languages MUST follow the same rule: list the
+diacritic-bearing forms verbatim.
+
+| Language tag | Banned substrings (representative; canonical list lives in the test file) |
+|--------------|---------------------------------------------------------------------------|
+| `en` | `release`, `settle`, `cancel`, `disburse`, `transfer`, `refund`, `payout`, `wire`, `force-close`, `admin-settle`, `admin-cancel` |
+| `es` | `liberar`, `liberen`, `cancelar`, `cancelen`, `saldar`, `transferir`, `transferencia`, `reembolsar`, `reembolso`, `pagar`, `paguen`, `envíen el fiat`, `envíen los sats`, `cerrar la disputa` |
+| `pt` | `liberar`, `liberem`, `cancelar`, `cancelem`, `saldar`, `transferir`, `transferência`, `reembolsar`, `reembolso`, `pagar`, `paguem`, `enviem o fiat`, `enviem os sats`, `fechar a disputa` |
 
 The list is the union of "verbs that name a fund-moving action in
 the Mostro / P2P-escrow domain" plus their direct cognates. New
