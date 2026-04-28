@@ -14,7 +14,24 @@ pub fn load_config(path: &Path) -> Result<Config> {
     apply_env_overrides(&mut config);
     resolve_reasoning_api_key(&mut config)?;
     validate_escalation(&config)?;
+    validate_mediation(&config)?;
     Ok(config)
+}
+
+/// Validate the `[mediation]` section for Feature 005 keys.
+/// `self_resolution_threshold` is an f32 confidence floor that must
+/// land in `0.0..=1.0`. Anything else would silently misbehave (e.g.
+/// `1.5` would never trigger; `-0.1` would always trigger). The
+/// `self_resolution_enabled` bool needs no validation. Loud failure
+/// matches the pattern in `validate_escalation`.
+fn validate_mediation(config: &Config) -> Result<()> {
+    let t = config.mediation.self_resolution_threshold;
+    if !(0.0..=1.0).contains(&t) || t.is_nan() {
+        return Err(Error::Config(format!(
+            "[mediation].self_resolution_threshold must be in [0.0, 1.0] (got {t})"
+        )));
+    }
+    Ok(())
 }
 
 /// Validate the `[escalation]` section. The defaults are safe, so

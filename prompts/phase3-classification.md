@@ -89,3 +89,33 @@ Hard rules:
   clarification.
 - Each question stands on its own — don't cross-reference the other
   party's text, since each party only ever sees theirs.
+
+## Per-Party Language (Feature 005)
+
+The classifier MUST also emit two top-level fields:
+
+- `buyer_language` (string | null): ISO-639-1 code (e.g. `"en"`,
+  `"es"`, `"pt"`) inferred from the buyer's most recent reply. Set
+  to `null` when the latest message has no buyer content or is too
+  short to disambiguate. Required on **every** round, not only on
+  rounds following a `self_resolution_offered` event — the runtime
+  uses the codes to drive the cooperative-self-resolution dispatch
+  arm and keeps round-0/1 ready in case the cooperative branch
+  fires later.
+- `seller_language` (string | null): same shape, for the seller.
+
+## Human-Assistance Opt-In (Feature 005, conditional)
+
+On rounds following a `self_resolution_offered` audit event for the
+session — the runtime appends the request to the prompt only on
+those rounds — the classifier MUST also emit:
+
+- `human_requested` (boolean): `true` if and only if the latest
+  party reply contains an explicit, unambiguous request for a human
+  solver / mediator / arbitrator. Examples: `"I want a human"`,
+  `"necesito un humano"`, `"please escalate to a person"`, `"que un
+  humano lo revise"`, `"preciso de um humano"`. Vague phrasings like
+  `"this is taking too long"` or `"I'm frustrated"` do **NOT** count.
+  When in doubt, set to `false` — a false negative defers escalation
+  by one round (the user re-states); a false positive escalates to
+  human prematurely on a case the parties might have resolved.

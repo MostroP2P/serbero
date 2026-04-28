@@ -312,6 +312,26 @@ pub async fn handle(ctx: &HandlerContext, event: &Event) -> Result<()> {
         };
 
         if let Some((session_id, pinned_bundle_id, pinned_policy_hash)) = summarized_session {
+            // Feature 005 / SC-002: if the session being closed
+            // received a cooperative-self-resolution invitation
+            // earlier, emit the `cooperative_case_closed_externally`
+            // structured trace event so operators can compute the
+            // external-resolution rate + median elapsed seconds.
+            // Best-effort lookup; a DB error here must NOT prevent
+            // the close from committing.
+            if let Ok(Some(invited_at)) =
+                db::mediation_events::first_self_resolution_offered_at(&tx, &session_id)
+            {
+                tracing::info!(
+                    event = "cooperative_case_closed_externally",
+                    session_id = %session_id,
+                    dispute_id = %dispute_id,
+                    elapsed_secs = now.saturating_sub(invited_at),
+                    prompt_bundle_id = %pinned_bundle_id,
+                    occurred_at_unix = now,
+                    "cooperative_case_closed_externally"
+                );
+            }
             let closed_payload = json!({
                 "reason": "dispute_resolved_externally",
                 "dispute_id": dispute_id,

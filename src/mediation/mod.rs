@@ -25,6 +25,7 @@ pub mod follow_up;
 pub mod policy;
 pub mod report;
 pub mod router;
+pub mod self_resolution;
 pub mod session;
 pub mod start;
 pub mod summarizer;
@@ -2022,6 +2023,7 @@ async fn run_ingest_tick(
                 solvers,
                 provider_name,
                 model_name,
+                mediation_cfg,
             )
             .await
             .unwrap_or_else(|e| {

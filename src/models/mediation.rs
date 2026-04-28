@@ -39,6 +39,14 @@ impl MediationSessionState {
                 | (Classified, FollowUpPending)
                 | (Classified, SummaryPending)
                 | (FollowUpPending, AwaitingResponse)
+                // Recovery edge: a dispatch arm that pre-flipped
+                // `awaiting_response → classified` and then saw
+                // `deliver_summary` (or its self-resolution
+                // sibling) fail must be able to revert the
+                // session so the next ingest tick can retry. Same
+                // shape as the FollowUpPending → AwaitingResponse
+                // recovery already permitted.
+                | (Classified, AwaitingResponse)
                 | (SummaryPending, SummaryDelivered)
                 | (SummaryDelivered, Closed)
                 // Escalation from any non-terminal state.
@@ -47,6 +55,16 @@ impl MediationSessionState {
                 | (Classified, EscalationRecommended)
                 | (FollowUpPending, EscalationRecommended)
                 | (SummaryPending, EscalationRecommended)
+                // Cooperative-self-resolution opt-in (FR-008): after
+                // the invitation lands the session sits in
+                // `summary_delivered` waiting for either
+                // dispute_resolved (legacy close path) or a party
+                // reply that asks for human assistance. The latter
+                // routes through `policy::evaluate` →
+                // `Escalate(PartyRequestedHuman)` and re-opens the
+                // session into `escalation_recommended` for Phase 4
+                // dispatch.
+                | (SummaryDelivered, EscalationRecommended)
                 | (EscalationRecommended, Closed)
                 // Superseded by human taking the dispute via Mostro.
                 | (Opening, SupersededByHuman)
@@ -131,6 +149,13 @@ pub enum EscalationTrigger {
     /// the audit trail instead of leaving it stranded at
     /// `summary_pending`.
     NotificationFailed,
+    /// FR-008 — a party explicitly requested human assistance after
+    /// the cooperative self-resolution invitation was sent. The
+    /// classifier flag short-circuits `policy::evaluate` to
+    /// `Escalate(PartyRequestedHuman)` regardless of the round's
+    /// classification label, so the assigned solver picks up the
+    /// case via the existing Phase 4 escalation pipeline.
+    PartyRequestedHuman,
 }
 
 impl fmt::Display for EscalationTrigger {
@@ -149,6 +174,7 @@ impl fmt::Display for EscalationTrigger {
             PolicyBundleMissing => "policy_bundle_missing",
             InvalidModelOutput => "invalid_model_output",
             NotificationFailed => "notification_failed",
+            PartyRequestedHuman => "party_requested_human",
         };
         f.write_str(s)
     }
@@ -265,6 +291,16 @@ mod tests {
         assert!(SummaryPending.can_transition_to(SummaryDelivered));
         assert!(SummaryDelivered.can_transition_to(Closed));
         assert!(Opening.can_transition_to(EscalationRecommended));
+        // Cooperative-self-resolution opt-in: a party reply that
+        // explicitly asks for a human after the invitation must be
+        // able to lift the session out of `summary_delivered` into
+        // `escalation_recommended` (FR-008).
+        assert!(SummaryDelivered.can_transition_to(EscalationRecommended));
+        // Recovery edge: a dispatch arm that pre-flipped to
+        // `classified` and then saw the summary delivery fail
+        // reverts the session to `awaiting_response` so the next
+        // ingest tick can retry.
+        assert!(Classified.can_transition_to(AwaitingResponse));
         assert!(EscalationRecommended.can_transition_to(Closed));
         assert!(AwaitingResponse.can_transition_to(SupersededByHuman));
         assert!(SupersededByHuman.can_transition_to(Closed));
@@ -278,6 +314,9 @@ mod tests {
         assert!(!AwaitingResponse.can_transition_to(AwaitingResponse)); // self
         assert!(!Classified.can_transition_to(Opening));
         assert!(!EscalationRecommended.can_transition_to(AwaitingResponse));
+        // The cooperative-opt-in edge is one-way: an escalated
+        // session never falls back into `summary_delivered`.
+        assert!(!EscalationRecommended.can_transition_to(SummaryDelivered));
     }
 
     #[test]

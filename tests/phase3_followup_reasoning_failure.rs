@@ -279,6 +279,7 @@ async fn three_consecutive_classify_failures_escalate_reasoning_unavailable() {
             std::slice::from_ref(&solver_cfg),
             "mock-provider",
             "mock-model",
+            &serbero::models::MediationConfig::default(),
         )
         .await
         .unwrap_or_else(|e| {

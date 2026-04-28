@@ -79,6 +79,9 @@ impl ReasoningProvider for SummarizingProvider {
             suggested_action: SuggestedAction::Summarize,
             rationale: RationaleText("parties appear aligned; recommending closure".into()),
             flags: Vec::new(),
+            human_requested: false,
+            buyer_language: None,
+            seller_language: None,
         })
     }
 
@@ -277,6 +280,14 @@ async fn summarize_branch_delivers_summary_once_and_closes_session() {
         suggested_next_step: "Solver should invoke AdminSettleDispute on Mostro.".into(),
     });
 
+    // Disable the cooperative-self-resolution branch so this test
+    // continues to assert the legacy Summarize path. Feature 005
+    // dedicated tests cover the cooperative dispatch separately.
+    let legacy_cfg = serbero::models::MediationConfig {
+        self_resolution_enabled: false,
+        ..serbero::models::MediationConfig::default()
+    };
+
     advance_session_round(
         &conn,
         &serbero_client,
@@ -288,6 +299,7 @@ async fn summarize_branch_delivers_summary_once_and_closes_session() {
         std::slice::from_ref(&solver_cfg),
         "mock-provider",
         "mock-model",
+        &legacy_cfg,
     )
     .await
     .expect("advance_session_round first call must succeed on Summarize branch");
@@ -407,6 +419,7 @@ async fn summarize_branch_delivers_summary_once_and_closes_session() {
         std::slice::from_ref(&solver_cfg),
         "mock-provider",
         "mock-model",
+        &legacy_cfg,
     )
     .await
     .expect("second call on a session in summary_delivered must be a no-op");

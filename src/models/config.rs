@@ -122,6 +122,20 @@ pub struct MediationConfig {
     pub solver_auth_retry_max_total_seconds: u64,
     #[serde(default = "default_solver_auth_retry_max_attempts")]
     pub solver_auth_retry_max_attempts: u32,
+
+    // --- Feature 005 (cooperative self-resolution) ---
+    /// Confidence floor at which Serbero invites parties to coordinate
+    /// the resolution among themselves on a
+    /// `coordination_failure_resolvable` classification. Range
+    /// `0.0..=1.0`; validated at load time. FR-010.
+    #[serde(default = "default_self_resolution_threshold")]
+    pub self_resolution_threshold: f32,
+    /// Master kill-switch for the cooperative self-resolution
+    /// branch. `false` bypasses the branch entirely and Serbero
+    /// behaves byte-for-byte as before this feature shipped (SC-007).
+    /// FR-011.
+    #[serde(default = "default_self_resolution_enabled")]
+    pub self_resolution_enabled: bool,
 }
 
 impl Default for MediationConfig {
@@ -135,6 +149,8 @@ impl Default for MediationConfig {
             ),
             solver_auth_retry_max_total_seconds: default_solver_auth_retry_max_total_seconds(),
             solver_auth_retry_max_attempts: default_solver_auth_retry_max_attempts(),
+            self_resolution_threshold: default_self_resolution_threshold(),
+            self_resolution_enabled: default_self_resolution_enabled(),
         }
     }
 }
@@ -156,6 +172,13 @@ fn default_solver_auth_retry_max_total_seconds() -> u64 {
 }
 fn default_solver_auth_retry_max_attempts() -> u32 {
     24
+}
+
+fn default_self_resolution_threshold() -> f32 {
+    0.75
+}
+fn default_self_resolution_enabled() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Deserialize)]

@@ -41,9 +41,18 @@ limits, and honesty discipline. These rules apply to every reasoning call.
 
 - Allowed: classification labels with confidence scores, clarifying
   questions sourced from message templates, structured summaries for
-  the solver, explicit escalation recommendations.
+  the solver, explicit escalation recommendations, the
+  `self_resolution_offered` cooperative-invitation event (templated
+  per-party message in the party's detected language with an explicit
+  human-escalation opt-in; the templates are static repo strings that
+  MUST NOT name a fund-moving action, see
+  `prompts/phase3-self-resolution.md`).
 - Disallowed: autonomous dispute closure, binding decisions,
-  fund-related instructions, fabricated factual claims.
+  fund-related instructions, fabricated factual claims. The
+  fund-action prohibition extends to every party-facing surface,
+  including the cooperative-self-resolution invitation — that file's
+  contents are an extension of the Phase 3 authority boundary, not an
+  exception to it.
 
 ## Language Matching
 

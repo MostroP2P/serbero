@@ -68,6 +68,37 @@ solver_auth_retry_max_interval_seconds = 3600
 solver_auth_retry_max_total_seconds = 86400
 solver_auth_retry_max_attempts = 24
 
+# --- Cooperative self-resolution branch (Feature 005) ---
+#
+# When the classifier marks a session as
+# `coordination_failure_resolvable` with high confidence, Serbero can
+# send a templated, language-matched invitation to both parties
+# inviting them to coordinate the next step among themselves, with an
+# explicit human-assistance opt-in. The party-facing text is a
+# static repo string (`prompts/phase3-self-resolution.md`) — the LLM
+# only decides WHETHER the branch fires, never WHAT to say. Templates
+# never name a fund-moving action; the keyword-audit unit test
+# refuses to merge a bundle that violates this.
+
+# Confidence floor at which the cooperative branch fires. Range
+# 0.0..=1.0; values outside that range fail loudly at startup. Set
+# higher (e.g. 0.90) to fire only on very-high-confidence cooperative
+# cases. A value of 1.0 only nearly disables the branch (a classifier
+# that emits exactly 1.0 still passes the gate); the strict, only
+# disable mechanism is `self_resolution_enabled = false` (the
+# kill-switch below).
+self_resolution_threshold = 0.75
+
+# Master kill-switch. When `self_resolution_enabled = false`, the
+# cooperative branch is bypassed entirely and Serbero behaves
+# byte-for-byte as before this feature shipped: a high-confidence
+# `coordination_failure_resolvable` round falls through to the
+# legacy cooperative-summary path (the LLM still summarizes for the
+# solver; the parties just don't receive the templated invitation).
+# Use during incident windows or audit reviews when you want the
+# legacy summarize-only flow without any party-facing nudge.
+self_resolution_enabled = true
+
 # ---------------------------------------------------------------------------
 # [reasoning] — the AI provider that classifies disputes and drafts
 # clarifying messages during Phase 3 guided mediation.

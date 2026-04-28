@@ -42,6 +42,15 @@ serialized form is canonical; the enum name is the cross-reference.
   Evidence: rationale id.
 - **`notification_failed`** (`NotificationFailed`): Summary/escalation
   notification undeliverable. Evidence: notification error.
+- **`party_requested_human`** (`PartyRequestedHuman`): On a round
+  following a `self_resolution_offered` event, a party reply
+  contained an explicit, unambiguous request for human assistance
+  (Feature 005, FR-008). The classifier detects the request via the
+  `human_requested: bool` field and `policy::evaluate` short-circuits
+  to this trigger before the regular classification-label dispatch.
+  Evidence: rationale id of the round that detected the request;
+  reference to the prior `self_resolution_offered` audit row that
+  scoped the short-circuit.
 
 ## Handoff Package
 
