@@ -125,27 +125,29 @@ impl SelfResolutionTemplates {
 /// `[en]/[es]/[pt]` bundle) falls back rather than producing an
 /// empty message.
 ///
-/// Output shape: `format!("{template} {optin}")`. The single space
-/// separator is enough — both halves end with their own
-/// punctuation. Forensic replay (per `quickstart.md`) reproduces
-/// the same string by re-running this function on the bundle bytes
-/// pinned by `mediation_events.policy_hash` for the
+/// Returns `Some(rendered)` when the bundle has either the
+/// requested code or the configured fallback. Returns `None`
+/// **only** when the bundle is structurally invalid (no entry for
+/// the fallback either) — the parser rejects this case at load
+/// time, but the function returns `None` instead of a diagnostic
+/// placeholder so the dispatch caller can detect the impossible
+/// state and skip the cooperative branch rather than emitting an
+/// operator-facing message in the user's chat.
+///
+/// Output shape on the `Some` branch:
+/// `format!("{template} {optin}")`. The single space separator is
+/// enough — both halves end with their own punctuation. Forensic
+/// replay (per `quickstart.md`) reproduces the same string by
+/// re-running this function on the bundle bytes pinned by
+/// `mediation_events.policy_hash` for the
 /// `self_resolution_offered` row.
-pub fn render_for(language_code: Option<&str>, templates: &SelfResolutionTemplates) -> String {
-    match templates.entry_for(language_code) {
-        Some(entry) => format!("{} {}", entry.template, entry.human_assistance_optin),
-        None => {
-            // Structurally invalid bundle — should have been caught at
-            // load time. Render a deliberately ugly placeholder rather
-            // than panicking so the engine tick keeps running; the
-            // operator sees the breakage in the relayed message body
-            // and the audit row payload.
-            String::from(
-                "[serbero: self-resolution template bundle is missing the configured fallback language; \
-                 please ask the operator to verify prompts/phase3-self-resolution.md]",
-            )
-        }
-    }
+pub fn render_for(
+    language_code: Option<&str>,
+    templates: &SelfResolutionTemplates,
+) -> Option<String> {
+    templates
+        .entry_for(language_code)
+        .map(|entry| format!("{} {}", entry.template, entry.human_assistance_optin))
 }
 
 #[cfg(test)]
@@ -177,7 +179,7 @@ mod tests {
     #[test]
     fn render_known_language() {
         let bundle = fixture_bundle();
-        let out = render_for(Some("es"), &bundle);
+        let out = render_for(Some("es"), &bundle).expect("known language must render");
         assert!(out.starts_with("Gracias"));
         assert!(out.contains("asistencia humana"));
     }
@@ -185,14 +187,14 @@ mod tests {
     #[test]
     fn render_falls_back_when_language_unknown() {
         let bundle = fixture_bundle();
-        let out = render_for(Some("de"), &bundle);
+        let out = render_for(Some("de"), &bundle).expect("fallback must render");
         assert!(out.starts_with("Thanks for the update"));
     }
 
     #[test]
     fn render_falls_back_when_language_none() {
         let bundle = fixture_bundle();
-        let out = render_for(None, &bundle);
+        let out = render_for(None, &bundle).expect("fallback must render");
         assert!(out.starts_with("Thanks for the update"));
     }
 
@@ -207,13 +209,17 @@ mod tests {
     }
 
     #[test]
-    fn render_returns_placeholder_when_bundle_lacks_fallback() {
+    fn render_returns_none_when_bundle_lacks_fallback() {
         let bundle = SelfResolutionTemplates {
             by_language: HashMap::new(),
             fallback_language: "en".into(),
         };
-        let out = render_for(Some("en"), &bundle);
-        assert!(out.starts_with("[serbero:"));
+        // Structurally invalid bundle — `entry_for` is None, so the
+        // renderer returns None rather than emit an operator-facing
+        // diagnostic into a party's chat. Callers detect None and
+        // skip the cooperative branch.
+        assert!(render_for(Some("en"), &bundle).is_none());
+        assert!(render_for(None, &bundle).is_none());
     }
 
     #[test]

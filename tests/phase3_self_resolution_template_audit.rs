@@ -157,7 +157,9 @@ fn rendered_strings_carry_no_banned_fund_action_keywords() {
     // covers the exact bytes a party receives.
     for (code, entry) in &bundle.by_language {
         let banned = banned_langs[code.as_str()];
-        let rendered = render_for(Some(code), &bundle).to_ascii_lowercase();
+        let rendered = render_for(Some(code), &bundle)
+            .unwrap_or_else(|| panic!("[{code}] render_for returned None for a present language"))
+            .to_ascii_lowercase();
         for needle in banned {
             assert!(
                 !rendered.contains(needle),
@@ -183,7 +185,8 @@ fn rendered_strings_include_human_assistance_optin_marker() {
             !entry.human_assistance_optin.trim().is_empty(),
             "[{code}] human_assistance_optin must be non-empty"
         );
-        let rendered = render_for(Some(code), &bundle);
+        let rendered = render_for(Some(code), &bundle)
+            .unwrap_or_else(|| panic!("[{code}] render_for returned None for a present language"));
         assert!(
             rendered.contains(&entry.human_assistance_optin),
             "[{code}] rendered string did not include the configured opt-in sentence"

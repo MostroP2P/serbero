@@ -709,8 +709,42 @@ async fn draft_and_send_self_resolution_invitation(
         .resolve_effective_language(seller_language)
         .map(|s| s.to_string());
 
-    let buyer_msg = self_resolution::render_for(buyer_language, &prompt_bundle.self_resolution);
-    let seller_msg = self_resolution::render_for(seller_language, &prompt_bundle.self_resolution);
+    let buyer_msg = match self_resolution::render_for(
+        buyer_language,
+        &prompt_bundle.self_resolution,
+    ) {
+        Some(s) => s,
+        None => {
+            // Structurally invalid bundle (no requested-language
+            // entry AND no fallback entry). The parser rejects this
+            // at load time and `policy::evaluate` gates on
+            // `templates_present`, so this is unreachable in normal
+            // flow; we return `Ok(false)` rather than panic so the
+            // dispatch caller skips the publishes + state walk
+            // cleanly. Skipping is safer than emitting a diagnostic
+            // operator-message into a party's chat.
+            warn!(
+                session_id = %session_id,
+                "draft_and_send_self_resolution_invitation: bundle is missing fallback-language section; \
+                 skipping cooperative invitation"
+            );
+            return Ok(false);
+        }
+    };
+    let seller_msg = match self_resolution::render_for(
+        seller_language,
+        &prompt_bundle.self_resolution,
+    ) {
+        Some(s) => s,
+        None => {
+            warn!(
+                session_id = %session_id,
+                "draft_and_send_self_resolution_invitation: bundle is missing fallback-language section; \
+                 skipping cooperative invitation"
+            );
+            return Ok(false);
+        }
+    };
 
     let buyer_wrap = outbound::build_wrap_with_audience(
         serbero_keys,
