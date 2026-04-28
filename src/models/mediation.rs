@@ -39,6 +39,14 @@ impl MediationSessionState {
                 | (Classified, FollowUpPending)
                 | (Classified, SummaryPending)
                 | (FollowUpPending, AwaitingResponse)
+                // Recovery edge: a dispatch arm that pre-flipped
+                // `awaiting_response → classified` and then saw
+                // `deliver_summary` (or its self-resolution
+                // sibling) fail must be able to revert the
+                // session so the next ingest tick can retry. Same
+                // shape as the FollowUpPending → AwaitingResponse
+                // recovery already permitted.
+                | (Classified, AwaitingResponse)
                 | (SummaryPending, SummaryDelivered)
                 | (SummaryDelivered, Closed)
                 // Escalation from any non-terminal state.
@@ -288,6 +296,11 @@ mod tests {
         // able to lift the session out of `summary_delivered` into
         // `escalation_recommended` (FR-008).
         assert!(SummaryDelivered.can_transition_to(EscalationRecommended));
+        // Recovery edge: a dispatch arm that pre-flipped to
+        // `classified` and then saw the summary delivery fail
+        // reverts the session to `awaiting_response` so the next
+        // ingest tick can retry.
+        assert!(Classified.can_transition_to(AwaitingResponse));
         assert!(EscalationRecommended.can_transition_to(Closed));
         assert!(AwaitingResponse.can_transition_to(SupersededByHuman));
         assert!(SupersededByHuman.can_transition_to(Closed));

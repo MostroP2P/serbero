@@ -570,6 +570,51 @@ pub async fn advance_session_round(
                     error = %e,
                     "advance_session_round: deliver_summary after self-resolution invitation failed"
                 );
+                // Revert the pre-flip so the session is retryable
+                // on the next ingest tick. Without this, the
+                // session sits in `classified` forever — the gate
+                // at the top of `advance_session_round` only
+                // accepts `awaiting_response` or
+                // post-invitation `summary_delivered`. The state
+                // machine permits `classified → awaiting_response`
+                // as a recovery edge (see `models::mediation`).
+                // A failure to revert is logged loudly but not
+                // bubbled — `handle_reasoning_failure` still runs
+                // so the consecutive-failure counter advances and
+                // can eventually escalate.
+                {
+                    let now = match super::current_ts_secs() {
+                        Ok(t) => t,
+                        Err(ts_err) => {
+                            warn!(
+                                error = %ts_err,
+                                "advance_session_round: clock unavailable; cannot revert state to awaiting_response"
+                            );
+                            handle_reasoning_failure(
+                                conn,
+                                client,
+                                session_id,
+                                &info.dispute_id,
+                                solvers,
+                                prompt_bundle,
+                            )
+                            .await;
+                            return Ok(());
+                        }
+                    };
+                    let guard = conn.lock().await;
+                    if let Err(rev_err) = db::mediation::set_session_state(
+                        &guard,
+                        session_id,
+                        MediationSessionState::AwaitingResponse,
+                        now,
+                    ) {
+                        warn!(
+                            error = %rev_err,
+                            "advance_session_round: failed to revert classified → awaiting_response after deliver_summary failure"
+                        );
+                    }
+                }
                 handle_reasoning_failure(
                     conn,
                     client,
