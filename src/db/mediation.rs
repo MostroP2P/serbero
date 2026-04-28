@@ -773,6 +773,86 @@ mod tests {
         }
     }
 
+    /// Regression guard for the 2026-04-27 panic
+    /// (`set_session_state: illegal transition summary_delivered ->
+    /// superseded_by_human`). The two queries diverge on purpose:
+    ///
+    ///   * `list_live_sessions` keeps a `summary_delivered` row visible
+    ///     when it carries a prior `self_resolution_offered` audit row,
+    ///     so the ingest tick can still observe a later party reply
+    ///     for the `PartyRequestedHuman` opt-in.
+    ///   * `latest_open_session_for` excludes `summary_delivered`
+    ///     unconditionally, so the dispute_resolved handler closes
+    ///     summarized sessions via the legal direct
+    ///     `summary_delivered → closed` transition (the dedicated
+    ///     query at `src/handlers/dispute_resolved.rs` lines 286-322)
+    ///     instead of the illegal `SupersededByHuman` walk.
+    ///
+    /// A change that re-aligns the two filters in either direction
+    /// breaks one of those properties and must be caught here.
+    #[test]
+    fn summary_delivered_row_with_invitation_diverges_between_filters() {
+        let conn = fresh();
+        insert_session(&conn, &new_session("pol-hash-divergence")).unwrap();
+        conn.execute(
+            "UPDATE mediation_sessions SET state = 'summary_delivered'
+             WHERE session_id = 'sess-1'",
+            [],
+        )
+        .unwrap();
+
+        // Without a `self_resolution_offered` audit row, `summary_delivered`
+        // is terminal for BOTH queries (legacy behaviour).
+        let live = list_live_sessions(&conn).unwrap();
+        assert!(
+            live.is_empty(),
+            "legacy summary_delivered without invitation must be excluded \
+             from list_live_sessions; got {live:?}"
+        );
+        assert!(
+            latest_open_session_for(&conn, "dispute-xyz")
+                .unwrap()
+                .is_none(),
+            "legacy summary_delivered without invitation must be excluded \
+             from latest_open_session_for"
+        );
+
+        // Add the `self_resolution_offered` audit row.
+        conn.execute(
+            "INSERT INTO mediation_events (session_id, kind, payload_json, occurred_at)
+             VALUES ('sess-1', 'self_resolution_offered', '{}', 100)",
+            [],
+        )
+        .unwrap();
+
+        // Carve-out applies to `list_live_sessions` only.
+        let live = list_live_sessions(&conn).unwrap();
+        assert_eq!(
+            live.len(),
+            1,
+            "post-invitation summary_delivered must be visible to \
+             list_live_sessions so the ingest tick can observe a later \
+             party reply for the PartyRequestedHuman opt-in; got {live:?}"
+        );
+        assert_eq!(live[0].session_id, "sess-1");
+        assert_eq!(live[0].state, MediationSessionState::SummaryDelivered);
+
+        // ...and MUST NOT apply to `latest_open_session_for`. Surfacing
+        // this row here is what triggered the 2026-04-27 panic — the
+        // dispute_resolved handler would walk it through
+        // `SupersededByHuman → Closed`, but `summary_delivered →
+        // superseded_by_human` is not a legal state-machine edge.
+        assert!(
+            latest_open_session_for(&conn, "dispute-xyz")
+                .unwrap()
+                .is_none(),
+            "post-invitation summary_delivered MUST stay invisible to \
+             latest_open_session_for; the dedicated summary_delivered → \
+             closed path in dispute_resolved.rs handles closure via the \
+             legal direct transition"
+        );
+    }
+
     #[test]
     fn set_session_state_updates_state_and_transition_ts() {
         let conn = fresh();
