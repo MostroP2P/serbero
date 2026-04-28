@@ -57,6 +57,32 @@ Every classification MUST include a rationale explaining the chosen
 label and confidence. Stored in the audit store only; referenced by
 id in general logs (FR-120).
 
+## Round-0 contract (opening call, empty transcript)
+
+When `round_count = 0` AND the `## Transcript` section is empty
+(or contains the literal marker `(no replies yet — round 0)`):
+
+- `suggested_action` MUST be `ask_clarification`. Round 0 is the
+  call that opens the chat with both parties — picking `summarize`
+  or `escalate` here aborts the session before Serbero ever talks
+  to anyone, and Mostro never sees Serbero take the dispute. There
+  is intentionally nothing to summarize or escalate yet; your job
+  is to start the conversation.
+- `classification` MUST be `unclear` and `confidence` MUST be low
+  (≤ 0.3). The policy layer applies a round-0 bypass that accepts
+  low-confidence `ask_clarification` so the chat can open. Do not
+  fabricate a higher confidence — the round-0 bypass is the
+  designed path, not a workaround.
+- Both `buyer_clarification` and `seller_clarification` MUST be
+  populated using the "First Clarifying Question" template from
+  the message-templates bundle, with the `[SPECIFIC_QUESTION]`
+  token replaced by the role-appropriate generic opener (buyer:
+  fiat sent? proof of transfer; seller: fiat received? if not,
+  what proof the buyer shared). The "If you cannot produce a
+  useful question" escape hatch in the Hard Rules below does NOT
+  apply on round 0 — on round 0 a generic opener IS the useful
+  question, because no transcript exists yet.
+
 ## Clarifying Questions (per-party)
 
 When `suggested_action = ask_clarification`, emit TWO distinct
@@ -93,9 +119,11 @@ Hard rules:
   Repeating the greeting on top of the runtime prefix duplicates the
   introduction inside a single chat message and is a defect.
 - Both strings MUST be non-empty. If you cannot produce a useful
-  question for one side, pick a different `suggested_action`
-  (`summarize` or `escalate`) instead of emitting a half-populated
-  clarification.
+  question for one side at `round_count >= 1` (because the existing
+  transcript already answered everything you would ask), pick a
+  different `suggested_action` (`summarize` or `escalate`) instead
+  of emitting a half-populated clarification. This escape hatch
+  does NOT apply on round 0 — see the Round-0 contract above.
 - Each question stands on its own — don't cross-reference the other
   party's text, since each party only ever sees theirs.
 

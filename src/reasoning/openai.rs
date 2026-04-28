@@ -481,12 +481,27 @@ pub(super) fn build_classification_prompt(r: &ClassificationRequest) -> String {
     // the exact bytes the session's `policy_hash` pins. An auditor
     // can later grep the git-committed bundle for this hash and
     // recover the full prompt context.
-    let transcript = r
-        .transcript
-        .iter()
-        .map(|e| format!("[{}] {}: {}", e.inner_event_created_at, e.party, e.content))
-        .collect::<Vec<_>>()
-        .join("\n");
+    //
+    // When the transcript is empty (round 0, before any party reply)
+    // render a literal marker instead of a blank section so the model
+    // sees an unambiguous round-0 signal. A blank "## Transcript"
+    // section reads as "transcript missing", which on `gpt-5.4-mini`
+    // (and similar router models) pushed the classifier toward
+    // `suggested_action = summarize | escalate` instead of
+    // `ask_clarification` — observed 2026-04-28 with the
+    // Alice/Bob test trade staying at `initiated` because the
+    // opening classify+take pre-empted itself with
+    // `Escalate(LowConfidence)`. The Round-0 contract section in
+    // `prompts/phase3-classification.md` keys off this marker.
+    let transcript = if r.transcript.is_empty() {
+        "(no replies yet — round 0)".to_string()
+    } else {
+        r.transcript
+            .iter()
+            .map(|e| format!("[{}] {}: {}", e.inner_event_created_at, e.party, e.content))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
     // Feature 005: only ask for the `human_requested` field on rounds
     // following a `self_resolution_offered` audit row. Asking on every
     // round wastes tokens and risks false positives (a buggy provider
