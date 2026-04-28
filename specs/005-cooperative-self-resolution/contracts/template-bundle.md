@@ -46,7 +46,7 @@ e te redireciono para o solver designado."
 
 The full message a party receives is, byte-for-byte:
 
-```
+```text
 {template} {human_assistance_optin}
 ```
 

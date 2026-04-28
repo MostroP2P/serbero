@@ -656,6 +656,22 @@ async fn draft_and_send_self_resolution_invitation(
 ) -> Result<()> {
     use crate::models::mediation::TranscriptParty;
 
+    // Resolve the EFFECTIVE language each party will actually
+    // receive (raw classifier code when the bundle has a matching
+    // section; bundle's `fallback_language` otherwise). The audit
+    // row below records these resolved codes — not the raw
+    // classifier output — so a forensic replay can reproduce the
+    // exact bytes each party saw without having to re-run the
+    // resolver.
+    let buyer_effective_language = prompt_bundle
+        .self_resolution
+        .resolve_effective_language(buyer_language)
+        .map(|s| s.to_string());
+    let seller_effective_language = prompt_bundle
+        .self_resolution
+        .resolve_effective_language(seller_language)
+        .map(|s| s.to_string());
+
     let buyer_msg = self_resolution::render_for(buyer_language, &prompt_bundle.self_resolution);
     let seller_msg = self_resolution::render_for(seller_language, &prompt_bundle.self_resolution);
 
@@ -725,16 +741,18 @@ async fn draft_and_send_self_resolution_invitation(
         // classification's content hash, embedded inside `payload_json`
         // per the contract (the dedicated `mediation_events.rationale_id`
         // column stays NULL on this kind). The `classification_confidence`
-        // and per-party language codes go into the structured payload
-        // so a forensic replay can reconstruct exactly which template
-        // section each party received.
+        // and the EFFECTIVE per-party language codes go into the
+        // structured payload — i.e. the codes after fallback
+        // resolution — so a forensic replay can reconstruct exactly
+        // which template section each party received without having
+        // to re-run the resolver.
         db::mediation_events::record_self_resolution_offered(
             &tx,
             session_id,
             rationale_id,
             confidence,
-            buyer_language,
-            seller_language,
+            buyer_effective_language.as_deref(),
+            seller_effective_language.as_deref(),
             &prompt_bundle.id,
             &prompt_bundle.policy_hash,
             now,
@@ -742,7 +760,11 @@ async fn draft_and_send_self_resolution_invitation(
         tx.commit()?;
     }
 
-    // Operational tracing for SC-001 baseline (T029).
+    // Operational tracing for SC-001 baseline (T029). We log both
+    // the raw classifier output AND the effective resolved code so
+    // operators can see at a glance when the bundle's fallback
+    // kicked in (e.g. classifier says `de`, bundle has only en/es/pt
+    // → effective resolves to `en`).
     let bid_for_log = prompt_bundle.id.clone();
     info!(
         event = "cooperative_case_detected",
@@ -751,6 +773,8 @@ async fn draft_and_send_self_resolution_invitation(
         prompt_bundle_id = %bid_for_log,
         buyer_language = buyer_language.unwrap_or("(none)"),
         seller_language = seller_language.unwrap_or("(none)"),
+        buyer_effective_language = buyer_effective_language.as_deref().unwrap_or("(none)"),
+        seller_effective_language = seller_effective_language.as_deref().unwrap_or("(none)"),
         occurred_at_unix = now,
         "cooperative_case_detected"
     );

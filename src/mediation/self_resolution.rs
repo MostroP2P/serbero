@@ -72,13 +72,46 @@ impl SelfResolutionTemplates {
     /// structurally invalid (no entry for the fallback either),
     /// which the loader rejects at startup.
     pub fn entry_for(&self, language_code: Option<&str>) -> Option<&SelfResolutionLanguageEntry> {
+        self.resolve_effective_language(language_code)
+            .and_then(|code| self.by_language.get(code))
+    }
+
+    /// Return the language code that [`render_for`] will actually
+    /// render for the given input. That's the input code
+    /// (lowercased + trimmed) when the bundle has a matching
+    /// section, or the configured `fallback_language` otherwise.
+    /// Returns `None` when the bundle has neither the requested
+    /// code nor the fallback (structurally-invalid bundle, rejected
+    /// by the loader).
+    ///
+    /// Callers that need to AUDIT the language a party actually
+    /// received MUST use this resolver — recording the raw
+    /// classifier output instead would mis-record sessions where
+    /// the model emitted a code the bundle doesn't carry (e.g. the
+    /// classifier returns `"de"` and the bundle falls back to
+    /// `"en"`; forensic replay needs `"en"` to reproduce the bytes
+    /// the party saw).
+    pub fn resolve_effective_language<'a>(
+        &'a self,
+        language_code: Option<&str>,
+    ) -> Option<&'a str> {
         if let Some(code) = language_code {
             let normalized = code.trim().to_ascii_lowercase();
-            if let Some(entry) = self.by_language.get(&normalized) {
-                return Some(entry);
+            // Compare against the keys via lookup; the keys are
+            // already normalised by the parser.
+            if self.by_language.contains_key(&normalized) {
+                // Borrow the key out of the map so the returned
+                // `&str` ties to the bundle's lifetime.
+                if let Some((stored_key, _)) = self.by_language.get_key_value(&normalized) {
+                    return Some(stored_key.as_str());
+                }
             }
         }
-        self.by_language.get(&self.fallback_language)
+        if self.by_language.contains_key(&self.fallback_language) {
+            Some(self.fallback_language.as_str())
+        } else {
+            None
+        }
     }
 }
 
@@ -190,5 +223,32 @@ mod tests {
             .entry_for(Some("xyz"))
             .expect("fallback entry must exist");
         assert!(entry.template.starts_with("Thanks"));
+    }
+
+    #[test]
+    fn resolve_effective_language_returns_match_when_present() {
+        let bundle = fixture_bundle();
+        assert_eq!(bundle.resolve_effective_language(Some("es")), Some("es"));
+        // Case + whitespace normalised same as `entry_for`.
+        assert_eq!(bundle.resolve_effective_language(Some(" ES ")), Some("es"));
+    }
+
+    #[test]
+    fn resolve_effective_language_returns_fallback_when_unknown() {
+        let bundle = fixture_bundle();
+        // Unknown code → fallback (`"en"` per `fixture_bundle`).
+        assert_eq!(bundle.resolve_effective_language(Some("de")), Some("en"));
+        // None → fallback.
+        assert_eq!(bundle.resolve_effective_language(None), Some("en"));
+    }
+
+    #[test]
+    fn resolve_effective_language_none_when_bundle_lacks_fallback() {
+        let bundle = SelfResolutionTemplates {
+            by_language: HashMap::new(),
+            fallback_language: "en".into(),
+        };
+        assert_eq!(bundle.resolve_effective_language(Some("en")), None);
+        assert_eq!(bundle.resolve_effective_language(None), None);
     }
 }
