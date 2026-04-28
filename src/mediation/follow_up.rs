@@ -480,7 +480,7 @@ pub async fn advance_session_round(
                 let guard = conn.lock().await;
                 latest_classification_rationale_id(&guard, session_id)?
             };
-            if let Err(e) = draft_and_send_self_resolution_invitation(
+            let dispatch_outcome = draft_and_send_self_resolution_invitation(
                 conn,
                 client,
                 serbero_keys,
@@ -493,21 +493,47 @@ pub async fn advance_session_round(
                 prompt_bundle,
                 rationale_id.as_deref(),
             )
-            .await
-            {
-                warn!(
-                    error = %e,
-                    "advance_session_round: self-resolution invitation drafter failed"
+            .await;
+            let invitation_committed = match dispatch_outcome {
+                Ok(committed) => committed,
+                Err(e) => {
+                    warn!(
+                        error = %e,
+                        "advance_session_round: self-resolution invitation drafter failed"
+                    );
+                    handle_reasoning_failure(
+                        conn,
+                        client,
+                        session_id,
+                        &info.dispute_id,
+                        solvers,
+                        prompt_bundle,
+                    )
+                    .await;
+                    return Ok(());
+                }
+            };
+            if !invitation_committed {
+                // Defensive duplicate-detection path. The in-TX
+                // re-check inside `draft_and_send_self_resolution_invitation`
+                // saw a prior `self_resolution_offered` row for this
+                // session — another path won the race and has
+                // already (or will shortly) drive the
+                // pre-flip + `deliver_summary`. Skip those steps
+                // here so we don't double-summarize. Advance the
+                // evaluator marker in a short transaction so this
+                // tick doesn't keep re-classifying the same fresh
+                // inbound forever.
+                let new_marker = total_fresh_inbounds;
+                let mut guard = conn.lock().await;
+                let tx = guard.transaction()?;
+                db::mediation::advance_evaluator_marker(&tx, session_id, new_marker)?;
+                tx.commit()?;
+                info!(
+                    confidence,
+                    round_count_marked = new_marker,
+                    "advance_session_round: SuggestSelfResolutionWithSummary skipped (duplicate race)"
                 );
-                handle_reasoning_failure(
-                    conn,
-                    client,
-                    session_id,
-                    &info.dispute_id,
-                    solvers,
-                    prompt_bundle,
-                )
-                .await;
                 return Ok(());
             }
             // Pre-flip awaiting_response → classified so
@@ -640,6 +666,17 @@ fn latest_classification_rationale_id(
 /// gift-wraps OUTSIDE the transaction. A relay-side publish failure
 /// after commit leaves the rows in place as historical record —
 /// matches the existing drafter discipline (FR-126 Non-Goals).
+///
+/// Returns:
+/// - `Ok(true)` — invitation committed and published.
+/// - `Ok(false)` — duplicate detected at write time; in-TX
+///   re-check found a `self_resolution_offered` row for the
+///   session (another path won the race), the transaction was
+///   rolled back without writing, no gift-wraps were published.
+///   The caller MUST skip subsequent dispatch steps
+///   (state pre-flip, `deliver_summary`) since the other path
+///   already drove them.
+/// - `Err(_)` — genuine failure; failure-counter path applies.
 #[allow(clippy::too_many_arguments)]
 async fn draft_and_send_self_resolution_invitation(
     conn: &Arc<AsyncMutex<rusqlite::Connection>>,
@@ -653,7 +690,7 @@ async fn draft_and_send_self_resolution_invitation(
     seller_shared_keys: &Keys,
     prompt_bundle: &Arc<PromptBundle>,
     rationale_id: Option<&str>,
-) -> Result<()> {
+) -> Result<bool> {
     use crate::models::mediation::TranscriptParty;
 
     // Resolve the EFFECTIVE language each party will actually
@@ -704,60 +741,91 @@ async fn draft_and_send_self_resolution_invitation(
     let seller_inner_id_hex = seller_wrap.inner_event_id.to_hex();
     let now = super::current_ts_secs()?;
 
-    {
+    let committed = {
         let mut guard = conn.lock().await;
         let tx = guard.transaction()?;
-        db::mediation::insert_outbound_message(
-            &tx,
-            &db::mediation::NewOutboundMessage {
+
+        // Defensive in-TX re-check (belt-and-braces against the
+        // TOCTOU window that exists on paper between the predicate
+        // read in `policy::evaluate` and this write site). The
+        // single-process engine architecture already serialises
+        // these calls per session via the global `AsyncMutex` on
+        // `Connection` plus the sequential per-session loop in
+        // `run_ingest_tick`, but having the guard at the actual
+        // write site means the invariant is visible AT the
+        // critical section and the dispatch is robust to any
+        // future architectural change. If the predicate is true
+        // here, another path already wrote the row — drop the tx
+        // (rolls back the two outbound rows we'd have inserted)
+        // and let the caller skip the publish + summary steps.
+        if db::mediation_events::session_has_self_resolution_offered(&tx, session_id)? {
+            warn!(
+                session_id = %session_id,
+                "draft_and_send_self_resolution_invitation: prior `self_resolution_offered` \
+                 row detected at write time; rolling back this dispatch's transaction and \
+                 skipping outbound publishes"
+            );
+            // `tx` drops without commit → rollback. Explicit drop
+            // makes the rollback visible to the reader.
+            drop(tx);
+            false
+        } else {
+            db::mediation::insert_outbound_message(
+                &tx,
+                &db::mediation::NewOutboundMessage {
+                    session_id,
+                    party: TranscriptParty::Buyer,
+                    shared_pubkey: &buyer_shared_pubkey_hex,
+                    inner_event_id: &buyer_inner_id_hex,
+                    inner_event_created_at: buyer_wrap.inner_created_at,
+                    outer_event_id: Some(&buyer_wrap.outer.id.to_hex()),
+                    content: &buyer_msg,
+                    prompt_bundle_id: &prompt_bundle.id,
+                    policy_hash: &prompt_bundle.policy_hash,
+                    persisted_at: now,
+                },
+            )?;
+            db::mediation::insert_outbound_message(
+                &tx,
+                &db::mediation::NewOutboundMessage {
+                    session_id,
+                    party: TranscriptParty::Seller,
+                    shared_pubkey: &seller_shared_pubkey_hex,
+                    inner_event_id: &seller_inner_id_hex,
+                    inner_event_created_at: seller_wrap.inner_created_at,
+                    outer_event_id: Some(&seller_wrap.outer.id.to_hex()),
+                    content: &seller_msg,
+                    prompt_bundle_id: &prompt_bundle.id,
+                    policy_hash: &prompt_bundle.policy_hash,
+                    persisted_at: now,
+                },
+            )?;
+            // Self-resolution audit row. `rationale_id` is the producing
+            // classification's content hash, embedded inside `payload_json`
+            // per the contract (the dedicated `mediation_events.rationale_id`
+            // column stays NULL on this kind). The `classification_confidence`
+            // and the EFFECTIVE per-party language codes go into the
+            // structured payload — i.e. the codes after fallback
+            // resolution — so a forensic replay can reconstruct exactly
+            // which template section each party received without having
+            // to re-run the resolver.
+            db::mediation_events::record_self_resolution_offered(
+                &tx,
                 session_id,
-                party: TranscriptParty::Buyer,
-                shared_pubkey: &buyer_shared_pubkey_hex,
-                inner_event_id: &buyer_inner_id_hex,
-                inner_event_created_at: buyer_wrap.inner_created_at,
-                outer_event_id: Some(&buyer_wrap.outer.id.to_hex()),
-                content: &buyer_msg,
-                prompt_bundle_id: &prompt_bundle.id,
-                policy_hash: &prompt_bundle.policy_hash,
-                persisted_at: now,
-            },
-        )?;
-        db::mediation::insert_outbound_message(
-            &tx,
-            &db::mediation::NewOutboundMessage {
-                session_id,
-                party: TranscriptParty::Seller,
-                shared_pubkey: &seller_shared_pubkey_hex,
-                inner_event_id: &seller_inner_id_hex,
-                inner_event_created_at: seller_wrap.inner_created_at,
-                outer_event_id: Some(&seller_wrap.outer.id.to_hex()),
-                content: &seller_msg,
-                prompt_bundle_id: &prompt_bundle.id,
-                policy_hash: &prompt_bundle.policy_hash,
-                persisted_at: now,
-            },
-        )?;
-        // Self-resolution audit row. `rationale_id` is the producing
-        // classification's content hash, embedded inside `payload_json`
-        // per the contract (the dedicated `mediation_events.rationale_id`
-        // column stays NULL on this kind). The `classification_confidence`
-        // and the EFFECTIVE per-party language codes go into the
-        // structured payload — i.e. the codes after fallback
-        // resolution — so a forensic replay can reconstruct exactly
-        // which template section each party received without having
-        // to re-run the resolver.
-        db::mediation_events::record_self_resolution_offered(
-            &tx,
-            session_id,
-            rationale_id,
-            confidence,
-            buyer_effective_language.as_deref(),
-            seller_effective_language.as_deref(),
-            &prompt_bundle.id,
-            &prompt_bundle.policy_hash,
-            now,
-        )?;
-        tx.commit()?;
+                rationale_id,
+                confidence,
+                buyer_effective_language.as_deref(),
+                seller_effective_language.as_deref(),
+                &prompt_bundle.id,
+                &prompt_bundle.policy_hash,
+                now,
+            )?;
+            tx.commit()?;
+            true
+        }
+    };
+    if !committed {
+        return Ok(false);
     }
 
     // Operational tracing for SC-001 baseline (T029). We log both
@@ -798,7 +866,7 @@ async fn draft_and_send_self_resolution_invitation(
     )
     .await?;
 
-    Ok(())
+    Ok(true)
 }
 
 /// One read of everything `advance_session_round` needs from the
