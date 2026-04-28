@@ -11,21 +11,30 @@ layer.
 
 ## First Clarifying Question
 
-"Hello, I'm Serbero, an automated mediation assistant helping the
-assigned solver review this dispute. I'd like to understand your
-perspective. Could you please describe what happened from your point
-of view? Specifically: [SPECIFIC_QUESTION]"
+"I'd like to understand your perspective. Could you please describe
+what happened from your point of view? Specifically: [SPECIFIC_QUESTION]"
 
 — Replace `[SPECIFIC_QUESTION]` with one concrete, dispute-specific
 question. Do not return the literal token `[SPECIFIC_QUESTION]`.
 
+The one-time "Hello, I'm Serbero, an automated mediation assistant
+helping the assigned solver review this dispute. " self-introduction
+is added by the runtime (`mediation::draft_and_send_initial_message`)
+exactly once at session open, so the model MUST NOT repeat it inside
+the clarification body. Repeating it produces a duplicated greeting in
+a single chat message and is a defect.
+
 ## Follow-Up Clarification
 
-"Thank you for your response. To help the solver make a well-informed
-decision, I have a follow-up question: [SPECIFIC_QUESTION]"
+"[SPECIFIC_QUESTION]"
 
-— Same rule: substitute a concrete follow-up question; never emit the
-bracketed token.
+— Substitute a concrete follow-up question and emit nothing else: no
+greeting, no self-introduction, no "Thank you for your response"
+preamble, no sign-off. Round 2+ messages travel through
+`mediation::draft_and_send_followup_message`, which does NOT prefix a
+greeting; the entire user-visible body is whatever the model returned.
+Adding a preamble or signature here will surface verbatim in the
+party's chat.
 
 ## Cooperative Summary Preamble
 

@@ -274,11 +274,20 @@ pub struct LiveSession {
 }
 
 /// List all mediation sessions that are NOT in a terminal or
-/// handed-off state. Same exclusion set as
-/// [`latest_open_session_for`]: `closed`, `summary_delivered`,
-/// `escalation_recommended`, `superseded_by_human`. The engine uses
-/// this to decide which sessions to poll for inbound replies on each
-/// tick and to rebuild in-memory chat material at startup.
+/// handed-off state. Base exclusion set: `closed`,
+/// `summary_delivered`, `escalation_recommended`,
+/// `superseded_by_human`. The engine uses this to decide which
+/// sessions to poll for inbound replies on each tick and to rebuild
+/// in-memory chat material at startup.
+///
+/// **Diverges intentionally from [`latest_open_session_for`]** via the
+/// Feature 005 carve-out below: the ingest tick must keep watching
+/// post-invitation `summary_delivered` sessions so a later party reply
+/// can still trigger the `PartyRequestedHuman` opt-in. The
+/// dispute_resolved handler uses `latest_open_session_for` (no
+/// carve-out) so summarized sessions take the legal
+/// `summary_delivered → closed` direct transition instead of the
+/// illegal SupersededByHuman walk.
 pub fn list_live_sessions(conn: &Connection) -> Result<Vec<LiveSession>> {
     use std::str::FromStr;
 
@@ -393,12 +402,17 @@ pub fn set_session_state(
 /// `superseded_by_human`) are excluded — a dispute that was closed
 /// or escalated earlier must not block a later session open.
 ///
-/// Feature 005 carve-out (mirrors [`list_live_sessions`]): a session
-/// in `summary_delivered` that received the cooperative-self-resolution
-/// invitation is still considered live so the human-assistance opt-in
-/// path can fire on a later party reply. The carve-out is scoped by
-/// the `self_resolution_offered` audit row, so legacy
-/// `summary_delivered` sessions stay terminal.
+/// **Diverges intentionally from [`list_live_sessions`].** The ingest
+/// tick needs to keep watching post-invitation `summary_delivered`
+/// sessions so a later party reply can trigger the
+/// `PartyRequestedHuman` opt-in; this lookup, by contrast, gates
+/// new-session-open eligibility and the dispute_resolved handler's
+/// SupersededByHuman walk. The handler at
+/// `src/handlers/dispute_resolved.rs` has a dedicated path that closes
+/// `summary_delivered` sessions via the legal direct
+/// `summary_delivered → closed` transition; surfacing them here would
+/// route them through the illegal `summary_delivered →
+/// superseded_by_human` step instead.
 ///
 /// Used by the engine to gate session opens and, crucially, re-checked
 /// inside the final open-session DB transaction to close the
@@ -410,25 +424,15 @@ pub fn latest_open_session_for(
     use std::str::FromStr;
 
     match conn.query_row(
-        "SELECT s.session_id, s.state FROM mediation_sessions s
-         WHERE s.dispute_id = ?1
-           AND (
-               s.state NOT IN (
-                   'closed',
-                   'summary_delivered',
-                   'escalation_recommended',
-                   'superseded_by_human'
-               )
-               OR (
-                   s.state = 'summary_delivered'
-                   AND EXISTS (
-                       SELECT 1 FROM mediation_events e
-                       WHERE e.session_id = s.session_id
-                         AND e.kind = 'self_resolution_offered'
-                   )
-               )
+        "SELECT session_id, state FROM mediation_sessions
+         WHERE dispute_id = ?1
+           AND state NOT IN (
+               'closed',
+               'summary_delivered',
+               'escalation_recommended',
+               'superseded_by_human'
            )
-         ORDER BY s.started_at DESC
+         ORDER BY started_at DESC
          LIMIT 1",
         params![dispute_id],
         |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
