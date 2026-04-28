@@ -64,6 +64,11 @@ const ESCALATABLE_STATES: &[&str] = &[
     "classified",
     "follow_up_pending",
     "summary_pending",
+    // Feature 005 — `summary_delivered → escalation_recommended` is
+    // legal so a party reply that opts in to human assistance after
+    // the cooperative invitation can lift the session out of the
+    // post-summary state into the Phase 4 handoff queue.
+    "summary_delivered",
 ];
 
 /// Phase 4 handoff package. Persisted as the `handoff_prepared`

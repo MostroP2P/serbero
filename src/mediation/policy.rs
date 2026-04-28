@@ -35,10 +35,11 @@ use tracing::{debug, warn};
 use crate::db;
 use crate::error::Result;
 use crate::models::dispute::InitiatorRole;
-use crate::models::mediation::{EscalationTrigger, Flag};
+use crate::models::mediation::{ClassificationLabel, EscalationTrigger, Flag};
 use crate::models::reasoning::{
     ClassificationRequest, ClassificationResponse, ReasoningContext, SuggestedAction,
 };
+use crate::models::MediationConfig;
 use crate::prompts::PromptBundle;
 use crate::reasoning::ReasoningProvider;
 
@@ -68,6 +69,21 @@ pub enum PolicyDecision {
         classification: crate::models::mediation::ClassificationLabel,
         confidence: f64,
     },
+    /// FR-001 — cooperative self-resolution invitation.
+    ///
+    /// Triggered when the model classifies a session as
+    /// `coordination_failure_resolvable` with `suggested_action =
+    /// summarize` AND the configured confidence floor is met AND the
+    /// kill-switch is on AND no prior `self_resolution_offered` audit
+    /// row exists for the session. The dispatch arm sends a
+    /// per-party templated invitation in each detected language
+    /// (with a human-assistance opt-in sentence) AND delivers the
+    /// existing solver summary with `suggested_next_step =
+    /// "self_resolution_offered_to_parties"`. When any of the
+    /// pre-conditions fails, the legacy `Summarize` branch fires
+    /// instead — preserving byte-for-byte legacy behaviour with the
+    /// kill-switch off (SC-007).
+    SuggestSelfResolutionWithSummary { confidence: f64 },
     /// Escalate to a human solver with the given trigger. The
     /// mediation engine translates this into a Phase 4 handoff.
     Escalate(EscalationTrigger),
@@ -116,6 +132,7 @@ pub async fn initial_classification(
             round_count: 0,
             last_classification: None,
             last_confidence: None,
+            session_has_self_resolution_offered: false,
         },
     };
 
@@ -235,10 +252,12 @@ pub async fn evaluate(
     model_name: &str,
     classification: ClassificationResponse,
     followup_number: u32,
+    mediation_cfg: &MediationConfig,
 ) -> Result<PolicyDecision> {
-    let decision =
-        classify_to_decision(&classification, PolicyRound::MidSession { followup_number });
-
+    // Persist the audit trail FIRST so any returned decision is
+    // already durable. Identical to the legacy shape — the new
+    // branches below only choose a different variant; they do not
+    // skip the rationale row.
     let rationale_id = persist_classification_audit(
         conn,
         session_id,
@@ -248,6 +267,63 @@ pub async fn evaluate(
         &classification,
     )
     .await?;
+
+    // Predicate guard for both Feature 005 branches.
+    let prior_offered = {
+        let guard = conn.lock().await;
+        db::mediation_events::session_has_self_resolution_offered(&guard, session_id)?
+    };
+
+    // Branch 1 (FR-008, T023): explicit human-assistance request
+    // after the cooperative invitation. Short-circuits the
+    // classification-label dispatch so a `conflicting_claims` round
+    // that ALSO carries `human_requested = true` still escalates as
+    // `PartyRequestedHuman` — the party's explicit ask wins. The
+    // predicate guard scopes the short-circuit to sessions that
+    // actually received the invitation, so an adversarial party
+    // cannot use the field to skip mediation on round 0 and a buggy
+    // provider that emits the field where the prompt did not request
+    // it cannot accidentally trigger the path.
+    if classification.human_requested && prior_offered {
+        debug!(
+            session_id = %session_id,
+            rationale_id = %rationale_id,
+            "evaluate: human_requested + prior self_resolution_offered → escalate(party_requested_human)"
+        );
+        return Ok(PolicyDecision::Escalate(
+            EscalationTrigger::PartyRequestedHuman,
+        ));
+    }
+
+    let base_decision =
+        classify_to_decision(&classification, PolicyRound::MidSession { followup_number });
+
+    // Branch 2 (FR-001 / FR-006 / FR-010 / FR-011, T016): cooperative
+    // self-resolution rewrite. Triggered when the legacy
+    // `classify_to_decision` would have returned a cooperative
+    // `Summarize` AND every feature pre-condition holds. When any
+    // pre-condition fails the legacy decision passes through
+    // unchanged — preserving byte-for-byte legacy behaviour with the
+    // kill-switch off (SC-007).
+    let decision = match base_decision {
+        PolicyDecision::Summarize {
+            classification: ClassificationLabel::CoordinationFailureResolvable,
+            confidence,
+        } if mediation_cfg.self_resolution_enabled
+            && (confidence as f32) >= mediation_cfg.self_resolution_threshold
+            && !prior_offered =>
+        {
+            debug!(
+                session_id = %session_id,
+                rationale_id = %rationale_id,
+                confidence,
+                threshold = mediation_cfg.self_resolution_threshold,
+                "evaluate: cooperative self-resolution branch eligible → SuggestSelfResolutionWithSummary"
+            );
+            PolicyDecision::SuggestSelfResolutionWithSummary { confidence }
+        }
+        other => other,
+    };
 
     debug!(
         session_id = %session_id,
@@ -510,6 +586,7 @@ pub async fn classify_for_start(
             round_count: 0,
             last_classification: None,
             last_confidence: None,
+            session_has_self_resolution_offered: false,
         },
     };
 
@@ -756,6 +833,7 @@ mod tests {
             escalation: "esc".into(),
             mediation_style: "style".into(),
             message_templates: "tpl".into(),
+            self_resolution: crate::mediation::self_resolution::SelfResolutionTemplates::default(),
         })
     }
 
@@ -769,6 +847,9 @@ mod tests {
             },
             rationale: RationaleText("rationale body".into()),
             flags: Vec::new(),
+            human_requested: false,
+            buyer_language: None,
+            seller_language: None,
         }
     }
 
@@ -1059,6 +1140,16 @@ mod tests {
     // event) without going through a reasoning-provider stub.
     // ------------------------------------------------------------------
 
+    /// Disabled cooperative-self-resolution branch so legacy tests
+    /// preserve their previous semantics. Cooperative-branch
+    /// behavior is exercised in dedicated tests further down.
+    fn legacy_mediation_cfg() -> MediationConfig {
+        MediationConfig {
+            self_resolution_enabled: false,
+            ..MediationConfig::default()
+        }
+    }
+
     async fn run_evaluate(
         conn: &Arc<AsyncMutex<rusqlite::Connection>>,
         classification: ClassificationResponse,
@@ -1084,6 +1175,27 @@ mod tests {
             "gpt-test",
             classification,
             followup_number,
+            &legacy_mediation_cfg(),
+        )
+        .await
+    }
+
+    async fn run_evaluate_with_cfg(
+        conn: &Arc<AsyncMutex<rusqlite::Connection>>,
+        classification: ClassificationResponse,
+        followup_number: u32,
+        cfg: &MediationConfig,
+    ) -> Result<PolicyDecision> {
+        let bundle = test_bundle();
+        evaluate(
+            conn,
+            "sess-policy",
+            &bundle,
+            "openai",
+            "gpt-test",
+            classification,
+            followup_number,
+            cfg,
         )
         .await
     }
@@ -1260,5 +1372,179 @@ mod tests {
         };
         assert_eq!(rat_count, 1, "rationale audit row expected");
         assert_eq!(evt_count, 1, "classification_produced event expected");
+    }
+
+    // ------------------------------------------------------------------
+    // Feature 005 — cooperative self-resolution branch (T016) +
+    // human-assistance opt-in short-circuit (T023). Tests pin the
+    // pre-condition logic so a future refactor can't accidentally
+    // weaken the kill-switch / threshold / one-shot guards.
+    // ------------------------------------------------------------------
+
+    fn enabled_cooperative_cfg(threshold: f32) -> MediationConfig {
+        MediationConfig {
+            self_resolution_enabled: true,
+            self_resolution_threshold: threshold,
+            ..MediationConfig::default()
+        }
+    }
+
+    fn cooperative_summary_response(confidence: f64) -> ClassificationResponse {
+        let mut resp = base_response();
+        resp.classification = ClassificationLabel::CoordinationFailureResolvable;
+        resp.suggested_action = SuggestedAction::Summarize;
+        resp.confidence = confidence;
+        resp
+    }
+
+    async fn seed_self_resolution_offered_row(conn: &Arc<AsyncMutex<rusqlite::Connection>>) {
+        let guard = conn.lock().await;
+        guard
+            .execute(
+                "INSERT INTO mediation_events (
+                    session_id, kind, payload_json, occurred_at
+                 ) VALUES ('sess-policy', 'self_resolution_offered', '{}', 50)",
+                [],
+            )
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn evaluate_cooperative_branch_fires_when_all_preconditions_hold() {
+        let conn = fresh_conn();
+        let cfg = enabled_cooperative_cfg(0.75);
+        let resp = cooperative_summary_response(0.85);
+        let decision = run_evaluate_with_cfg(&conn, resp, 4, &cfg).await.unwrap();
+        assert_eq!(
+            decision,
+            PolicyDecision::SuggestSelfResolutionWithSummary { confidence: 0.85 },
+        );
+    }
+
+    #[tokio::test]
+    async fn evaluate_cooperative_branch_inclusive_at_threshold() {
+        // FR-010 / R-007: the threshold check is `>=` so a confidence
+        // exactly equal to the configured floor still fires.
+        let conn = fresh_conn();
+        let cfg = enabled_cooperative_cfg(0.75);
+        let resp = cooperative_summary_response(0.75);
+        let decision = run_evaluate_with_cfg(&conn, resp, 4, &cfg).await.unwrap();
+        assert_eq!(
+            decision,
+            PolicyDecision::SuggestSelfResolutionWithSummary { confidence: 0.75 },
+        );
+    }
+
+    #[tokio::test]
+    async fn evaluate_cooperative_branch_falls_through_below_threshold() {
+        let conn = fresh_conn();
+        let cfg = enabled_cooperative_cfg(0.90);
+        let resp = cooperative_summary_response(0.80);
+        let decision = run_evaluate_with_cfg(&conn, resp, 4, &cfg).await.unwrap();
+        // Falls through to the legacy cooperative-summary path.
+        assert_eq!(
+            decision,
+            PolicyDecision::Summarize {
+                classification: ClassificationLabel::CoordinationFailureResolvable,
+                confidence: 0.80,
+            },
+        );
+    }
+
+    #[tokio::test]
+    async fn evaluate_cooperative_branch_skipped_when_kill_switch_off() {
+        // SC-007: with `self_resolution_enabled = false`, the legacy
+        // cooperative-summary path runs unchanged.
+        let conn = fresh_conn();
+        let cfg = MediationConfig {
+            self_resolution_enabled: false,
+            self_resolution_threshold: 0.75,
+            ..MediationConfig::default()
+        };
+        let resp = cooperative_summary_response(0.99);
+        let decision = run_evaluate_with_cfg(&conn, resp, 4, &cfg).await.unwrap();
+        assert_eq!(
+            decision,
+            PolicyDecision::Summarize {
+                classification: ClassificationLabel::CoordinationFailureResolvable,
+                confidence: 0.99,
+            },
+        );
+    }
+
+    #[tokio::test]
+    async fn evaluate_cooperative_branch_one_shot_guard() {
+        // FR-006 / SC-006: a session that already has a
+        // `self_resolution_offered` audit row MUST NOT receive a
+        // second invitation; the legacy summarize path takes over.
+        let conn = fresh_conn();
+        seed_self_resolution_offered_row(&conn).await;
+        let cfg = enabled_cooperative_cfg(0.75);
+        let resp = cooperative_summary_response(0.95);
+        let decision = run_evaluate_with_cfg(&conn, resp, 4, &cfg).await.unwrap();
+        assert_eq!(
+            decision,
+            PolicyDecision::Summarize {
+                classification: ClassificationLabel::CoordinationFailureResolvable,
+                confidence: 0.95,
+            },
+        );
+    }
+
+    #[tokio::test]
+    async fn evaluate_human_requested_short_circuit_after_invitation() {
+        // FR-008 / T023: an explicit human-assistance request after
+        // the cooperative invitation escalates regardless of the
+        // round's classification label.
+        let conn = fresh_conn();
+        seed_self_resolution_offered_row(&conn).await;
+        let cfg = enabled_cooperative_cfg(0.75);
+        let mut resp = base_response();
+        resp.human_requested = true;
+        resp.classification = ClassificationLabel::ConflictingClaims; // would normally escalate, but trigger differs
+        let decision = run_evaluate_with_cfg(&conn, resp, 4, &cfg).await.unwrap();
+        assert_eq!(
+            decision,
+            PolicyDecision::Escalate(EscalationTrigger::PartyRequestedHuman),
+        );
+    }
+
+    #[tokio::test]
+    async fn evaluate_human_requested_ignored_without_prior_invitation() {
+        // Defence in depth: even if a buggy provider sets
+        // `human_requested = true` on a round where the prompt did
+        // not request it, the policy must NOT escalate as
+        // `PartyRequestedHuman` unless a prior `self_resolution_offered`
+        // row exists for the session.
+        let conn = fresh_conn();
+        let cfg = enabled_cooperative_cfg(0.75);
+        let mut resp = base_response();
+        resp.human_requested = true; // no seeded self_resolution_offered row
+        let decision = run_evaluate_with_cfg(&conn, resp, 4, &cfg).await.unwrap();
+        assert_eq!(
+            decision,
+            PolicyDecision::AskClarification {
+                buyer_text: "please confirm X (buyer)".into(),
+                seller_text: "please confirm X (seller)".into(),
+            },
+        );
+    }
+
+    #[tokio::test]
+    async fn evaluate_no_lock_in_after_invitation_for_non_cooperative_label() {
+        // US3: a non-cooperative classification on a round following
+        // the cooperative invitation MUST escalate under its own
+        // standard trigger, NOT under PartyRequestedHuman.
+        let conn = fresh_conn();
+        seed_self_resolution_offered_row(&conn).await;
+        let cfg = enabled_cooperative_cfg(0.75);
+        let mut resp = base_response();
+        resp.classification = ClassificationLabel::ConflictingClaims;
+        resp.flags = vec![Flag::ConflictingClaims];
+        let decision = run_evaluate_with_cfg(&conn, resp, 4, &cfg).await.unwrap();
+        assert_eq!(
+            decision,
+            PolicyDecision::Escalate(EscalationTrigger::ConflictingClaims),
+        );
     }
 }

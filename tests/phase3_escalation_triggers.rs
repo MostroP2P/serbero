@@ -43,6 +43,7 @@ fn test_bundle() -> Arc<PromptBundle> {
         escalation: "esc".into(),
         mediation_style: "style".into(),
         message_templates: "tpl".into(),
+        self_resolution: serbero::mediation::self_resolution::SelfResolutionTemplates::default(),
     })
 }
 
@@ -56,6 +57,9 @@ fn base_response() -> ClassificationResponse {
         },
         rationale: RationaleText("rationale body".into()),
         flags: Vec::new(),
+        human_requested: false,
+        buyer_language: None,
+        seller_language: None,
     }
 }
 
@@ -136,9 +140,18 @@ async fn conflicting_claims_triggers_escalation() {
     let mut resp = base_response();
     resp.flags = vec![Flag::ConflictingClaims];
 
-    let decision = policy::evaluate(&conn, "sess-cc", &bundle, "openai", "gpt-test", resp, 1)
-        .await
-        .unwrap();
+    let decision = policy::evaluate(
+        &conn,
+        "sess-cc",
+        &bundle,
+        "openai",
+        "gpt-test",
+        resp,
+        1,
+        &serbero::models::MediationConfig::default(),
+    )
+    .await
+    .unwrap();
     assert_eq!(
         decision,
         PolicyDecision::Escalate(EscalationTrigger::ConflictingClaims)
@@ -176,9 +189,18 @@ async fn fraud_indicator_triggers_escalation() {
     let mut resp = base_response();
     resp.flags = vec![Flag::FraudRisk];
 
-    let decision = policy::evaluate(&conn, "sess-fr", &bundle, "openai", "gpt-test", resp, 1)
-        .await
-        .unwrap();
+    let decision = policy::evaluate(
+        &conn,
+        "sess-fr",
+        &bundle,
+        "openai",
+        "gpt-test",
+        resp,
+        1,
+        &serbero::models::MediationConfig::default(),
+    )
+    .await
+    .unwrap();
     assert_eq!(
         decision,
         PolicyDecision::Escalate(EscalationTrigger::FraudIndicator)
@@ -224,6 +246,7 @@ async fn low_confidence_triggers_escalation() {
         "gpt-test",
         resp,
         policy::EARLY_MIDSESSION_BYPASS_FOLLOWUPS + 1,
+        &serbero::models::MediationConfig::default(),
     )
     .await
     .unwrap();

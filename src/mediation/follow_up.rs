@@ -78,14 +78,15 @@ use crate::error::Result;
 use crate::models::dispute::InitiatorRole;
 use crate::models::mediation::{EscalationTrigger, MediationSessionState};
 use crate::models::reasoning::{ClassificationRequest, ReasoningContext};
-use crate::models::SolverConfig;
+use crate::models::{MediationConfig, SolverConfig};
 use crate::prompts::PromptBundle;
 use crate::reasoning::ReasoningProvider;
 
 use super::{
     deliver_summary, draft_and_send_followup_message, escalation, notify_solvers_escalation,
-    policy, transcript, SessionKeyCache,
+    policy, self_resolution, transcript, SessionKeyCache,
 };
+use crate::chat::outbound;
 
 /// Hard cap on transcript rows passed to the classifier (FR-128).
 /// Guards against runaway token costs on a session that accumulates
@@ -121,6 +122,7 @@ pub async fn advance_session_round(
     solvers: &[SolverConfig],
     provider_name: &str,
     model_name: &str,
+    mediation_cfg: &MediationConfig,
 ) -> Result<()> {
     // (1) Load session metadata + idempotency gate.
     let info = match load_session_info(conn, session_id).await? {
@@ -191,10 +193,17 @@ pub async fn advance_session_round(
         }
     };
 
-    // (4) Transcript.
-    let transcript_entries = {
+    // (4) Transcript + cooperative-invitation flag (FR-008).
+    //     The flag drives the conditional `human_requested`
+    //     instruction block on the classifier prompt — only sessions
+    //     that have already received the cooperative invitation pay
+    //     the prompt-token cost of asking the model to detect
+    //     human-assistance requests.
+    let (transcript_entries, prior_self_resolution_offered) = {
         let guard = conn.lock().await;
-        transcript::load_transcript_for_session(&guard, session_id, TRANSCRIPT_CAP)?
+        let entries = transcript::load_transcript_for_session(&guard, session_id, TRANSCRIPT_CAP)?;
+        let flag = db::mediation_events::session_has_self_resolution_offered(&guard, session_id)?;
+        (entries, flag)
     };
 
     // (5) Classify. On failure, bump + (maybe) escalate.
@@ -211,6 +220,7 @@ pub async fn advance_session_round(
             // absent. A future slice can plumb them.
             last_classification: None,
             last_confidence: None,
+            session_has_self_resolution_offered: prior_self_resolution_offered,
         },
     };
     let classification = match reasoning.classify(classification_req).await {
@@ -253,8 +263,9 @@ pub async fn advance_session_round(
         prompt_bundle,
         provider_name,
         model_name,
-        classification,
+        classification.clone(),
         followup_number,
+        mediation_cfg,
     )
     .await
     {
@@ -395,6 +406,120 @@ pub async fn advance_session_round(
                 "advance_session_round: Summarize dispatched"
             );
         }
+        policy::PolicyDecision::SuggestSelfResolutionWithSummary { confidence } => {
+            // Feature 005 dispatch: cooperative self-resolution
+            // invitation. Order of operations matches the contract
+            // in `specs/005-cooperative-self-resolution/contracts/audit-events.md`:
+            //
+            //  1. Resolve per-party language codes from the
+            //     classifier's structured response.
+            //  2. Render each party's invitation from the static
+            //     bundle templates.
+            //  3. Open a transaction: write the
+            //     `self_resolution_offered` audit row + insert two
+            //     `mediation_messages` rows (audience-tagged).
+            //  4. Commit, then publish the gift-wraps OUTSIDE the
+            //     transaction (matches the existing initial /
+            //     follow-up drafter pattern — failure to publish
+            //     leaves the rows committed as a historical record).
+            //  5. Pre-flip `awaiting_response → classified` and call
+            //     `deliver_summary` so the solver still receives the
+            //     existing `mediation_summary` notification.
+            let buyer_lang = classification.buyer_language.as_deref();
+            let seller_lang = classification.seller_language.as_deref();
+            // Pull the rationale id of the producing
+            // classification — `policy::evaluate` already wrote it
+            // before returning the decision.
+            let rationale_id = {
+                let guard = conn.lock().await;
+                latest_classification_rationale_id(&guard, session_id)?
+            };
+            if let Err(e) = draft_and_send_self_resolution_invitation(
+                conn,
+                client,
+                serbero_keys,
+                session_id,
+                confidence,
+                buyer_lang,
+                seller_lang,
+                &material.buyer_shared_keys,
+                &material.seller_shared_keys,
+                prompt_bundle,
+                rationale_id.as_deref(),
+            )
+            .await
+            {
+                warn!(
+                    error = %e,
+                    "advance_session_round: self-resolution invitation drafter failed"
+                );
+                handle_reasoning_failure(
+                    conn,
+                    client,
+                    session_id,
+                    &info.dispute_id,
+                    solvers,
+                    prompt_bundle,
+                )
+                .await;
+                return Ok(());
+            }
+            // Pre-flip awaiting_response → classified so
+            // `deliver_summary`'s `classified → summary_pending` is
+            // a legal transition. Same pattern as the legacy
+            // Summarize arm above.
+            {
+                let guard = conn.lock().await;
+                db::mediation::set_session_state(
+                    &guard,
+                    session_id,
+                    MediationSessionState::Classified,
+                    super::current_ts_secs()?,
+                )?;
+            }
+            if let Err(e) = deliver_summary(
+                conn,
+                client,
+                serbero_keys,
+                session_id,
+                &info.dispute_id,
+                crate::models::mediation::ClassificationLabel::CoordinationFailureResolvable,
+                confidence,
+                transcript_entries,
+                prompt_bundle,
+                reasoning,
+                solvers,
+                provider_name,
+                model_name,
+            )
+            .await
+            {
+                warn!(
+                    error = %e,
+                    "advance_session_round: deliver_summary after self-resolution invitation failed"
+                );
+                handle_reasoning_failure(
+                    conn,
+                    client,
+                    session_id,
+                    &info.dispute_id,
+                    solvers,
+                    prompt_bundle,
+                )
+                .await;
+                return Ok(());
+            }
+            let new_marker = total_fresh_inbounds;
+            let mut guard = conn.lock().await;
+            let tx = guard.transaction()?;
+            db::mediation::advance_evaluator_marker(&tx, session_id, new_marker)?;
+            tx.commit()?;
+            info!(
+                confidence,
+                round_count_marked = new_marker,
+                "advance_session_round: SuggestSelfResolutionWithSummary dispatched"
+            );
+        }
         policy::PolicyDecision::Escalate(trigger) => {
             if let Err(e) = escalation::recommend(escalation::RecommendParams {
                 conn,
@@ -432,6 +557,175 @@ pub async fn advance_session_round(
             );
         }
     }
+
+    Ok(())
+}
+
+/// Latest `classification_produced` rationale id for a session.
+/// Used by the cooperative-self-resolution dispatch arm to populate
+/// the `self_resolution_offered` audit row's `rationale_id` column —
+/// the policy layer wrote the row a moment earlier, so this lookup
+/// always succeeds in practice. Returns `None` defensively (older
+/// sessions / missing audit) so the caller can still proceed
+/// without a rationale reference rather than panic.
+fn latest_classification_rationale_id(
+    conn: &rusqlite::Connection,
+    session_id: &str,
+) -> Result<Option<String>> {
+    let row = conn.query_row(
+        "SELECT rationale_id FROM mediation_events
+         WHERE session_id = ?1 AND kind = 'classification_produced' AND rationale_id IS NOT NULL
+         ORDER BY occurred_at DESC, id DESC LIMIT 1",
+        params![session_id],
+        |r| r.get::<_, Option<String>>(0),
+    );
+    match row {
+        Ok(opt) => Ok(opt),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(crate::error::Error::Db(e)),
+    }
+}
+
+/// Feature 005 — write the cooperative-self-resolution invitation
+/// gift-wraps + audit row. Patterned on
+/// [`super::draft_and_send_followup_message`]: opens a single
+/// transaction for both `mediation_messages` rows + the
+/// `self_resolution_offered` audit row, commits, then publishes the
+/// gift-wraps OUTSIDE the transaction. A relay-side publish failure
+/// after commit leaves the rows in place as historical record —
+/// matches the existing drafter discipline (FR-126 Non-Goals).
+#[allow(clippy::too_many_arguments)]
+async fn draft_and_send_self_resolution_invitation(
+    conn: &Arc<AsyncMutex<rusqlite::Connection>>,
+    client: &Client,
+    serbero_keys: &Keys,
+    session_id: &str,
+    confidence: f64,
+    buyer_language: Option<&str>,
+    seller_language: Option<&str>,
+    buyer_shared_keys: &Keys,
+    seller_shared_keys: &Keys,
+    prompt_bundle: &Arc<PromptBundle>,
+    rationale_id: Option<&str>,
+) -> Result<()> {
+    use crate::models::mediation::TranscriptParty;
+
+    let buyer_msg = self_resolution::render_for(buyer_language, &prompt_bundle.self_resolution);
+    let seller_msg = self_resolution::render_for(seller_language, &prompt_bundle.self_resolution);
+
+    let buyer_wrap = outbound::build_wrap_with_audience(
+        serbero_keys,
+        &buyer_shared_keys.public_key(),
+        &buyer_msg,
+        Some("buyer"),
+    )
+    .await?;
+    let seller_wrap = outbound::build_wrap_with_audience(
+        serbero_keys,
+        &seller_shared_keys.public_key(),
+        &seller_msg,
+        Some("seller"),
+    )
+    .await?;
+
+    if buyer_wrap.inner_event_id == seller_wrap.inner_event_id {
+        return Err(crate::error::Error::ChatTransport(
+            "inner event ids collided across parties on cooperative invitation; refusing to \
+             persist rows that would violate the dedup invariant"
+                .into(),
+        ));
+    }
+
+    let buyer_shared_pubkey_hex = buyer_shared_keys.public_key().to_hex();
+    let seller_shared_pubkey_hex = seller_shared_keys.public_key().to_hex();
+    let buyer_inner_id_hex = buyer_wrap.inner_event_id.to_hex();
+    let seller_inner_id_hex = seller_wrap.inner_event_id.to_hex();
+    let now = super::current_ts_secs()?;
+
+    {
+        let mut guard = conn.lock().await;
+        let tx = guard.transaction()?;
+        db::mediation::insert_outbound_message(
+            &tx,
+            &db::mediation::NewOutboundMessage {
+                session_id,
+                party: TranscriptParty::Buyer,
+                shared_pubkey: &buyer_shared_pubkey_hex,
+                inner_event_id: &buyer_inner_id_hex,
+                inner_event_created_at: buyer_wrap.inner_created_at,
+                outer_event_id: Some(&buyer_wrap.outer.id.to_hex()),
+                content: &buyer_msg,
+                prompt_bundle_id: &prompt_bundle.id,
+                policy_hash: &prompt_bundle.policy_hash,
+                persisted_at: now,
+            },
+        )?;
+        db::mediation::insert_outbound_message(
+            &tx,
+            &db::mediation::NewOutboundMessage {
+                session_id,
+                party: TranscriptParty::Seller,
+                shared_pubkey: &seller_shared_pubkey_hex,
+                inner_event_id: &seller_inner_id_hex,
+                inner_event_created_at: seller_wrap.inner_created_at,
+                outer_event_id: Some(&seller_wrap.outer.id.to_hex()),
+                content: &seller_msg,
+                prompt_bundle_id: &prompt_bundle.id,
+                policy_hash: &prompt_bundle.policy_hash,
+                persisted_at: now,
+            },
+        )?;
+        // Self-resolution audit row. The `rationale_id` is the
+        // producing classification's content hash; the `confidence`
+        // and per-party language codes go into the structured
+        // payload so a forensic replay can reconstruct exactly which
+        // template section each party received.
+        db::mediation_events::record_self_resolution_offered(
+            &tx,
+            session_id,
+            rationale_id.unwrap_or(""),
+            confidence,
+            buyer_language,
+            seller_language,
+            &prompt_bundle.self_resolution.fallback_language,
+            &prompt_bundle.id,
+            &prompt_bundle.policy_hash,
+            now,
+        )?;
+        tx.commit()?;
+    }
+
+    // Operational tracing for SC-001 baseline (T029).
+    let bid_for_log = prompt_bundle.id.clone();
+    info!(
+        event = "cooperative_case_detected",
+        session_id = %session_id,
+        confidence,
+        prompt_bundle_id = %bid_for_log,
+        buyer_language = buyer_language.unwrap_or("(none)"),
+        seller_language = seller_language.unwrap_or("(none)"),
+        occurred_at_unix = now,
+        "cooperative_case_detected"
+    );
+
+    super::session::publish_with_bounded_retry(client, &buyer_wrap.outer, "buyer").await?;
+    super::record_outbound_sent_audit(
+        conn,
+        session_id,
+        &buyer_shared_pubkey_hex,
+        &buyer_inner_id_hex,
+        prompt_bundle,
+    )
+    .await?;
+    super::session::publish_with_bounded_retry(client, &seller_wrap.outer, "seller").await?;
+    super::record_outbound_sent_audit(
+        conn,
+        session_id,
+        &seller_shared_pubkey_hex,
+        &seller_inner_id_hex,
+        prompt_bundle,
+    )
+    .await?;
 
     Ok(())
 }
@@ -631,6 +925,7 @@ mod tests {
             escalation: String::new(),
             mediation_style: String::new(),
             message_templates: String::new(),
+            self_resolution: crate::mediation::self_resolution::SelfResolutionTemplates::default(),
         })
     }
 
@@ -767,6 +1062,7 @@ mod tests {
             &[],
             "mock-provider",
             "mock-model",
+            &MediationConfig::default(),
         )
         .await
         .unwrap();

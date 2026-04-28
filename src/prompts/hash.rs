@@ -35,6 +35,39 @@ pub fn policy_hash(
     hex_lower(&digest)
 }
 
+/// Same shape as [`policy_hash`], plus the cooperative
+/// self-resolution bundle bytes appended as a sixth segment.
+/// Feature 005 ships its templates as a separate prompt file; the
+/// hash MUST extend over those bytes so a forensic replay can pin
+/// the exact rendered string per session.
+pub fn policy_hash_v2(
+    system: &str,
+    classification: &str,
+    escalation: &str,
+    mediation_style: &str,
+    message_templates: &str,
+    self_resolution: &str,
+) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(PREFIX);
+    feed(&mut hasher, b"system", system.as_bytes());
+    feed(&mut hasher, b"classification", classification.as_bytes());
+    feed(&mut hasher, b"escalation", escalation.as_bytes());
+    feed(&mut hasher, b"mediation_style", mediation_style.as_bytes());
+    feed(
+        &mut hasher,
+        b"message_templates",
+        message_templates.as_bytes(),
+    );
+    // Final segment uses no trailing delimiter, matching the v1
+    // shape's last-segment rule.
+    hasher.update(b"self_resolution");
+    hasher.update(b"\0");
+    hasher.update(self_resolution.as_bytes());
+    let digest = hasher.finalize();
+    hex_lower(&digest)
+}
+
 fn feed(hasher: &mut Sha256, label: &[u8], bytes: &[u8]) {
     hasher.update(label);
     hasher.update(b"\0");

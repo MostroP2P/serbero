@@ -8,10 +8,12 @@
 //! MUST fail loudly — the caller leaves Phase 3 disabled for the run.
 
 pub mod hash;
+pub mod self_resolution_parser;
 
 use std::path::Path;
 
 use crate::error::{Error, Result};
+use crate::mediation::self_resolution::SelfResolutionTemplates;
 use crate::models::PromptsConfig;
 
 /// A loaded, hashed Phase 3 prompt bundle.
@@ -27,6 +29,11 @@ pub struct PromptBundle {
     pub escalation: String,
     pub mediation_style: String,
     pub message_templates: String,
+    /// Feature 005 — cooperative self-resolution language entries.
+    /// Loaded from `prompts/phase3-self-resolution.md`. The bundle's
+    /// `policy_hash` extends over the file's bytes so a forensic
+    /// replay can reproduce the exact rendered string per session.
+    pub self_resolution: SelfResolutionTemplates,
 }
 
 /// Load every file referenced by `[prompts]`, compute the bundle
@@ -42,12 +49,50 @@ pub fn load_bundle(config: &PromptsConfig) -> Result<PromptBundle> {
     let mediation_style = read_file(&config.mediation_style_path, "mediation_style_path")?;
     let message_templates = read_file(&config.message_templates_path, "message_templates_path")?;
 
-    let policy_hash = hash::policy_hash(
+    // Feature 005: the cooperative self-resolution bundle file lives
+    // beside the existing prompt files. Path is derived from the
+    // configured `system_instructions_path` (replacing
+    // `phase3-system.md` with `phase3-self-resolution.md`) so
+    // operators don't need to add a new key for an existing
+    // deployment to pick the file up.
+    //
+    // Backwards-compatibility: a daemon upgrading from before this
+    // feature shipped will not yet have the file on disk. Rather
+    // than refuse to start, the loader logs a one-line warning and
+    // falls back to empty templates — the cooperative-self-resolution
+    // policy branch becomes a no-op (the `render_for` helper returns
+    // a placeholder that includes a clear operator message), and the
+    // legacy cooperative-summary path runs unchanged. The hash
+    // includes the (possibly empty) self-resolution bytes so the
+    // SC-103 invariant still holds.
+    let self_resolution_path = derive_self_resolution_path(&config.system_instructions_path);
+    let (self_resolution, self_resolution_raw) = match std::fs::read_to_string(Path::new(
+        &self_resolution_path,
+    )) {
+        Ok(raw) => match self_resolution_parser::parse(&raw) {
+            Ok(parsed) => (parsed, raw),
+            Err(e) => {
+                return Err(Error::PromptBundleLoad(format!(
+                    "failed to parse self-resolution templates at {self_resolution_path}: {e}"
+                )));
+            }
+        },
+        Err(_) => {
+            tracing::warn!(
+                path = %self_resolution_path,
+                "phase3-self-resolution.md not found; cooperative-self-resolution branch will be inert until the file is added"
+            );
+            (SelfResolutionTemplates::default(), String::new())
+        }
+    };
+
+    let policy_hash = hash::policy_hash_v2(
         &system,
         &classification,
         &escalation,
         &mediation_style,
         &message_templates,
+        &self_resolution_raw,
     );
 
     Ok(PromptBundle {
@@ -58,7 +103,22 @@ pub fn load_bundle(config: &PromptsConfig) -> Result<PromptBundle> {
         escalation,
         mediation_style,
         message_templates,
+        self_resolution,
     })
+}
+
+/// Replace the trailing `phase3-system.md` filename in
+/// `system_instructions_path` with `phase3-self-resolution.md`. If
+/// the configured path doesn't end in the canonical filename (an
+/// operator who renamed the bundle), fall back to a sibling file in
+/// the same directory.
+fn derive_self_resolution_path(system_path: &str) -> String {
+    let p = Path::new(system_path);
+    let parent = p.parent().unwrap_or_else(|| Path::new("."));
+    parent
+        .join("phase3-self-resolution.md")
+        .to_string_lossy()
+        .into_owned()
 }
 
 fn read_file(path: &str, field: &str) -> Result<String> {

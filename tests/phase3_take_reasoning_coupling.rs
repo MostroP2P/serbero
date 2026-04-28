@@ -66,6 +66,9 @@ impl ReasoningProvider for EscalatingProvider {
             },
             rationale: RationaleText("scripted fraud verdict for T106".into()),
             flags: vec![Flag::FraudRisk],
+            human_requested: false,
+            buyer_language: None,
+            seller_language: None,
         })
     }
     async fn summarize(
@@ -99,6 +102,9 @@ impl ReasoningProvider for ModelEscalatesProvider {
             )),
             rationale: RationaleText("scripted model-escalate verdict".into()),
             flags: Vec::new(),
+            human_requested: false,
+            buyer_language: None,
+            seller_language: None,
         })
     }
     async fn summarize(

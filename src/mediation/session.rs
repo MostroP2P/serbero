@@ -294,6 +294,23 @@ pub async fn open_session(params: OpenSessionParams<'_>) -> Result<OpenOutcome> 
                 "decision": "escalate",
                 "trigger": trigger.to_string(),
             }),
+            // The cooperative self-resolution branch (Feature 005)
+            // is only added to `policy::evaluate(...)` (mid-session)
+            // — never to `classify_for_start`. The predicate guard
+            // requires a prior `self_resolution_offered` row, which
+            // cannot exist before the first session row commits.
+            // Reaching this arm would mean the policy layer
+            // misclassified an opening-round decision; treat
+            // defensively as a `summarize` audit shape.
+            PolicyDecision::SuggestSelfResolutionWithSummary { confidence } => {
+                serde_json::json!({
+                    "dispute_id": params.dispute_id,
+                    "decision": "summarize",
+                    "classification": "coordination_failure_resolvable",
+                    "confidence": confidence,
+                    "note": "unexpected_cooperative_branch_on_opening_round",
+                })
+            }
         };
         let guard = params.conn.lock().await;
         if let Err(e) = db::mediation_events::record_event(
@@ -616,6 +633,41 @@ pub async fn open_session(params: OpenSessionParams<'_>) -> Result<OpenOutcome> 
             Ok(OpenOutcome::ReadyForSummary {
                 session_id,
                 classification,
+                confidence,
+            })
+        }
+        // Feature 005: defensive arm. The cooperative branch is only
+        // installed in `policy::evaluate(...)` (mid-session); the
+        // `classify_for_start` path will never produce this variant
+        // because its predicate guard requires a prior
+        // `self_resolution_offered` audit row, which cannot exist
+        // before the first session row commits. If we ever do reach
+        // this arm, route to the legacy cooperative-summary outcome
+        // so the engine still makes forward progress.
+        PolicyDecision::SuggestSelfResolutionWithSummary { confidence } => {
+            let now = current_ts_secs()?;
+            {
+                let guard = params.conn.lock().await;
+                db::mediation::set_session_state(
+                    &guard,
+                    &session_id,
+                    crate::models::mediation::MediationSessionState::Classified,
+                    now,
+                )?;
+            }
+            if let Some(cache) = params.session_key_cache {
+                register_session_material(cache, &session_id, material.clone()).await;
+            }
+            warn!(
+                session_id = %session_id,
+                confidence,
+                "classify_for_start unexpectedly returned cooperative-self-resolution \
+                 branch on opening round; treating as legacy cooperative summary"
+            );
+            Ok(OpenOutcome::ReadyForSummary {
+                session_id,
+                classification:
+                    crate::models::mediation::ClassificationLabel::CoordinationFailureResolvable,
                 confidence,
             })
         }
@@ -1006,6 +1058,7 @@ mod tests {
             escalation: "esc".into(),
             mediation_style: "style".into(),
             message_templates: "tpl".into(),
+            self_resolution: crate::mediation::self_resolution::SelfResolutionTemplates::default(),
         })
     }
 

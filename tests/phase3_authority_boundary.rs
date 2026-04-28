@@ -29,6 +29,7 @@ fn test_bundle() -> Arc<PromptBundle> {
         escalation: "esc".into(),
         mediation_style: "style".into(),
         message_templates: "tpl".into(),
+        self_resolution: serbero::mediation::self_resolution::SelfResolutionTemplates::default(),
     })
 }
 
@@ -72,6 +73,9 @@ async fn authority_boundary_attempt_suppresses_and_escalates() {
         },
         rationale: RationaleText("model tried to cross the authority boundary".into()),
         flags: vec![Flag::AuthorityBoundaryAttempt],
+        human_requested: false,
+        buyer_language: None,
+        seller_language: None,
     };
 
     let decision = policy::evaluate(
@@ -82,6 +86,7 @@ async fn authority_boundary_attempt_suppresses_and_escalates() {
         "gpt-test",
         classification,
         1,
+        &serbero::models::MediationConfig::default(),
     )
     .await
     .unwrap();

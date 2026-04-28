@@ -289,6 +289,7 @@ async fn second_round_outbound_fires_once_and_is_idempotent() {
         &[], // no solvers needed on the AskClarification branch
         "mock-provider",
         "mock-model",
+        &serbero::models::MediationConfig::default(),
     )
     .await
     .expect("advance_session_round first call must succeed");
@@ -379,6 +380,7 @@ async fn second_round_outbound_fires_once_and_is_idempotent() {
         &[],
         "mock-provider",
         "mock-model",
+        &serbero::models::MediationConfig::default(),
     )
     .await
     .expect("advance_session_round second call must succeed as a no-op");

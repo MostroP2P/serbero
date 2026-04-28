@@ -34,6 +34,7 @@ fn fixture_bundle() -> Arc<PromptBundle> {
         escalation: "ESCALATION_MARKER: escalation rules".into(),
         mediation_style: "STYLE_MARKER: neutral tone".into(),
         message_templates: "TEMPLATE_MARKER: templates here".into(),
+        self_resolution: serbero::mediation::self_resolution::SelfResolutionTemplates::default(),
     })
 }
 
@@ -48,6 +49,7 @@ fn classification_request() -> ClassificationRequest {
             round_count: 0,
             last_classification: None,
             last_confidence: None,
+            session_has_self_resolution_offered: false,
         },
     }
 }

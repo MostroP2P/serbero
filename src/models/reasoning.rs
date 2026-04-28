@@ -22,11 +22,18 @@ pub struct TranscriptEntry {
 }
 
 /// Context shared across reasoning calls in the same session.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ReasoningContext {
     pub round_count: u32,
     pub last_classification: Option<ClassificationLabel>,
     pub last_confidence: Option<f64>,
+    /// FR-008. `true` iff a `self_resolution_offered` audit row
+    /// already exists for this session. Drives the conditional
+    /// `human_requested` instruction block in the classifier prompt:
+    /// when true, the prompt asks the model to flag explicit
+    /// human-assistance requests so `policy::evaluate` can
+    /// short-circuit to `Escalate(PartyRequestedHuman)`.
+    pub session_has_self_resolution_offered: bool,
 }
 
 /// Classification request.
@@ -88,6 +95,12 @@ impl fmt::Debug for RationaleText {
 }
 
 /// Classification response.
+///
+/// The three optional language / opt-in fields below are additive
+/// extensions for Feature 005 (cooperative self-resolution). Adapters
+/// that haven't been updated to emit them simply leave the defaults
+/// (`false` / `None`); the policy short-circuit and the dispatch
+/// arm both handle missing values gracefully.
 #[derive(Debug, Clone)]
 pub struct ClassificationResponse {
     pub classification: ClassificationLabel,
@@ -95,6 +108,24 @@ pub struct ClassificationResponse {
     pub suggested_action: SuggestedAction,
     pub rationale: RationaleText,
     pub flags: Vec<Flag>,
+    /// FR-008. Set by the classifier when a party reply explicitly
+    /// asks for human assistance. Honoured by `policy::evaluate` only
+    /// after a `self_resolution_offered` audit row exists for the
+    /// session — that predicate guard prevents an adversarial party
+    /// from skipping mediation by emitting human-assistance phrasing
+    /// on round 0 and prevents a buggy provider from triggering
+    /// escalation on rounds the prompt did not request the field.
+    pub human_requested: bool,
+    /// FR-002. ISO-639-1 code (`"en"`, `"es"`, `"pt"`, …) emitted by
+    /// the classifier alongside `buyer_clarification`. `None` when
+    /// the latest reply has no buyer content or is too short to
+    /// disambiguate. Consumed by the cooperative-self-resolution
+    /// dispatch arm to pick the right `[xx]` template section; falls
+    /// back to `bundle.self_resolution.fallback_language` when
+    /// absent.
+    pub buyer_language: Option<String>,
+    /// FR-002. Same shape as `buyer_language`, for the seller.
+    pub seller_language: Option<String>,
 }
 
 /// Summary request.

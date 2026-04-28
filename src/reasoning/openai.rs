@@ -212,6 +212,21 @@ struct ClassificationJson {
     rationale: String,
     #[serde(default)]
     flags: Vec<String>,
+    /// Feature 005 — opt-in to human assistance after a
+    /// `self_resolution_offered` event. Defaulted to `false` so
+    /// rounds where the prompt did not request the field parse
+    /// cleanly (the policy short-circuit consults the
+    /// `session_has_self_resolution_offered` predicate too).
+    #[serde(default)]
+    human_requested: bool,
+    /// Feature 005 — buyer's detected language (ISO-639-1). The
+    /// runtime reads this directly off the structured response
+    /// rather than running its own language detection.
+    #[serde(default)]
+    buyer_language: Option<String>,
+    /// Feature 005 — seller's detected language (ISO-639-1).
+    #[serde(default)]
+    seller_language: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -472,6 +487,21 @@ pub(super) fn build_classification_prompt(r: &ClassificationRequest) -> String {
         .map(|e| format!("[{}] {}: {}", e.inner_event_created_at, e.party, e.content))
         .collect::<Vec<_>>()
         .join("\n");
+    // Feature 005: only ask for the `human_requested` field on rounds
+    // following a `self_resolution_offered` audit row. Asking on every
+    // round wastes tokens and risks false positives (a buggy provider
+    // that emits the field where it has no contract to do so).
+    let human_requested_block = if r.context.session_has_self_resolution_offered {
+        "\n         Additionally emit human_requested (boolean): set to true if and \
+         only if the latest party reply contains an explicit, unambiguous \
+         request for a human solver / mediator / arbitrator (examples: \"I want \
+         a human\", \"necesito un humano\", \"please escalate to a person\", \
+         \"que un humano lo revise\", \"preciso de um humano\"). Vague \
+         phrasings like \"this is taking too long\" or \"I'm frustrated\" do \
+         NOT count. When in doubt, set to false."
+    } else {
+        ""
+    };
     format!(
         "## Session metadata\n\
          session_id: {sid}\n\
@@ -491,6 +521,11 @@ pub(super) fn build_classification_prompt(r: &ClassificationRequest) -> String {
          confidence (0..1), suggested_action (ask_clarification|summarize|escalate), \
          rationale (string), flags (array of fraud_risk|conflicting_claims|low_info|\
          unresponsive_party|authority_boundary_attempt).\n\
+         You MUST also emit buyer_language and seller_language (ISO-639-1 \
+         codes such as \"en\", \"es\", \"pt\") inferred from each party's most \
+         recent reply in the transcript. When the latest message has no \
+         buyer (or seller) content or is too short to disambiguate, set \
+         the corresponding field to null.\n\
          When suggested_action = ask_clarification you MUST also return \
          buyer_clarification (string, addressed to the buyer, asking what you need \
          from the buyer to advance the case) and seller_clarification (string, \
@@ -502,7 +537,7 @@ pub(super) fn build_classification_prompt(r: &ClassificationRequest) -> String {
          if you cannot produce a useful question for one side, pick a different \
          suggested_action (summarize or escalate). suggested_action_detail is \
          optional and only used to carry the escalation reason when \
-         suggested_action = escalate.",
+         suggested_action = escalate.{human_requested_block}",
         sid = r.session_id,
         did = r.dispute_id,
         init = r.initiator_role,
@@ -682,12 +717,22 @@ pub(super) fn parse_classification(
             ))),
         })
         .collect::<std::result::Result<_, _>>()?;
+    let normalize_lang = |s: Option<String>| -> Option<String> {
+        // Defensively trim + lowercase the language code so a
+        // classifier that returns `"ES"` or `" pt "` still matches
+        // the `[es]`/`[pt]` template sections.
+        s.map(|v| v.trim().to_ascii_lowercase())
+            .filter(|v| !v.is_empty())
+    };
     Ok(ClassificationResponse {
         classification,
         confidence: parsed.confidence.clamp(0.0, 1.0),
         suggested_action,
         rationale: RationaleText(parsed.rationale),
         flags,
+        human_requested: parsed.human_requested,
+        buyer_language: normalize_lang(parsed.buyer_language),
+        seller_language: normalize_lang(parsed.seller_language),
     })
 }
 
@@ -1254,6 +1299,7 @@ mod tests {
             escalation: "ESCALATION_MARKER: escalation rules".to_string(),
             mediation_style: "STYLE_MARKER: neutral tone".to_string(),
             message_templates: "TEMPLATE_MARKER: templates here".to_string(),
+            self_resolution: crate::mediation::self_resolution::SelfResolutionTemplates::default(),
         })
     }
 
@@ -1269,6 +1315,7 @@ mod tests {
                 round_count: 0,
                 last_classification: None,
                 last_confidence: None,
+                session_has_self_resolution_offered: false,
             },
         };
         let user = build_classification_prompt(&req);

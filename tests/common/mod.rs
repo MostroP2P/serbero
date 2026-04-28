@@ -478,6 +478,9 @@ impl ReasoningProvider for MockReasoningProvider {
             },
             rationale: RationaleText("both parties seem cooperative".into()),
             flags: Vec::new(),
+            human_requested: false,
+            buyer_language: None,
+            seller_language: None,
         })
     }
 

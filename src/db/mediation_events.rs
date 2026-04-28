@@ -76,6 +76,14 @@ pub enum MediationEventKind {
     /// and `orphan_dispute_reference` (payload parses but the
     /// dispute id has no row in `disputes`).
     EscalationDispatchParseFailed,
+    /// FR-001 — emitted when Serbero sends the cooperative
+    /// self-resolution invitation to both parties on a high-confidence
+    /// `coordination_failure_resolvable` round. Once written for a
+    /// session, the policy branch refuses to fire again for that
+    /// session (one-shot guarantee per FR-006). Payload references
+    /// the rationale id of the producing classification so the full
+    /// rationale text stays out of `mediation_events` per FR-120.
+    SelfResolutionOffered,
 }
 
 impl MediationEventKind {
@@ -106,6 +114,7 @@ impl MediationEventKind {
             EscalationSuperseded => "escalation_superseded",
             EscalationDispatchUnroutable => "escalation_dispatch_unroutable",
             EscalationDispatchParseFailed => "escalation_dispatch_parse_failed",
+            SelfResolutionOffered => "self_resolution_offered",
         }
     }
 }
@@ -660,6 +669,83 @@ pub fn record_escalation_dispatch_parse_failed(
     )
 }
 
+/// FR-001 / FR-005 typed constructor for the cooperative
+/// self-resolution invitation audit row.
+///
+/// Emitted before the outbound gift-wraps publish so the audit row is
+/// durable even if relay publishing fails. Payload carries the
+/// per-party language codes the dispatch arm resolved (used for
+/// forensic replay per `quickstart.md`); the full rationale text
+/// stays in `reasoning_rationales`, referenced by `rationale_id`,
+/// per FR-120.
+#[allow(clippy::too_many_arguments)]
+pub fn record_self_resolution_offered(
+    conn: &Connection,
+    session_id: &str,
+    rationale_id: &str,
+    confidence: f64,
+    buyer_language: Option<&str>,
+    seller_language: Option<&str>,
+    fallback_language: &str,
+    prompt_bundle_id: &str,
+    policy_hash: &str,
+    occurred_at: i64,
+) -> Result<i64> {
+    let payload = json!({
+        "confidence": confidence,
+        "languages": {
+            "buyer": buyer_language,
+            "seller": seller_language,
+            "fallback": fallback_language,
+        },
+    })
+    .to_string();
+    record_event(
+        conn,
+        MediationEventKind::SelfResolutionOffered,
+        Some(session_id),
+        &payload,
+        Some(rationale_id),
+        Some(prompt_bundle_id),
+        Some(policy_hash),
+        occurred_at,
+    )
+}
+
+/// One-shot guard predicate (FR-006). Returns `true` iff a
+/// `self_resolution_offered` audit row already exists for the given
+/// session. The cooperative-self-resolution policy branch and the
+/// `human_requested` short-circuit both consult this predicate so
+/// the new behaviours stay scoped to sessions that have actually
+/// received the invitation.
+pub fn session_has_self_resolution_offered(conn: &Connection, session_id: &str) -> Result<bool> {
+    let n: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM mediation_events
+         WHERE kind = 'self_resolution_offered' AND session_id = ?1",
+        params![session_id],
+        |r| r.get(0),
+    )?;
+    Ok(n > 0)
+}
+
+/// Read the `occurred_at` of the *first* `self_resolution_offered`
+/// row for a session, or `None` if none exists. Used by the
+/// `cooperative_case_closed_externally` tracing event in
+/// `dispute_resolved` to compute `elapsed_secs` per the operational
+/// counters in `tasks.md` T029.
+pub fn first_self_resolution_offered_at(
+    conn: &Connection,
+    session_id: &str,
+) -> Result<Option<i64>> {
+    conn.query_row(
+        "SELECT MIN(occurred_at) FROM mediation_events
+         WHERE kind = 'self_resolution_offered' AND session_id = ?1",
+        params![session_id],
+        |r| r.get::<_, Option<i64>>(0),
+    )
+    .map_err(Into::into)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -756,6 +842,10 @@ mod tests {
             (
                 MediationEventKind::EscalationDispatchParseFailed,
                 "escalation_dispatch_parse_failed",
+            ),
+            (
+                MediationEventKind::SelfResolutionOffered,
+                "self_resolution_offered",
             ),
         ];
         for (kind, want) in expected {
