@@ -126,6 +126,35 @@ Hard rules:
   does NOT apply on round 0 — see the Round-0 contract above.
 - Each question stands on its own — don't cross-reference the other
   party's text, since each party only ever sees theirs.
+- The clarification MUST advance the conversation. Before emitting
+  `buyer_clarification` or `seller_clarification`, scan the
+  `## Transcript` section for any `serbero` outbound to the same
+  party in earlier rounds. Your text MUST NOT be byte-identical or
+  substantively equivalent to a previous Serbero clarification to
+  that party — the parties experience repetition as a defect (the
+  bot ignored my answer). If the party's most recent reply already
+  answered the previous question, the next clarification must ask
+  the NEXT concrete piece of evidence (proof of transfer:
+  timestamp, transaction reference, redacted screenshot, payment
+  method, the receiving account's last 4 digits, etc.), NOT
+  re-ask the same question with different wording. Concrete
+  examples:
+  - Seller said "I received the fiat" / "acabo de recibir el pago
+    fiat" → next `seller_clarification` MUST ask **when** it
+    arrived, **by what method**, and request a **redacted bank
+    statement** or screenshot covering the expected window. Do
+    NOT re-ask "did you receive the fiat?".
+  - Buyer said "I sent the payment at 14:30" → next
+    `buyer_clarification` MUST ask for the transaction reference
+    /authorization code and a redacted screenshot of the transfer
+    confirmation. Do NOT re-ask "did you send the payment?".
+  - Either party replied with a meta-message ("I don't
+    understand", "no entiendo", "speak Spanish") → that is NOT a
+    substantive answer. Re-ask the original question, but in the
+    party's detected language (see "Per-Party Language" below).
+  If you cannot find a meaningful next question to ask given what
+  the party has already shared, pick `summarize` or `escalate`
+  instead of repeating yourself.
 
 ## Per-Party Language (Feature 005)
 
