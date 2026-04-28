@@ -35,13 +35,13 @@ the detected code has no matching `[xx]` section in this file.
 fallback_language = "en"
 
 [en]
-template = "Thanks for the update — it sounds like the two of you may be close to coordinating the next step between yourselves. I'll keep monitoring this conversation in case anything changes."
+template = "From what each of you has shared, it sounds like the two of you may be close to coordinating the next step between yourselves. I'll keep monitoring this conversation in case anything changes."
 human_assistance_optin = "If you'd prefer human assistance instead, just let me know in this chat and I'll route you to the assigned solver."
 
 [es]
-template = "Gracias por la actualización: parece que ustedes dos podrían estar cerca de coordinar el siguiente paso entre sí. Sigo atento a esta conversación por si algo cambia."
+template = "Por lo que cada uno ha compartido, parece que ustedes dos podrían estar cerca de coordinar el siguiente paso entre sí. Sigo atento a esta conversación por si algo cambia."
 human_assistance_optin = "Si prefieres asistencia humana, dímelo en este chat y te conecto con la persona asignada al caso."
 
 [pt]
-template = "Obrigado pela atualização — parece que vocês dois podem estar perto de coordenar o próximo passo entre si. Continuo acompanhando esta conversa caso algo mude."
+template = "Pelo que cada um compartilhou, parece que vocês dois podem estar perto de coordenar o próximo passo entre si. Continuo acompanhando esta conversa caso algo mude."
 human_assistance_optin = "Se preferir assistência humana, me avise neste chat e eu encaminho você para a pessoa designada."

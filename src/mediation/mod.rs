@@ -1326,8 +1326,11 @@ pub async fn deliver_summary(
     //     session at `summary_delivered` blocks re-eligibility
     //     (since `summary_delivered` is treated as live by the
     //     eligibility EXISTS clause) while still being recognised
-    //     as terminal by `list_live_sessions` and
-    //     `latest_open_session_for`. The legal `summary_delivered
+    //     as terminal by `latest_open_session_for`.
+    //     `list_live_sessions` keeps the row visible only when a
+    //     prior `self_resolution_offered` audit row exists, so the
+    //     ingest tick can still observe a later party reply for
+    //     the human-assistance opt-in. The legal `summary_delivered
     //     → closed` transition is taken later by the
     //     `dispute_resolved` handler when Mostro closes the
     //     dispute, or stays put indefinitely if the dispute never
