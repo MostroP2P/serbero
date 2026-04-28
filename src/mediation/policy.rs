@@ -269,6 +269,24 @@ pub async fn evaluate(
     .await?;
 
     // Predicate guard for both Feature 005 branches.
+    //
+    // No TOCTOU window here in single-process operation, even
+    // though the predicate read and the eventual write in
+    // `follow_up::draft_and_send_self_resolution_invitation` happen
+    // in two different `conn.lock().await` regions: the mediation
+    // engine spawns exactly one tokio task that runs ticks
+    // sequentially in a loop, `run_ingest_tick` processes sessions
+    // serially via `while let Some(res) = fetchers.join_next().await
+    // { ... advance_session_round(...).await }`, and a single call
+    // to `advance_session_round` always completes (predicate +
+    // dispatch write) before the next call to it for any session
+    // can begin. A per-session UNIQUE partial index would be the
+    // belt-and-braces defence for an HA / multi-process deploy, but
+    // (a) HA is out of scope per `plan.md`, and (b) such an index
+    // would require a new SQL migration which `plan.md` also
+    // forbids as a feature goal — see
+    // `specs/005-cooperative-self-resolution/plan.md` §"strictly
+    // additive: no DB migration".
     let prior_offered = {
         let guard = conn.lock().await;
         db::mediation_events::session_has_self_resolution_offered(&guard, session_id)?
