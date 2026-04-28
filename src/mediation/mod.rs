@@ -1882,18 +1882,30 @@ async fn run_ingest_tick(
         envelopes_fetched += envelopes.len() as u64;
         // Track whether this session received any Fresh envelope on
         // this tick cycle. If yes, fire the Phase 11 mid-session
-        // advancement hook (T121) after the envelope loop finishes;
-        // if no, skip it — `advance_session_round`'s idempotency
-        // gate (round_count > round_count_last_evaluated) would
-        // detect nothing to do anyway, but this local flag avoids
-        // the redundant DB lookup.
-        let mut session_had_fresh = false;
+        // advancement hook (T121) after the envelope loop finishes.
+        //
+        // The `skip_advance` flag is used ONLY to suppress the hook
+        // when the envelope loop above just decided to escalate this
+        // session via the round-limit guard — in that narrow window
+        // we must not also run a clarification round. In all other
+        // cases the hook fires and `advance_session_round`'s own
+        // early-exit gates (state, pending-work, cache, dispute row)
+        // are the source of truth.
+        //
+        // We deliberately do NOT gate on "did this tick see a Fresh
+        // envelope?" any more — that gate stranded sessions whose
+        // previous classify failed (provider 502 etc.) because on the
+        // retry tick the same envelopes arrived as Duplicate, no
+        // Fresh-ingest fired, and the round was never re-evaluated.
+        // Observed 2026-04-28 with `gpt-5.4-mini` returning 502 Bad
+        // Gateway: session stayed at `awaiting_response` forever
+        // after the first failed classify.
+        let mut skip_advance = false;
 
         'envelope_loop: for env in &envelopes {
             match session::ingest_inbound(conn, &session_id, env).await {
                 Ok(session::IngestOutcome::Fresh { round_count_after }) => {
                     rows_ingested += 1;
-                    session_had_fresh = true;
                     // T068 — after each Fresh ingest, check whether
                     // the session has hit the configured round cap.
                     // If so, escalate with `RoundLimit` and STOP
@@ -1903,19 +1915,16 @@ async fn run_ingest_tick(
                     // would just add noise to an escalated transcript.
                     let rc_after: u32 = round_count_after.max(0) as u32;
                     if session::check_round_limit(rc_after, mediation_cfg.max_rounds) {
-                        // Clear the per-session "had fresh" flag
-                        // before the escalation attempt so the
-                        // post-loop Phase 11 hook
-                        // (advance_session_round) does NOT run for
+                        // Suppress the post-loop Phase 11 hook for
                         // this session on this tick. If
-                        // escalation::recommend succeeds, the state
-                        // gate in advance_session_round would also
+                        // `escalation::recommend` succeeds, the state
+                        // gate in `advance_session_round` would also
                         // skip; if it fails, the session stays in
-                        // awaiting_response and without this
-                        // explicit clear the hook would run and try
-                        // to dispatch clarifications on a session
+                        // `awaiting_response` and without this
+                        // explicit suppression the hook would run and
+                        // try to dispatch clarifications on a session
                         // that the tick just decided should escalate.
-                        session_had_fresh = false;
+                        skip_advance = true;
                         warn!(
                             session_id = %session_id,
                             round_count = rc_after,
@@ -2000,21 +2009,30 @@ async fn run_ingest_tick(
 
         // Phase 11 / T121 — mid-session advancement hook.
         //
-        // Fires once per session per tick, AFTER the envelope loop,
-        // when at least one Fresh envelope landed. Reasons the call
-        // site lives here rather than inside the Fresh arm:
+        // Fires once per session per tick, AFTER the envelope loop.
+        // Reasons the call site lives here rather than inside the
+        // Fresh arm:
         //
         // - If both parties replied between ticks we still want
         //   exactly one reasoning call (with the transcript that
         //   includes both replies), not one per reply.
-        // - If the round-limit escalation above broke out of the
-        //   envelope loop and flipped the session to
-        //   `escalation_recommended`, `advance_session_round`'s
-        //   state gate short-circuits — no duplicate dispatch.
+        // - If the round-limit guard above broke out of the envelope
+        //   loop and flipped the session to `escalation_recommended`,
+        //   `advance_session_round`'s state gate short-circuits — no
+        //   duplicate dispatch.
         // - Any error inside `advance_session_round` is absorbed
         //   there (log + failure-counter bump). The ingest tick
         //   MUST keep processing other sessions.
-        if session_had_fresh {
+        //
+        // The hook fires whenever `skip_advance` is false. The inner
+        // `total_fresh_inbounds <= round_count_last_evaluated` gate is
+        // the source of truth for "is there pending work to
+        // evaluate?". The previous "fire only when this tick saw a
+        // Fresh envelope" gate stranded sessions whose previous
+        // classify failed (provider 502 etc.): on the retry tick the
+        // same envelopes arrived as Duplicate, no Fresh-ingest fired,
+        // and the round was never re-evaluated.
+        if !skip_advance {
             follow_up::advance_session_round(
                 conn,
                 client,
