@@ -118,4 +118,33 @@ mod tests {
         let b = policy_hash("abc", "d", "", "", "");
         assert_ne!(a, b);
     }
+
+    #[test]
+    fn policy_hash_v2_identical_inputs_produce_identical_hashes() {
+        let a = policy_hash_v2("s", "c", "e", "m", "t", "r");
+        let b = policy_hash_v2("s", "c", "e", "m", "t", "r");
+        assert_eq!(a, b);
+        assert_eq!(a.len(), 64);
+        assert!(a.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn policy_hash_v2_self_resolution_change_flips_hash() {
+        let base = policy_hash_v2("s", "c", "e", "m", "t", "r");
+        assert_ne!(base, policy_hash_v2("s", "c", "e", "m", "t", "R"));
+        assert_ne!(base, policy_hash_v2("s", "c", "e", "m", "t", ""));
+    }
+
+    #[test]
+    fn policy_hash_v2_differs_from_v1_even_with_empty_self_resolution() {
+        // Pin the domain-separation guarantee: even when the v2 hash
+        // is computed with an empty self-resolution segment, it must
+        // NOT collide with the v1 hash on the same first five
+        // arguments. The labelled segment for `self_resolution`
+        // (length 0) still feeds bytes into the hasher, so the two
+        // outputs diverge.
+        let v1 = policy_hash("s", "c", "e", "m", "t");
+        let v2 = policy_hash_v2("s", "c", "e", "m", "t", "");
+        assert_ne!(v1, v2);
+    }
 }

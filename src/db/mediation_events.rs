@@ -682,7 +682,7 @@ pub fn record_escalation_dispatch_parse_failed(
 pub fn record_self_resolution_offered(
     conn: &Connection,
     session_id: &str,
-    rationale_id: &str,
+    rationale_id: Option<&str>,
     confidence: f64,
     buyer_language: Option<&str>,
     seller_language: Option<&str>,
@@ -705,7 +705,7 @@ pub fn record_self_resolution_offered(
         MediationEventKind::SelfResolutionOffered,
         Some(session_id),
         &payload,
-        Some(rationale_id),
+        rationale_id,
         Some(prompt_bundle_id),
         Some(policy_hash),
         occurred_at,

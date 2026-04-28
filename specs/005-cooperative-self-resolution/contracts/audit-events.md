@@ -78,7 +78,7 @@ schema. No structural change.
 For a session that takes the cooperative-invitation path, the
 audit-row sequence MUST be:
 
-```
+```text
 1. session_opened                (existing — emitted at session open)
 2. classification_produced       (existing — emitted on round 0 / round 1)
 3. self_resolution_offered       (NEW — this feature)
@@ -95,7 +95,7 @@ when Mostro genuinely resolves the underlying dispute (existing
 If a party opts in to human assistance after the invitation, the
 sequence becomes:
 
-```
+```text
 1. session_opened
 2. classification_produced       (round 0 / round 1)
 3. self_resolution_offered

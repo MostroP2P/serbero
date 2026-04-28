@@ -1,11 +1,15 @@
 # Contract: Self-Resolution Template Bundle
 
 **File**: `prompts/phase3-self-resolution.md`
-**Loaded by**: `src/prompts/bundle.rs` (existing loader; this
-feature adds parsing for the new file)
+**Loaded by**: `src/prompts/mod.rs::load_bundle` together with the
+other Phase 3 prompt files; the parser implementation lives in
+`src/prompts/self_resolution_parser.rs`.
 **Pinned via**: the existing `prompt_bundle_id` + `policy_hash` on
-`mediation_sessions`. Sessions opened against bundle v1 see v1
-templates even after a v2 deploys.
+`mediation_sessions`. The hash extends over the cooperative-self-
+resolution bytes via `prompts::hash::policy_hash_v2` when the file
+is present; legacy deployments without the file fall back to
+`policy_hash` (v1) so the hash does not rotate. Sessions opened
+against bundle v1 see v1 templates even after a v2 deploys.
 
 ## File Format
 

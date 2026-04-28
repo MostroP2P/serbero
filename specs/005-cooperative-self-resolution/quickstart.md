@@ -12,17 +12,14 @@ Before this feature can be exercised:
 
 - **`main` carries the `summary_delivered` lifecycle fix** that
   defers `summary_delivered → closed` to the `dispute_resolved`
-  handler. Without it, the engine reopens duplicate sessions
-  mid-coordination and the cooperative invitation becomes
-  ineffective. (Already shipped in PR #47.)
-- **A reasoning provider that emits the `human_requested` field
-  on round N+1**. As of this feature's plan date neither
-  adapter (OpenAI-compatible, Anthropic) emits it; a Phase 2
-  task in this feature ships that update.
-- **An updated `prompts/phase3-self-resolution.md` bundle file**
-  with at minimum `[en]` populated. Templates land in the same PR
-  as the code; the keyword-audit unit test refuses to merge a
-  bundle with banned substrings.
+  handler (already shipped in PR #47).
+- **The classifier emits the `human_requested` field on round N+1.**
+  Both reasoning adapters (OpenAI-compatible and Anthropic) reuse
+  the shared `build_classification_prompt` / `parse_classification`
+  pair, so this rolls out together when the feature ships.
+- **`prompts/phase3-self-resolution.md` is present in the deploy.**
+  Initial language set: `[en]`, `[es]`, `[pt]`. The keyword-audit
+  unit test refuses to merge a bundle with banned substrings.
 
 ## Configuration (operator-side)
 

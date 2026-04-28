@@ -16,7 +16,7 @@ description: "Task list for Cooperative Self-Resolution Nudge (Feature 005)"
 
 - **[P]**: Can run in parallel (different files, no dependencies on incomplete tasks)
 - **[Story]**: User story label (US1 / US2 / US3) — only on user-story phase tasks
-- All paths are absolute under the repository root `/home/negrunch/dev/cancerbero/`
+- All paths are relative to the repository root (e.g. `src/...`, `tests/...`); concrete examples below use that prefix without a leading machine-local path.
 
 ---
 

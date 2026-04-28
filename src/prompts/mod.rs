@@ -77,23 +77,53 @@ pub fn load_bundle(config: &PromptsConfig) -> Result<PromptBundle> {
                 )));
             }
         },
-        Err(_) => {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            // Legacy / pre-feature deployment. Inert the cooperative
+            // branch (the policy gate further down also checks
+            // `by_language.is_empty()`); legacy summary path runs
+            // unchanged. Only NotFound triggers this fallback —
+            // permission errors, EIO, etc. are real configuration
+            // problems and must surface loudly.
             tracing::warn!(
                 path = %self_resolution_path,
                 "phase3-self-resolution.md not found; cooperative-self-resolution branch will be inert until the file is added"
             );
             (SelfResolutionTemplates::default(), String::new())
         }
+        Err(e) => {
+            return Err(Error::PromptBundleLoad(format!(
+                "failed to read self-resolution templates at {self_resolution_path}: {e}"
+            )));
+        }
     };
 
-    let policy_hash = hash::policy_hash_v2(
-        &system,
-        &classification,
-        &escalation,
-        &mediation_style,
-        &message_templates,
-        &self_resolution_raw,
-    );
+    // Backwards-compat hash policy. When the cooperative-self-resolution
+    // bundle file is absent (legacy deployment that hasn't shipped
+    // `phase3-self-resolution.md` yet), we preserve the v1 hash so a
+    // restart does NOT rotate the policy hash for live sessions —
+    // pinned hashes on `mediation_sessions.policy_hash` keep matching
+    // and the `startup_resume_pass` mismatch path stays inert.
+    // Once the file is present (post-feature deployment), the v2 hash
+    // extends over the additional bytes so SC-103 forensic replay
+    // pins the cooperative bundle byte-for-byte too.
+    let policy_hash = if self_resolution_raw.is_empty() {
+        hash::policy_hash(
+            &system,
+            &classification,
+            &escalation,
+            &mediation_style,
+            &message_templates,
+        )
+    } else {
+        hash::policy_hash_v2(
+            &system,
+            &classification,
+            &escalation,
+            &mediation_style,
+            &message_templates,
+            &self_resolution_raw,
+        )
+    };
 
     Ok(PromptBundle {
         id: "phase3-default".to_string(),

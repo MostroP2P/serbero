@@ -19,9 +19,18 @@ contract before the feature can ship for that provider.
   "buyer_clarification": "<existing field>",
   "seller_clarification": "<existing field>",
   "rationale": "<existing field>",
+  "buyer_language": "es",
+  "seller_language": "en",
   "human_requested": false
 }
 ```
+
+`buyer_language` and `seller_language` are emitted on **every**
+round (ISO-639-1 code or `null`); the runtime uses them to drive
+the cooperative-self-resolution dispatch arm without needing a
+Rust-side language-detection helper. `human_requested` is only
+requested by the prompt on rounds following a
+`self_resolution_offered` event.
 
 The `human_requested` field is a plain JSON boolean. It is
 **only requested by the prompt** on rounds following a

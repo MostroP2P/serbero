@@ -83,8 +83,10 @@ solver_auth_retry_max_attempts = 24
 # Confidence floor at which the cooperative branch fires. Range
 # 0.0..=1.0; values outside that range fail loudly at startup. Set
 # higher (e.g. 0.90) to fire only on very-high-confidence cooperative
-# cases. Setting this to 1.0 effectively disables the branch — use
-# the kill-switch below instead.
+# cases. A value of 1.0 only nearly disables the branch (a classifier
+# that emits exactly 1.0 still passes the gate); the strict, only
+# disable mechanism is `self_resolution_enabled = false` (the
+# kill-switch below).
 self_resolution_threshold = 0.75
 
 # Master kill-switch. When false, the branch is bypassed entirely

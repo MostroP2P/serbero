@@ -132,10 +132,25 @@ pub async fn advance_session_round(
             return Ok(());
         }
     };
-    if !matches!(info.state, MediationSessionState::AwaitingResponse) {
+    // State gate: normally the session must be in `awaiting_response`.
+    // Feature 005 carve-out: a session in `summary_delivered` that
+    // received the cooperative invitation is still re-classifiable so
+    // the human-assistance opt-in path (FR-008) can fire when a party
+    // reply arrives after the summary. The carve-out is scoped by the
+    // `self_resolution_offered` audit row — a legacy
+    // `summary_delivered` session without that row is still treated
+    // as terminal.
+    let is_post_invitation_summary_delivered =
+        matches!(info.state, MediationSessionState::SummaryDelivered) && {
+            let guard = conn.lock().await;
+            db::mediation_events::session_has_self_resolution_offered(&guard, session_id)?
+        };
+    if !matches!(info.state, MediationSessionState::AwaitingResponse)
+        && !is_post_invitation_summary_delivered
+    {
         debug!(
             state = %info.state,
-            "advance_session_round: session not in awaiting_response; skipping"
+            "advance_session_round: session not in awaiting_response (and not a post-invitation summary_delivered); skipping"
         );
         return Ok(());
     }
@@ -286,6 +301,25 @@ pub async fn advance_session_round(
     };
 
     // (7) Dispatch.
+    //
+    // Feature 005 carve-out: when the session is in
+    // `summary_delivered` (re-entered for the post-invitation
+    // re-classification path), only an `Escalate` decision is
+    // actionable. Any other decision would attempt to walk an
+    // illegal transition (e.g. `summary_delivered → classified`).
+    // The classification_produced audit row is already durable from
+    // `policy::evaluate`, so a "wait silently" no-op is the right
+    // outcome for a non-escalating reply.
+    if is_post_invitation_summary_delivered
+        && !matches!(decision, policy::PolicyDecision::Escalate(_))
+    {
+        debug!(
+            state = %info.state,
+            ?decision,
+            "advance_session_round: post-invitation reply did not request human; staying in summary_delivered"
+        );
+        return Ok(());
+    }
     match decision {
         policy::PolicyDecision::AskClarification {
             buyer_text,
@@ -679,11 +713,14 @@ async fn draft_and_send_self_resolution_invitation(
         // producing classification's content hash; the `confidence`
         // and per-party language codes go into the structured
         // payload so a forensic replay can reconstruct exactly which
-        // template section each party received.
+        // template section each party received. `None` for
+        // rationale_id is allowed (defensive: a session with a
+        // missing classification_produced row still gets the audit
+        // row, just without the FK link).
         db::mediation_events::record_self_resolution_offered(
             &tx,
             session_id,
-            rationale_id.unwrap_or(""),
+            rationale_id,
             confidence,
             buyer_language,
             seller_language,

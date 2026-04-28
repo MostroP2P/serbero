@@ -76,6 +76,18 @@ pub fn parse(raw: &str) -> Result<SelfResolutionTemplates, String> {
                 "[{normalized}] human_assistance_optin must not be empty"
             ));
         }
+        // Duplicate-key guard. TOML rejects exact-string duplicates,
+        // but two sections that only differ in case (`[en]` and
+        // `[EN]`) collide after our normalization step. Loud failure
+        // beats a silent overwrite — a translator who copies a
+        // language section and forgets to relabel it should fail to
+        // ship rather than have one of the two bodies disappear at
+        // load time.
+        if by_language.contains_key(&normalized) {
+            return Err(format!(
+                "duplicate language section after normalization: `{normalized}`"
+            ));
+        }
         by_language.insert(
             normalized,
             SelfResolutionLanguageEntry {
@@ -224,6 +236,30 @@ human_assistance_optin = "ok"
         let raw = "this is not toml at all <<<<";
         let err = parse(raw).unwrap_err();
         assert!(err.contains("TOML"));
+    }
+
+    #[test]
+    fn rejects_duplicate_language_after_normalization() {
+        // `[en]` and `[EN]` are two distinct TOML sections, but
+        // collapse to the same key after `to_ascii_lowercase`. The
+        // parser must error rather than silently keep whichever
+        // happened to land in the HashMap last.
+        let raw = r#"
+fallback_language = "en"
+
+[en]
+template = "first"
+human_assistance_optin = "first-optin"
+
+[EN]
+template = "second"
+human_assistance_optin = "second-optin"
+"#;
+        let err = parse(raw).unwrap_err();
+        assert!(
+            err.contains("duplicate"),
+            "expected duplicate-key error: {err}"
+        );
     }
 
     #[test]

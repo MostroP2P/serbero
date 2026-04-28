@@ -43,9 +43,14 @@ it does today (SC-007).
 
 The feature is **strictly additive**: no DB migration, no changes to
 the existing `Summarize` decision path beyond adding a new sibling
-variant, no changes to the session lifecycle (the session still
-ends at `summary_delivered`, exactly as the recently-shipped fix in
-`main` left it).
+variant. The default / happy-path session lifecycle still ends at
+`summary_delivered` (exactly as the recently-shipped fix in `main`
+left it). For the explicit human-assistance opt-in, however, a new
+`SummaryDelivered → EscalationRecommended` edge lets the session
+re-open into the Phase 4 dispatcher when a party reply asks for a
+human after the cooperative invitation. The carve-out is gated on
+the presence of a prior `self_resolution_offered` audit row, so
+legacy `summary_delivered` sessions stay terminal exactly as before.
 
 ## Technical Context
 

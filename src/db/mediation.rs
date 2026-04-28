@@ -282,18 +282,34 @@ pub struct LiveSession {
 pub fn list_live_sessions(conn: &Connection) -> Result<Vec<LiveSession>> {
     use std::str::FromStr;
 
+    // Feature 005: a session in `summary_delivered` that received the
+    // cooperative-self-resolution invitation stays watchable so a
+    // party reply can still trigger the `PartyRequestedHuman`
+    // escalation short-circuit. The EXISTS clause keeps the query
+    // index-friendly and surgical — only sessions with a prior
+    // `self_resolution_offered` audit row are revived; legacy
+    // summary_delivered sessions stay terminal as before.
     let mut stmt = conn.prepare(
-        "SELECT session_id, dispute_id, state,
-                prompt_bundle_id, policy_hash,
-                buyer_shared_pubkey, seller_shared_pubkey
-         FROM mediation_sessions
-         WHERE state NOT IN (
-             'closed',
-             'summary_delivered',
-             'escalation_recommended',
-             'superseded_by_human'
-         )
-         ORDER BY started_at ASC",
+        "SELECT s.session_id, s.dispute_id, s.state,
+                s.prompt_bundle_id, s.policy_hash,
+                s.buyer_shared_pubkey, s.seller_shared_pubkey
+         FROM mediation_sessions s
+         WHERE
+             s.state NOT IN (
+                 'closed',
+                 'summary_delivered',
+                 'escalation_recommended',
+                 'superseded_by_human'
+             )
+             OR (
+                 s.state = 'summary_delivered'
+                 AND EXISTS (
+                     SELECT 1 FROM mediation_events e
+                     WHERE e.session_id = s.session_id
+                       AND e.kind = 'self_resolution_offered'
+                 )
+             )
+         ORDER BY s.started_at ASC",
     )?;
     let rows = stmt.query_map([], |r| {
         Ok((

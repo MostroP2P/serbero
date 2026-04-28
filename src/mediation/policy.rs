@@ -305,11 +305,20 @@ pub async fn evaluate(
     // pre-condition fails the legacy decision passes through
     // unchanged — preserving byte-for-byte legacy behaviour with the
     // kill-switch off (SC-007).
+    // Bundle-availability gate. A daemon that hasn't shipped
+    // `prompts/phase3-self-resolution.md` yet loads with empty
+    // templates and `render_for` would otherwise emit the operator
+    // placeholder to end users. Falling through to the legacy
+    // Summarize keeps the user-facing surface clean — the cooperative
+    // branch becomes inert until the file lands.
+    let templates_present = !prompt_bundle.self_resolution.by_language.is_empty();
+
     let decision = match base_decision {
         PolicyDecision::Summarize {
             classification: ClassificationLabel::CoordinationFailureResolvable,
             confidence,
         } if mediation_cfg.self_resolution_enabled
+            && templates_present
             && (confidence as f32) >= mediation_cfg.self_resolution_threshold
             && !prior_offered =>
         {
@@ -825,6 +834,18 @@ mod tests {
     use crate::prompts::PromptBundle;
 
     fn test_bundle() -> Arc<PromptBundle> {
+        // Populate one language entry so the cooperative-branch
+        // tests below see a non-empty `by_language` map. Tests that
+        // exercise the empty-bundle inert behavior construct their
+        // own bundle inline.
+        let mut by_language = std::collections::HashMap::new();
+        by_language.insert(
+            "en".to_string(),
+            crate::mediation::self_resolution::SelfResolutionLanguageEntry {
+                template: "test invitation".into(),
+                human_assistance_optin: "test optin".into(),
+            },
+        );
         Arc::new(PromptBundle {
             id: "phase3-default".into(),
             policy_hash: "test-policy-hash".into(),
@@ -833,7 +854,10 @@ mod tests {
             escalation: "esc".into(),
             mediation_style: "style".into(),
             message_templates: "tpl".into(),
-            self_resolution: crate::mediation::self_resolution::SelfResolutionTemplates::default(),
+            self_resolution: crate::mediation::self_resolution::SelfResolutionTemplates {
+                by_language,
+                fallback_language: "en".into(),
+            },
         })
     }
 
@@ -1526,6 +1550,50 @@ mod tests {
             PolicyDecision::AskClarification {
                 buyer_text: "please confirm X (buyer)".into(),
                 seller_text: "please confirm X (seller)".into(),
+            },
+        );
+    }
+
+    #[tokio::test]
+    async fn evaluate_cooperative_branch_inert_when_templates_empty() {
+        // Backstop for an upgrade path: the daemon loads with empty
+        // `self_resolution` templates (file not yet shipped) and the
+        // operator left `self_resolution_enabled = true` by default.
+        // Without this gate, the branch would fire and `render_for`
+        // would emit the placeholder operator-message string to end
+        // users. The gate falls through to the legacy summarize so
+        // the user-facing chat stays clean.
+        let conn = fresh_conn();
+        let cfg = enabled_cooperative_cfg(0.75);
+        // Bundle with empty by_language map.
+        let empty_bundle = Arc::new(PromptBundle {
+            id: "phase3-default".into(),
+            policy_hash: "test-policy-hash".into(),
+            system: "sys".into(),
+            classification: "cls".into(),
+            escalation: "esc".into(),
+            mediation_style: "style".into(),
+            message_templates: "tpl".into(),
+            self_resolution: crate::mediation::self_resolution::SelfResolutionTemplates::default(),
+        });
+        let resp = cooperative_summary_response(0.95);
+        let decision = evaluate(
+            &conn,
+            "sess-policy",
+            &empty_bundle,
+            "openai",
+            "gpt-test",
+            resp,
+            4,
+            &cfg,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            decision,
+            PolicyDecision::Summarize {
+                classification: ClassificationLabel::CoordinationFailureResolvable,
+                confidence: 0.95,
             },
         );
     }
