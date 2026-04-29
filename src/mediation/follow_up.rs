@@ -454,52 +454,18 @@ pub async fn advance_session_round(
         }
         policy::PolicyDecision::SuggestSelfResolutionWithSummary { confidence } => {
             if classification.seller_confirmed_fiat_receipt != Some(true) {
-                info!(
-                    confidence,
-                    seller_confirmed_fiat_receipt = ?classification.seller_confirmed_fiat_receipt,
-                    "advance_session_round: self-resolution invitation suppressed because the classifier did not confirm seller-side fiat receipt; falling back to solver-only summary"
-                );
-                {
-                    let guard = conn.lock().await;
-                    db::mediation::set_session_state(
-                        &guard,
-                        session_id,
-                        MediationSessionState::Classified,
-                        super::current_ts_secs()?,
-                    )?;
-                }
-                if let Err(e) = deliver_summary(
-                    conn,
-                    client,
-                    serbero_keys,
-                    session_id,
-                    &info.dispute_id,
-                    crate::models::mediation::ClassificationLabel::CoordinationFailureResolvable,
-                    confidence,
-                    transcript_entries,
-                    prompt_bundle,
-                    reasoning,
-                    solvers,
-                    provider_name,
-                    model_name,
-                )
-                .await
-                {
-                    warn!(
-                        error = %e,
-                        "advance_session_round: deliver_summary failed after suppressing self-resolution invitation"
-                    );
-                    handle_reasoning_failure(
-                        conn,
-                        client,
-                        session_id,
-                        &info.dispute_id,
-                        solvers,
-                        prompt_bundle,
-                    )
-                    .await;
-                    return Ok(());
-                }
+                // FR-015 / spec.md:140-146 — buyer-only fiat claim
+                // without seller-side receipt corroboration is NOT
+                // enough to fire the cooperative invitation. We must
+                // also avoid walking the session to a terminal
+                // `summary_delivered` here, because the spec promises
+                // that "if the seller later confirms the fiat
+                // arrived, the invitation becomes eligible on that
+                // later round". Leave the session in
+                // `awaiting_response`, advance the evaluator marker
+                // so this same fresh-inbound count doesn't keep
+                // re-classifying, and let the next round re-enter
+                // cleanly.
                 let new_marker = total_fresh_inbounds;
                 let mut guard = conn.lock().await;
                 let tx = guard.transaction()?;
@@ -507,8 +473,9 @@ pub async fn advance_session_round(
                 tx.commit()?;
                 info!(
                     confidence,
+                    seller_confirmed_fiat_receipt = ?classification.seller_confirmed_fiat_receipt,
                     round_count_marked = new_marker,
-                    "advance_session_round: SuggestSelfResolutionWithSummary downgraded to Summarize"
+                    "advance_session_round: self-resolution invitation suppressed (no seller-side fiat-receipt corroboration); session stays awaiting_response for the next round"
                 );
                 return Ok(());
             }

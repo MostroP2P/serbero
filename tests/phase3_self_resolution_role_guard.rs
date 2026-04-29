@@ -196,7 +196,7 @@ async fn run_case(
     buyer_inbound_content: &str,
     seller_inbound_content: &str,
     seller_confirmed_fiat_receipt: Option<bool>,
-) -> Arc<AsyncMutex<rusqlite::Connection>> {
+) -> (Arc<AsyncMutex<rusqlite::Connection>>, SolverListener) {
     let relay = MockRelay::run().await.expect("start mock relay");
     let relay_url = relay.url().await.to_string();
 
@@ -273,18 +273,13 @@ async fn run_case(
     .await
     .expect("advance_session_round must succeed");
 
-    assert!(
-        solver.wait_for(1, 5).await,
-        "solver should still receive the summary notification"
-    );
-
-    conn
+    (conn, solver)
 }
 
 #[tokio::test]
 async fn buyer_only_fiat_claim_does_not_send_self_resolution_invitation() {
     let session_id = "sess-sr-guard-no";
-    let conn = run_case(
+    let (conn, _solver) = run_case(
         session_id,
         "dispute-sr-guard-no",
         "Buyer: Ya envie el fiat y tengo el comprobante.",
@@ -293,7 +288,7 @@ async fn buyer_only_fiat_claim_does_not_send_self_resolution_invitation() {
     )
     .await;
 
-    let (offered_count, outbound_count, state): (i64, i64, String) = {
+    let (offered_count, outbound_count, state, marker): (i64, i64, String, i64) = {
         let c = conn.lock().await;
         c.query_row(
             "SELECT
@@ -301,9 +296,11 @@ async fn buyer_only_fiat_claim_does_not_send_self_resolution_invitation() {
                  WHERE session_id = ?1 AND kind = 'self_resolution_offered'),
                 (SELECT COUNT(*) FROM mediation_messages
                  WHERE session_id = ?1 AND direction = 'outbound'),
-                (SELECT state FROM mediation_sessions WHERE session_id = ?1)",
+                (SELECT state FROM mediation_sessions WHERE session_id = ?1),
+                (SELECT round_count_last_evaluated FROM mediation_sessions
+                 WHERE session_id = ?1)",
             rusqlite::params![session_id],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
         )
         .unwrap()
     };
@@ -313,13 +310,19 @@ async fn buyer_only_fiat_claim_does_not_send_self_resolution_invitation() {
         outbound_count, 2,
         "no extra party invitation should be sent"
     );
-    assert_eq!(state, "summary_delivered");
+    // FR-015: the session must stay re-classifiable so a future
+    // seller-confirmation round can fire the invitation.
+    assert_eq!(state, "awaiting_response");
+    assert!(
+        marker > 0,
+        "the evaluator marker must advance so this round is not re-classified forever"
+    );
 }
 
 #[tokio::test]
 async fn seller_receipt_confirmation_allows_self_resolution_invitation() {
     let session_id = "sess-sr-guard-yes";
-    let conn = run_case(
+    let (conn, solver) = run_case(
         session_id,
         "dispute-sr-guard-yes",
         "Buyer: Ya envie el fiat.",
@@ -327,6 +330,11 @@ async fn seller_receipt_confirmation_allows_self_resolution_invitation() {
         Some(true),
     )
     .await;
+
+    assert!(
+        solver.wait_for(1, 5).await,
+        "solver should receive the summary notification"
+    );
 
     let (offered_count, invite_count, state): (i64, i64, String) = {
         let c = conn.lock().await;
