@@ -560,7 +560,12 @@ pub(super) fn build_classification_prompt(r: &ClassificationRequest) -> String {
          each question to that party's role (buyer = did you send fiat? proof; \
          seller = did you receive fiat? proof). Both strings must be non-empty; \
          if you cannot produce a useful question for one side, pick a different \
-         suggested_action (summarize or escalate). suggested_action_detail is \
+         suggested_action (summarize or escalate). Do not start follow-up \
+         clarification text with \"I already asked\", \"I already indicated\", \
+         \"Ya indiqué\", or equivalent scolding language; use a respectful \
+         opener such as \"To better understand your perspective\" / \"Para \
+         entender mejor tu perspectiva\" when an opener is needed. \
+         suggested_action_detail is \
          optional and only used to carry the escalation reason when \
          suggested_action = escalate.{human_requested_block}",
         sid = r.session_id,

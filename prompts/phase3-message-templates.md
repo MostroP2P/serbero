@@ -30,7 +30,11 @@ a single chat message and is a defect.
 
 — Substitute a concrete follow-up question and emit nothing else: no
 greeting, no self-introduction, no "Thank you for your response"
-preamble, no sign-off. Round 2+ messages travel through
+preamble, no scolding or "I already asked" phrasing, no sign-off.
+Use a fresh, respectful opener when helpful (for example, "Para
+entender mejor tu perspectiva..." / "To better understand your
+perspective...") rather than implying the party failed to answer.
+Round 2+ messages travel through
 `mediation::draft_and_send_followup_message`, which does NOT prefix a
 greeting; the entire user-visible body is whatever the model returned.
 Adding a preamble or signature here will surface verbatim in the

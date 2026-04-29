@@ -233,6 +233,29 @@ pub fn count_fresh_inbounds(conn: &Connection, session_id: &str) -> Result<i64> 
     Ok(n)
 }
 
+/// Direction of the latest non-stale mediation message for a session.
+///
+/// This is used as a conversation-turn guard: if the last usable
+/// transcript row is Serbero-authored, the follow-up loop must wait
+/// for another party reply before dispatching another outbound.
+pub fn latest_nonstale_message_direction(
+    conn: &Connection,
+    session_id: &str,
+) -> Result<Option<String>> {
+    match conn.query_row(
+        "SELECT direction FROM mediation_messages
+         WHERE session_id = ?1 AND stale = 0
+         ORDER BY inner_event_created_at DESC, id DESC
+         LIMIT 1",
+        params![session_id],
+        |r| r.get::<_, String>(0),
+    ) {
+        Ok(direction) => Ok(Some(direction)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(e.into()),
+    }
+}
+
 /// Number of `classification_produced` audit rows for a session.
 ///
 /// Phase 11 follow-up ordinal. The initial classification and each
@@ -708,6 +731,37 @@ mod tests {
 
         // Buyer's only reply is stale → no completed round.
         assert_eq!(recompute_round_count(&conn, "sess-1").unwrap(), 0);
+    }
+
+    #[test]
+    fn latest_nonstale_message_direction_uses_transcript_order() {
+        let conn = fresh();
+        insert_session(&conn, &new_session("pol-hash-latest")).unwrap();
+        insert_inbound_message(&conn, &new_inbound(TranscriptParty::Buyer, "b1", 100)).unwrap();
+        insert_outbound_message(
+            &conn,
+            &NewOutboundMessage {
+                session_id: "sess-1",
+                party: TranscriptParty::Buyer,
+                shared_pubkey: "buyer-shared-pk",
+                inner_event_id: "o1",
+                inner_event_created_at: 110,
+                outer_event_id: None,
+                content: "follow-up",
+                prompt_bundle_id: "phase3-test",
+                policy_hash: "pol-hash-latest",
+                persisted_at: 111,
+            },
+        )
+        .unwrap();
+        let mut stale = new_inbound(TranscriptParty::Seller, "s-stale", 120);
+        stale.stale = true;
+        insert_inbound_message(&conn, &stale).unwrap();
+
+        assert_eq!(
+            latest_nonstale_message_direction(&conn, "sess-1").unwrap(),
+            Some("outbound".to_string())
+        );
     }
 
     #[test]

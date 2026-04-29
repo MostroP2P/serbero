@@ -429,8 +429,8 @@ pub async fn draft_and_send_followup_message(
     // event id distinctness when `buyer_text == seller_text` is
     // preserved out-of-band via the `m-aud` tag passed to
     // `build_wrap_with_audience`.
-    let buyer_content = buyer_text.trim().to_string();
-    let seller_content = seller_text.trim().to_string();
+    let buyer_content = remove_repetitive_followup_preamble(buyer_text);
+    let seller_content = remove_repetitive_followup_preamble(seller_text);
 
     let buyer_wrap = outbound::build_wrap_with_audience(
         serbero_keys,
@@ -551,6 +551,30 @@ pub async fn draft_and_send_followup_message(
         "follow-up clarifying message dispatched to both parties"
     );
     Ok(())
+}
+
+fn remove_repetitive_followup_preamble(text: &str) -> String {
+    let cleaned = text.trim();
+    for prefix in [
+        "Ya indiqué que necesito entender tu perspectiva. En concreto:",
+        "Ya indique que necesito entender tu perspectiva. En concreto:",
+    ] {
+        if let Some(rest) = cleaned.strip_prefix(prefix) {
+            return format!("Para entender mejor tu perspectiva, {}", rest.trim_start());
+        }
+    }
+    for prefix in [
+        "I already indicated that I need to understand your perspective. Specifically:",
+        "I already said that I need to understand your perspective. Specifically:",
+    ] {
+        if let Some(rest) = cleaned.strip_prefix(prefix) {
+            return format!(
+                "To better understand your perspective, {}",
+                rest.trim_start()
+            );
+        }
+    }
+    cleaned.to_string()
 }
 
 /// Record one `outbound_sent` audit row in its own short-lived
@@ -2244,3 +2268,24 @@ pub async fn check_party_unresponsive_timeout(
 /// Per-session result emitted by the ingest tick's fetch fan-out.
 /// Named so the `JoinSet` type parameter stays readable.
 type IngestFetchResult = (String, Result<Vec<inbound::InboundEnvelope>>);
+
+#[cfg(test)]
+mod followup_text_tests {
+    use super::remove_repetitive_followup_preamble;
+
+    #[test]
+    fn removes_repetitive_spanish_preamble_from_followup() {
+        let text = "Ya indiqué que necesito entender tu perspectiva. En concreto: ¿qué prueba de transferencia puedes compartir?";
+        assert_eq!(
+            remove_repetitive_followup_preamble(text),
+            "Para entender mejor tu perspectiva, ¿qué prueba de transferencia puedes compartir?"
+        );
+    }
+
+    #[test]
+    fn leaves_natural_followup_unchanged() {
+        let text =
+            "Para entender mejor tu perspectiva, ¿puedes compartir una prueba de transferencia?";
+        assert_eq!(remove_repetitive_followup_preamble(text), text);
+    }
+}

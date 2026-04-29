@@ -176,6 +176,28 @@ pub async fn advance_session_round(
         );
         return Ok(());
     }
+    let latest_direction = {
+        let guard = conn.lock().await;
+        db::mediation::latest_nonstale_message_direction(&guard, session_id)?
+    };
+    if latest_direction.as_deref() == Some("outbound") {
+        // A party reply may still be pending in the marker if a
+        // previous dispatch committed rows but failed before the
+        // marker advanced, or if older data predates the current
+        // guard. In both cases Serbero has already sent the latest
+        // visible message and must wait for the next party response
+        // instead of sending a second clarification back-to-back.
+        let mut guard = conn.lock().await;
+        let tx = guard.transaction()?;
+        db::mediation::advance_evaluator_marker(&tx, session_id, total_fresh_inbounds)?;
+        tx.commit()?;
+        debug!(
+            total_fresh_inbounds,
+            round_count_marked = total_fresh_inbounds,
+            "advance_session_round: latest transcript row is outbound; waiting for party reply"
+        );
+        return Ok(());
+    }
 
     // (2) Per-party chat material from the in-memory cache.
     //     Absent material usually means this session was opened
@@ -1282,6 +1304,40 @@ mod tests {
             .unwrap();
     }
 
+    async fn seed_outbound(
+        conn: &Arc<AsyncMutex<rusqlite::Connection>>,
+        party: TranscriptParty,
+        inner_event_created_at: i64,
+    ) {
+        let guard = conn.lock().await;
+        let party_s = match party {
+            TranscriptParty::Buyer => "buyer",
+            TranscriptParty::Seller => "seller",
+            TranscriptParty::Serbero => {
+                panic!("Serbero is not a per-party outbound audience")
+            }
+        };
+        guard
+            .execute(
+                "INSERT INTO mediation_messages (
+                    session_id, direction, party, shared_pubkey,
+                    inner_event_id, inner_event_created_at,
+                    outer_event_id, content,
+                    prompt_bundle_id, policy_hash,
+                    persisted_at, stale
+                 ) VALUES ('sess-t120', 'outbound', ?1, 'sp-test',
+                           ?2, ?3, NULL, 'question already sent',
+                           'phase3-default', 'hash-test',
+                           200, 0)",
+                params![
+                    party_s,
+                    format!("outbound-{}", inner_event_created_at),
+                    inner_event_created_at
+                ],
+            )
+            .unwrap();
+    }
+
     async fn run_once(
         conn: &Arc<AsyncMutex<rusqlite::Connection>>,
         reasoning: &dyn ReasoningProvider,
@@ -1374,6 +1430,41 @@ mod tests {
             spy.calls.load(Ordering::SeqCst),
             0,
             "missing-cache gate must block classify when material is absent"
+        );
+    }
+
+    #[tokio::test]
+    async fn skips_and_marks_when_latest_transcript_row_is_outbound() {
+        let conn = seeded_db().await;
+        seed_session(&conn, "awaiting_response", 1, 0).await;
+        seed_fresh_inbound(&conn, TranscriptParty::Buyer, 10).await;
+        seed_outbound(&conn, TranscriptParty::Buyer, 20).await;
+        let spy = SpyClassifier {
+            calls: AtomicUsize::new(0),
+        };
+
+        run_once(&conn, &spy).await;
+
+        assert_eq!(
+            spy.calls.load(Ordering::SeqCst),
+            0,
+            "latest-outbound guard must block a second back-to-back Serbero message"
+        );
+        let marker: i64 = {
+            let guard = conn.lock().await;
+            guard
+                .query_row(
+                    "SELECT round_count_last_evaluated
+                     FROM mediation_sessions
+                     WHERE session_id = 'sess-t120'",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap()
+        };
+        assert_eq!(
+            marker, 1,
+            "guard must mark already-answered fresh inbounds to avoid retry loops"
         );
     }
 }
