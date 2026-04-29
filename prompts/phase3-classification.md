@@ -34,9 +34,23 @@ cross-reference with the audit code paths.
     timing issue** (delayed bank wire, timezone gap, payment-
     method confusion) without contradicting each other on the
     underlying facts.
-  - **Buyer confirms payment sent + seller has not contradicted
-    it** for one or more rounds — same shape, just from the
-    buyer's side.
+  - **Buyer confirms payment sent AND the seller corroborates
+    receipt** in the transcript. Once the seller says the fiat
+    arrived, the case becomes a legitimate cooperative-resolution
+    candidate; until then, the buyer's claim remains self-serving
+    and does NOT by itself justify the self-resolution invitation.
+
+  Counter-example that MUST NOT classify into the cooperative
+  self-resolution branch on its own:
+
+  - **Buyer says they sent the fiat, but the seller has not yet
+    confirmed receipt.** That is exactly what an honest buyer and a
+    dishonest buyer would both say. Do NOT treat this as a
+    satisfaction signal and do NOT jump to `suggested_action =
+    summarize` just to invite the parties to "coordinate the next
+    step". Instead, keep gathering evidence: ask the buyer for
+    proof of payment / transfer details and ask the seller whether
+    the fiat has arrived.
 
   Do NOT keep gathering evidence once the cooperative cue is
   unambiguous; "give me your bank statement" / "what timestamp"
@@ -164,22 +178,31 @@ Hard rules:
   on the kind of reply you're processing:
 
   - **Satisfaction / cooperation signal — STOP asking clarifications.**
-    A party message like "I received the fiat", "acabo de recibir
+    A seller message like "I received the fiat", "acabo de recibir
     el pago fiat", "ya me llegó el dinero", "recebi o pagamento",
     "yes I got it" (and similar across supported languages) is the
     seller telling you the trade is going smoothly on their side.
-    Do NOT ask for proof of receipt, redacted screenshots, bank
-    statements, or "by what method" follow-ups — that is bot-style
-    friction on a case that is already resolving cooperatively.
-    Switch to `classification = coordination_failure_resolvable`,
-    `confidence ≥ 0.75`, `suggested_action = summarize`. The policy
-    layer routes this to the cooperative self-resolution branch
-    (Feature 005), which sends both parties the neutral templated
-    invitation ("looks like you're close to coordinating between
-    yourselves…") and notifies the solver in parallel. From there
-    the seller can release the funds in their Mostro client
-    without solver intervention; Serbero MUST NOT name or
-    instruct that action (authority boundary, FR-004).
+    Do NOT ask that seller for proof of receipt, redacted
+    screenshots, bank statements, or "by what method" follow-ups —
+    that is bot-style friction on a case that is already resolving
+    cooperatively. Switch to `classification =
+    coordination_failure_resolvable`, `confidence ≥ 0.75`,
+    `suggested_action = summarize`. The policy layer routes this to
+    the cooperative self-resolution branch (Feature 005), which
+    sends both parties the neutral templated invitation ("looks
+    like you're close to coordinating between yourselves…") and
+    notifies the solver in parallel. From there the seller can
+    release the funds in their Mostro client without solver
+    intervention; Serbero MUST NOT name or instruct that action
+    (authority boundary, FR-004).
+  - **Buyer-only payment claim — keep gathering evidence.** A buyer
+    message like "I sent the fiat", even if detailed or repeated,
+    is NOT enough by itself for the cooperative self-resolution
+    branch. Honest and dishonest buyers both have an incentive to
+    say this. Until the seller corroborates receipt, prefer
+    `suggested_action = ask_clarification`: ask the buyer for proof
+    of payment / transfer details and ask the seller whether the
+    fiat has arrived.
   - **Partial answer or new factual contradiction.** If the
     party's reply only addresses part of the previous question or
     raises a new claim that conflicts with the counterparty, the

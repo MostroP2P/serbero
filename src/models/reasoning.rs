@@ -126,6 +126,13 @@ pub struct ClassificationResponse {
     pub buyer_language: Option<String>,
     /// FR-002. Same shape as `buyer_language`, for the seller.
     pub seller_language: Option<String>,
+    /// Structured cooperative-resolution guard signal emitted by the
+    /// classifier after reading the transcript. `Some(true)` means the
+    /// seller clearly confirmed receipt of the fiat payment;
+    /// `Some(false)` means the seller clearly denied receipt; `None`
+    /// means the transcript does not support a confident seller-side
+    /// receipt determination yet.
+    pub seller_confirmed_fiat_receipt: Option<bool>,
 }
 
 /// Summary request.

@@ -896,6 +896,7 @@ mod tests {
             human_requested: false,
             buyer_language: None,
             seller_language: None,
+            seller_confirmed_fiat_receipt: None,
         }
     }
 

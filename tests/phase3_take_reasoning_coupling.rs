@@ -69,6 +69,7 @@ impl ReasoningProvider for EscalatingProvider {
             human_requested: false,
             buyer_language: None,
             seller_language: None,
+            seller_confirmed_fiat_receipt: None,
         })
     }
     async fn summarize(
@@ -105,6 +106,7 @@ impl ReasoningProvider for ModelEscalatesProvider {
             human_requested: false,
             buyer_language: None,
             seller_language: None,
+            seller_confirmed_fiat_receipt: None,
         })
     }
     async fn summarize(

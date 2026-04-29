@@ -453,6 +453,65 @@ pub async fn advance_session_round(
             );
         }
         policy::PolicyDecision::SuggestSelfResolutionWithSummary { confidence } => {
+            if classification.seller_confirmed_fiat_receipt != Some(true) {
+                info!(
+                    confidence,
+                    seller_confirmed_fiat_receipt = ?classification.seller_confirmed_fiat_receipt,
+                    "advance_session_round: self-resolution invitation suppressed because the classifier did not confirm seller-side fiat receipt; falling back to solver-only summary"
+                );
+                {
+                    let guard = conn.lock().await;
+                    db::mediation::set_session_state(
+                        &guard,
+                        session_id,
+                        MediationSessionState::Classified,
+                        super::current_ts_secs()?,
+                    )?;
+                }
+                if let Err(e) = deliver_summary(
+                    conn,
+                    client,
+                    serbero_keys,
+                    session_id,
+                    &info.dispute_id,
+                    crate::models::mediation::ClassificationLabel::CoordinationFailureResolvable,
+                    confidence,
+                    transcript_entries,
+                    prompt_bundle,
+                    reasoning,
+                    solvers,
+                    provider_name,
+                    model_name,
+                )
+                .await
+                {
+                    warn!(
+                        error = %e,
+                        "advance_session_round: deliver_summary failed after suppressing self-resolution invitation"
+                    );
+                    handle_reasoning_failure(
+                        conn,
+                        client,
+                        session_id,
+                        &info.dispute_id,
+                        solvers,
+                        prompt_bundle,
+                    )
+                    .await;
+                    return Ok(());
+                }
+                let new_marker = total_fresh_inbounds;
+                let mut guard = conn.lock().await;
+                let tx = guard.transaction()?;
+                db::mediation::advance_evaluator_marker(&tx, session_id, new_marker)?;
+                tx.commit()?;
+                info!(
+                    confidence,
+                    round_count_marked = new_marker,
+                    "advance_session_round: SuggestSelfResolutionWithSummary downgraded to Summarize"
+                );
+                return Ok(());
+            }
             // Feature 005 dispatch: cooperative self-resolution
             // invitation. Order of operations matches the contract
             // in `specs/005-cooperative-self-resolution/contracts/audit-events.md`:
