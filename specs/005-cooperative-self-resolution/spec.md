@@ -137,6 +137,13 @@ label; verify the policy emits the standard escalation for that label.
   invitation MUST be sent at most once per session. A second cooperative
   classification on a later round must not re-send the invitation; it
   falls through to the existing solver-summary path.
+- **Buyer says they sent fiat, but seller has not yet confirmed
+  receipt**: this MUST NOT trigger the self-resolution invitation by
+  itself. That claim is self-serving and can be true or false. Serbero
+  should continue evidence gathering instead (for example, requesting
+  payment proof from the buyer and receipt confirmation from the
+  seller). If the seller later confirms the fiat arrived, the
+  invitation becomes eligible on that later round.
 - **Mixed-language reply on the round where the invitation fires**:
   language detection is applied independently to buyer and seller; if
   one side's language confidence is very low, the invitation defaults
@@ -163,9 +170,10 @@ label; verify the policy emits the standard escalation for that label.
 
 - **FR-001**: When the latest classification of an active mediation
   session is "cooperative case" with confidence at or above a
-  configured threshold, the system MUST invite both parties (buyer and
-  seller) to coordinate the resolution themselves, in the existing
-  party chat transport.
+  configured threshold, and the transcript contains seller-side
+  corroboration that the fiat was received, the system MUST invite
+  both parties (buyer and seller) to coordinate the resolution
+  themselves, in the existing party chat transport.
 - **FR-002**: Each party-facing invitation MUST be written in that
   party's detected language. Buyer and seller languages are detected
   independently; one party's invitation MUST NOT switch into the
@@ -219,6 +227,10 @@ label; verify the policy emits the standard escalation for that label.
   template section without code changes; the automated fund-action
   keyword check (FR-004) MUST extend to the new section before it is
   shipped.
+- **FR-015**: A buyer-only claim that fiat was sent, without seller
+  confirmation of receipt, MUST NOT by itself trigger the invitation.
+  The system MUST treat that state as still requiring evidence
+  gathering or other non-invitation handling.
 
 ### Key Entities
 

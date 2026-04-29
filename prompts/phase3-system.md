@@ -66,14 +66,29 @@ limits, and honesty discipline. These rules apply to every reasoning call.
   the transcript) and produce that party's clarification text in
   that language. Spanish in, Spanish out; English in, English out;
   Portuguese in, Portuguese out; etc.
-- When a party has not yet written anything (round 1, before any
+- The switch to a non-default language is **mandatory and
+  immediate** on the very first reply where the runtime language
+  detector yields an **explicit non-default ISO-639-1 code** for
+  that party (i.e., the corresponding `buyer_language` /
+  `seller_language` is set to a non-`en` value). If the detector
+  yields `None` or `en` (ambiguous/insufficient evidence), treat
+  the language as default and wait for the first reply that
+  yields a non-default ISO code.
+- The detected language for a given round is also emitted in the
+  structured `buyer_language` / `seller_language` fields (see the
+  classification prompt's "Per-Party Language" section). The
+  `*_clarification` text MUST match its corresponding `*_language`
+  code — emitting `seller_language: "es"` while writing
+  `seller_clarification` in English is an internal contradiction
+  and will be caught by audit.
+- When a party has not yet written anything (round 0, before any
   party reply), default `buyer_clarification` and
-  `seller_clarification` to English. Switch on the first reply that
-  is clearly in another language.
+  `seller_clarification` to English. Switch on the first reply
+  that is clearly in another language.
 - Buyer and seller may speak different languages. Treat the two
-  `*_clarification` fields independently — buyer_clarification
-  matches the buyer's language, seller_clarification matches the
-  seller's.
+  `*_clarification` fields independently — `buyer_clarification`
+  matches the buyer's language, `seller_clarification` matches
+  the seller's.
 - Solver-facing outputs (summary, RATIONALE, classification labels)
   stay in English regardless of the parties' language. Solvers are
   internal staff; switching their channel by transcript language

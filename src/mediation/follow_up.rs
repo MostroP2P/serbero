@@ -453,6 +453,32 @@ pub async fn advance_session_round(
             );
         }
         policy::PolicyDecision::SuggestSelfResolutionWithSummary { confidence } => {
+            if classification.seller_confirmed_fiat_receipt != Some(true) {
+                // FR-015 / spec.md:140-146 — buyer-only fiat claim
+                // without seller-side receipt corroboration is NOT
+                // enough to fire the cooperative invitation. We must
+                // also avoid walking the session to a terminal
+                // `summary_delivered` here, because the spec promises
+                // that "if the seller later confirms the fiat
+                // arrived, the invitation becomes eligible on that
+                // later round". Leave the session in
+                // `awaiting_response`, advance the evaluator marker
+                // so this same fresh-inbound count doesn't keep
+                // re-classifying, and let the next round re-enter
+                // cleanly.
+                let new_marker = total_fresh_inbounds;
+                let mut guard = conn.lock().await;
+                let tx = guard.transaction()?;
+                db::mediation::advance_evaluator_marker(&tx, session_id, new_marker)?;
+                tx.commit()?;
+                info!(
+                    confidence,
+                    seller_confirmed_fiat_receipt = ?classification.seller_confirmed_fiat_receipt,
+                    round_count_marked = new_marker,
+                    "advance_session_round: self-resolution invitation suppressed (no seller-side fiat-receipt corroboration); session stays awaiting_response for the next round"
+                );
+                return Ok(());
+            }
             // Feature 005 dispatch: cooperative self-resolution
             // invitation. Order of operations matches the contract
             // in `specs/005-cooperative-self-resolution/contracts/audit-events.md`:

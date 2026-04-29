@@ -227,6 +227,10 @@ struct ClassificationJson {
     /// Feature 005 — seller's detected language (ISO-639-1).
     #[serde(default)]
     seller_language: Option<String>,
+    /// Cooperative-resolution guard signal. Nullable so the model can
+    /// say "not enough evidence yet" instead of forcing a guess.
+    #[serde(default)]
+    seller_confirmed_fiat_receipt: Option<bool>,
 }
 
 // ---------------------------------------------------------------------------
@@ -541,6 +545,12 @@ pub(super) fn build_classification_prompt(r: &ClassificationRequest) -> String {
          recent reply in the transcript. When the latest message has no \
          buyer (or seller) content or is too short to disambiguate, set \
          the corresponding field to null.\n\
+         You MUST also emit seller_confirmed_fiat_receipt (boolean|null). \
+         Set it to true only when the seller's messages clearly confirm \
+         that the fiat payment was received. Set it to false when the \
+         seller clearly says they have not received the fiat. Set it to \
+         null when the transcript does not support a confident seller-side \
+         receipt determination yet. Do not infer this from buyer-only claims.\n\
          When suggested_action = ask_clarification you MUST also return \
          buyer_clarification (string, addressed to the buyer, asking what you need \
          from the buyer to advance the case) and seller_clarification (string, \
@@ -748,6 +758,7 @@ pub(super) fn parse_classification(
         human_requested: parsed.human_requested,
         buyer_language: normalize_lang(parsed.buyer_language),
         seller_language: normalize_lang(parsed.seller_language),
+        seller_confirmed_fiat_receipt: parsed.seller_confirmed_fiat_receipt,
     })
 }
 
@@ -942,6 +953,21 @@ mod tests {
         assert!((parsed.confidence - 0.91).abs() < f64::EPSILON);
         assert_eq!(parsed.suggested_action, SuggestedAction::Summarize);
         assert_eq!(parsed.flags, vec![Flag::LowInfo]);
+        assert_eq!(parsed.seller_confirmed_fiat_receipt, None);
+    }
+
+    #[test]
+    fn parse_classification_parses_seller_receipt_signal() {
+        let raw = r#"{
+            "classification":"coordination_failure_resolvable",
+            "confidence":0.94,
+            "suggested_action":"summarize",
+            "rationale":"seller corroborated receipt",
+            "flags":[],
+            "seller_confirmed_fiat_receipt":true
+        }"#;
+        let parsed = parse_classification(raw).unwrap();
+        assert_eq!(parsed.seller_confirmed_fiat_receipt, Some(true));
     }
 
     #[test]
