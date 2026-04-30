@@ -802,6 +802,17 @@ required by FR-124 and "Final Solver Report on External Resolution".
   and the dispatch DB commit MUST NOT advance the marker, which
   means the next tick retries cleanly.
 
+- **FR-127a** *(turn-taking guard)*: Before calling the reasoning
+  provider for a mid-session clarification, the evaluator MUST inspect
+  the latest non-stale transcript row. If the latest row is
+  Serbero-authored outbound text, Serbero MUST NOT dispatch another
+  party-facing clarification and MUST wait for the next fresh inbound
+  party reply. If older unevaluated inbound rows are already followed
+  by a Serbero outbound row, the evaluator SHOULD advance
+  `round_count_last_evaluated` to the current fresh-inbound count so
+  the same already-answered party message does not trigger a retry
+  loop.
+
 - **FR-128** *(transcript construction)*: The transcript passed to
   `classify` MUST include every `mediation_messages` row for the
   session with `direction = 'outbound'` (Serbero-authored) and

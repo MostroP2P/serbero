@@ -398,14 +398,25 @@ pub(crate) enum PolicyRound {
 /// escalation rule for `AskClarification` suggestions. Follow-ups
 /// 1..=N pass through; follow-up N+1 onward escalate as before.
 ///
-/// Rationale (2026-04-21 Alice/Bob run): gpt-5 returned confidence
-/// 0.31 after the first single-party reply, which escalated the
-/// session to a solver before Serbero ever asked a second clarifying
-/// question. 3 is the empirical sweet spot: enough rounds to gather
-/// both sides' stories, few enough that a session truly stuck in
-/// ambiguity still surfaces to a human within a reasonable wall-clock
-/// window.
-pub const EARLY_MIDSESSION_BYPASS_FOLLOWUPS: u32 = 3;
+/// Rationale:
+/// - 2026-04-21 Alice/Bob run: gpt-5 returned confidence 0.31 after
+///   the first single-party reply, which escalated the session to a
+///   solver before Serbero ever asked a second clarifying question.
+///   The original window of 3 was the first-cut sweet spot.
+/// - 2026-04-29 Bob run (buyer claimed "ya envié el dinero" without
+///   proof, seller had not corroborated receipt): the model honestly
+///   returned `AskClarification` with confidence 0.20 → 0.24 → 0.24
+///   → 0.28 across four mid-session rounds, and the 4th tripped the
+///   bypass and escalated as `LowConfidence` even though the right
+///   move was to keep asking the buyer for the receipt. The model's
+///   confidence trajectory was rising, but never crossed 0.5; with a
+///   window of 3 the policy never gave it room to extract the proof.
+///
+/// 6 is the new empirical sweet spot: doubles the budget so the model
+/// can keep pulling on a "buyer claims paid, no proof yet" or similar
+/// evidence-gathering loop, while still surfacing a session truly
+/// stuck in ambiguity to a human within a bounded number of rounds.
+pub const EARLY_MIDSESSION_BYPASS_FOLLOWUPS: u32 = 6;
 
 /// Pure validation: run the contract rules against a single
 /// [`ClassificationResponse`] and return the resulting decision.
