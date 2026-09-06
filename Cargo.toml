@@ -6,7 +6,7 @@ description = "Nostr-native dispute coordination daemon for the Mostro ecosystem
 authors = ["Francisco Calderón <fjcalderon@gmail.com>"]
 homepage = "https://mostro.network"
 repository = "https://github.com/MostroP2P/serbero"
-license = "MIT"
+license = "GPL-3.0-only"
 readme = "README.md"
 
 [[bin]]

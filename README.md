@@ -1010,4 +1010,4 @@ git push origin v0.1.0
 
 ## License
 
-Serbero is licensed under the [MIT License](LICENSE).
+Serbero is licensed under the [GNU General Public License v3.0](LICENSE).
