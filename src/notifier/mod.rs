@@ -2,6 +2,7 @@
 //! (`docs/spec.md` §6).
 
 pub mod send;
+pub mod text;
 
 use std::sync::{Arc, Mutex};
 
@@ -12,6 +13,7 @@ use serde_json::json;
 pub use self::send::{Solver, notify_solvers};
 use crate::error::{Error, Result};
 use crate::mostro::dispute_event::{self, DisputeEvent};
+use crate::nostr::dm::DmSender;
 use crate::store::disputes::{self, Lifecycle, NewDispute, StatusUpdate};
 use crate::store::{Store, events};
 
@@ -29,14 +31,26 @@ pub enum Change {
     Unchanged,
 }
 
-pub struct Notifier {
+pub struct Notifier<S> {
     store: Arc<Mutex<Store>>,
+    sender: S,
+    solvers: Vec<Solver>,
     mostro: PublicKey,
 }
 
-impl Notifier {
-    pub fn new(store: Arc<Mutex<Store>>, mostro: PublicKey) -> Self {
-        Self { store, mostro }
+impl<S: DmSender> Notifier<S> {
+    pub fn new(
+        store: Arc<Mutex<Store>>,
+        sender: S,
+        solvers: Vec<Solver>,
+        mostro: PublicKey,
+    ) -> Self {
+        Self {
+            store,
+            sender,
+            solvers,
+            mostro,
+        }
     }
 
     /// Handles one event from the dispute subscription. Events that are not
@@ -53,15 +67,37 @@ impl Notifier {
         if change != Change::Unchanged {
             tracing::info!(dispute_id = %dispute.dispute_id, status = %dispute.status, ?change, "dispute event");
         }
+        if change == Change::New {
+            self.notify_new(&dispute, now).await?;
+        }
         Ok(change)
+    }
+
+    /// Tells every solver about a new dispute; the dispute becomes
+    /// `notified` once at least one DM was delivered.
+    async fn notify_new(&self, dispute: &DisputeEvent, now: i64) -> Result<()> {
+        let text = text::new_dispute(&dispute.dispute_id, dispute.initiator);
+        let delivered = notify_solvers(
+            &self.store,
+            &self.sender,
+            &self.solvers,
+            &dispute.dispute_id,
+            "new_dispute",
+            &text,
+            now,
+        )
+        .await?;
+        if delivered > 0 {
+            let store = lock(&self.store)?;
+            disputes::mark_notified(store.conn(), &dispute.dispute_id, now)?;
+        }
+        Ok(())
     }
 }
 
 /// Stores a dispute event revision and records what changed, atomically.
 pub fn record(store: &Mutex<Store>, dispute: &DisputeEvent, now: i64) -> Result<Change> {
-    let store = store
-        .lock()
-        .map_err(|_| Error::Schema("store lock poisoned".into()))?;
+    let store = lock(store)?;
     let tx = store.conn().unchecked_transaction()?;
     let status = dispute.status.to_string();
     let change = match disputes::get(&tx, &dispute.dispute_id)? {
@@ -126,6 +162,12 @@ pub fn record(store: &Mutex<Store>, dispute: &DisputeEvent, now: i64) -> Result<
     Ok(change)
 }
 
+fn lock(store: &Mutex<Store>) -> Result<std::sync::MutexGuard<'_, Store>> {
+    store
+        .lock()
+        .map_err(|_| Error::Schema("store lock poisoned".into()))
+}
+
 fn append(
     conn: &rusqlite::Connection,
     dispute: &DisputeEvent,
@@ -172,17 +214,35 @@ pub(crate) mod testing {
 mod tests {
     use nostr_sdk::prelude::Keys;
 
+    use super::send::testing::FakeSender;
     use super::testing::dispute_event;
     use super::*;
 
-    fn notifier(mostro: &Keys) -> Notifier {
+    fn notifier(mostro: &Keys) -> Notifier<FakeSender> {
+        notifier_with(mostro, FakeSender::default(), vec![solver()])
+    }
+
+    fn notifier_with(
+        mostro: &Keys,
+        sender: FakeSender,
+        solvers: Vec<Solver>,
+    ) -> Notifier<FakeSender> {
         Notifier::new(
             Arc::new(Mutex::new(Store::open_in_memory().unwrap())),
+            sender,
+            solvers,
             mostro.public_key(),
         )
     }
 
-    fn lifecycle(n: &Notifier, id: &str) -> Lifecycle {
+    fn solver() -> Solver {
+        Solver {
+            pubkey: Keys::generate().public_key(),
+            permission: crate::config::Permission::Write,
+        }
+    }
+
+    fn lifecycle(n: &Notifier<FakeSender>, id: &str) -> Lifecycle {
         let store = n.store.lock().unwrap();
         disputes::get(store.conn(), id).unwrap().unwrap().lifecycle
     }
@@ -198,10 +258,97 @@ mod tests {
             .unwrap();
 
         assert_eq!(change, Change::New);
-        assert_eq!(lifecycle(&n, "d1"), Lifecycle::New);
         let store = n.store.lock().unwrap();
         let events = events::list_for_dispute(store.conn(), "d1").unwrap();
         assert_eq!(events[0].kind, "detected");
+    }
+
+    #[tokio::test]
+    async fn new_dispute_is_sent_to_every_solver_and_marked_notified() {
+        let mostro = Keys::generate();
+        let n = notifier_with(&mostro, FakeSender::default(), vec![solver(), solver()]);
+
+        n.handle_event(&dispute_event(&mostro, "d1", "initiated", 100), 1_000)
+            .await
+            .unwrap();
+
+        assert_eq!(n.sender.texts().len(), 2);
+        assert_eq!(
+            n.sender.texts()[0],
+            "New Mostro dispute\ndispute: d1\nopened by: seller"
+        );
+        let store = n.store.lock().unwrap();
+        let dispute = disputes::get(store.conn(), "d1").unwrap().unwrap();
+        assert_eq!(dispute.lifecycle, Lifecycle::Notified);
+        assert_eq!(dispute.last_notified_at, Some(1_000));
+    }
+
+    #[tokio::test]
+    async fn partial_failure_still_marks_notified() {
+        let mostro = Keys::generate();
+        let solvers = vec![solver(), solver()];
+        let sender = FakeSender {
+            failing: [solvers[0].pubkey].into(),
+            ..Default::default()
+        };
+        let n = notifier_with(&mostro, sender, solvers);
+
+        n.handle_event(&dispute_event(&mostro, "d1", "initiated", 100), 1_000)
+            .await
+            .unwrap();
+
+        assert_eq!(lifecycle(&n, "d1"), Lifecycle::Notified);
+        let store = n.store.lock().unwrap();
+        let kinds: Vec<_> = events::list_for_dispute(store.conn(), "d1")
+            .unwrap()
+            .into_iter()
+            .map(|e| e.kind)
+            .collect();
+        assert_eq!(
+            kinds,
+            ["detected", "notification_failed", "notification_sent"]
+        );
+    }
+
+    #[tokio::test]
+    async fn total_failure_leaves_the_dispute_new() {
+        let mostro = Keys::generate();
+        let solvers = vec![solver()];
+        let sender = FakeSender {
+            failing: [solvers[0].pubkey].into(),
+            ..Default::default()
+        };
+        let n = notifier_with(&mostro, sender, solvers);
+
+        n.handle_event(&dispute_event(&mostro, "d1", "initiated", 100), 1_000)
+            .await
+            .unwrap();
+
+        assert_eq!(lifecycle(&n, "d1"), Lifecycle::New);
+    }
+
+    #[tokio::test]
+    async fn replayed_new_dispute_is_not_notified_twice() {
+        let mostro = Keys::generate();
+        let n = notifier(&mostro);
+        let event = dispute_event(&mostro, "d1", "initiated", 100);
+        n.handle_event(&event, 1_000).await.unwrap();
+
+        n.handle_event(&event, 1_001).await.unwrap();
+
+        assert_eq!(n.sender.texts().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn disputes_first_seen_past_initiated_are_not_notified() {
+        let mostro = Keys::generate();
+        let n = notifier(&mostro);
+
+        n.handle_event(&dispute_event(&mostro, "d1", "in-progress", 100), 1_000)
+            .await
+            .unwrap();
+
+        assert!(n.sender.texts().is_empty());
     }
 
     #[tokio::test]
@@ -215,10 +362,12 @@ mod tests {
 
         assert_eq!(change, Change::Unchanged);
         let store = n.store.lock().unwrap();
-        assert_eq!(
-            events::list_for_dispute(store.conn(), "d1").unwrap().len(),
-            1
-        );
+        let detected = events::list_for_dispute(store.conn(), "d1")
+            .unwrap()
+            .into_iter()
+            .filter(|e| e.kind == "detected")
+            .count();
+        assert_eq!(detected, 1);
     }
 
     #[tokio::test]

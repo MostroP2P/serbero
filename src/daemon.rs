@@ -9,7 +9,8 @@ use nostr_sdk::prelude::*;
 
 use crate::config::Settings;
 use crate::error::{Error, Result};
-use crate::notifier::Notifier;
+use crate::nostr::dm::{DmSender, RelayDmSender};
+use crate::notifier::{Notifier, Solver};
 use crate::store::Store;
 
 /// How long startup waits for the first relay connections.
@@ -22,7 +23,19 @@ pub async fn run(settings: &Settings) -> Result<()> {
     let keys = crate::nostr::keys_from_secret(&settings.secrets.private_key)?;
     let mostro = crate::nostr::public_key("mostro.pubkey", &config.mostro.pubkey)?;
     let client = crate::nostr::connect(&config.mostro.relays, RELAY_CONNECT_WAIT).await?;
-    let notifier = Notifier::new(Arc::clone(&store), mostro);
+    let solvers = config
+        .solvers
+        .iter()
+        .enumerate()
+        .map(|(i, s)| {
+            Ok(Solver {
+                pubkey: crate::nostr::public_key(&format!("solvers[{i}].pubkey"), &s.pubkey)?,
+                permission: s.permission,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let sender = RelayDmSender::new(client.clone(), keys.clone());
+    let notifier = Notifier::new(Arc::clone(&store), sender, solvers, mostro);
     subscribe_disputes(&client, mostro).await?;
     tracing::info!(
         version = env!("CARGO_PKG_VERSION"),
@@ -65,9 +78,9 @@ pub async fn subscribe_disputes(client: &Client, mostro: PublicKey) -> Result<()
 /// Feeds relay events to the notifier until `shutdown` completes or the
 /// client shuts down. A failure handling one event is logged and does not
 /// stop the loop.
-pub async fn event_loop(
+pub async fn event_loop<S: DmSender>(
     client: &Client,
-    notifier: &Notifier,
+    notifier: &Notifier<S>,
     shutdown: impl Future<Output = ()>,
 ) -> Result<()> {
     let mut notifications = client.notifications();
