@@ -8,9 +8,11 @@ chosen, and how quality is tracked in production.
 
 ## 1. Golden set
 
-A versioned directory `eval/golden/` of JSON cases. Each case is a turn state
-exactly as sent to the judge ([judgments.md §1](judgments.md#1-state)), plus the
-expected label for every question a human can answer with confidence.
+A versioned directory `eval/golden/` of JSON cases. A **case** is one
+conversation: a turn state exactly as sent to the judge
+([judgments.md §1](judgments.md#1-state)), plus the expected answer for every
+question a human can answer with confidence. One case therefore labels several
+questions at once.
 
 ```json
 {
@@ -49,11 +51,28 @@ Unlabeled questions are not scored for that case.
 - **Production cases** (after release, with operator consent): turns where a
   solver later marked the brief as wrong (§5).
 
+### Drafting
+
+Cases may be drafted with the help of a generative model, but every case is
+read and corrected by a person before it is committed, and Spanish and
+Portuguese cases are reviewed by native speakers. Drafts must imitate how
+people really write in a Mostro chat: short, informal, regional slang, typos,
+several messages in a row.
+
 ### Size
 
-At least 25 cases per option per language for the facts that drive actions
-(`buyer_payment`, `seller_receipt`, `<party>_wants_human`, `fraud_signal`), and
-at least 10 per option for the rest. Roughly 600 cases per language to start.
+The set grows in three steps:
+
+| Step | Per language | Purpose |
+|---|---|---|
+| **Spike** ([plan.md T0.7](plan.md#phase-0--foundation)) | ~40 conversations, Spanish only | Early answer to one question: does the judge understand how Mostro users write? Focused on the critical judgments. |
+| **Release gate** | ~150 conversations each for en and es | Enough to enable a language and calibrate thresholds. |
+| **Production** | grows over time | Real turns marked wrong by solvers (§5) become new cases. |
+
+Within the release-gate set, every option of the critical questions
+(`buyer_payment`, `seller_receipt`, `<party>_wants_human`, `fraud_signal`)
+appears in at least 15 cases, and every option of the other questions in at
+least 5.
 
 ## 2. Metrics and targets
 
@@ -77,6 +96,10 @@ The precision targets protect the two actions that change the conversation
 without a human: the two self-resolution paths (`PaymentArrived` and
 `PaymentNotSent`).
 Recall targets protect the two paths toward a human that must not be missed.
+
+With a release-gate set of about 150 conversations the estimates are coarse:
+a 0.98 precision target over 15–25 positive cases effectively means no errors
+among them. Targets are re-checked as the set grows.
 
 A language is added to `[mediation].languages` only when it meets every
 target. English and Spanish are the release gate for v1; Portuguese follows.

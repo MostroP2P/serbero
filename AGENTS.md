@@ -71,11 +71,24 @@ implementation plan is [`docs/plan.md`](docs/plan.md).
 7. **Code owns decisions.** `policy` is a pure function of facts, session
    state, and config. The judge answers questions; it does not choose actions.
 
+## Working with Mostro
+
+- The [Mostro protocol](https://mostro.network/protocol/) (source:
+  `MostroP2P/protocol`) is the reference for every event, message, and chat
+  format. When the spec and the protocol disagree, the protocol wins and the
+  spec is fixed in the same PR.
+- Use `mostro-core` for transports, message types, dispute events, and dispute
+  chat keys and envelopes. Do not re-implement Mostro cryptography.
+- Serbero speaks only Mostro protocol v2 (NIP-44 direct messages, `kind 14`).
+  Gift wraps (NIP-59) are deprecated and must not be used anywhere, including
+  solver notifications.
+- Follow the protocol's chat client security requirements exactly.
+
 ## Working with the judge (Jev)
 
 - Jev is the v1 judge, but Serbero must stay provider-agnostic: switching to
   another System One provider is a config change
-  ([`docs/spec.md` §5.1](docs/spec.md#51-judge-providers)).
+  ([`docs/spec.md` §5.2](docs/spec.md#52-judge-providers)).
 - All calls go through the provider-neutral `Judge` trait in `src/judge/`.
   Provider-specific types, URLs, and status codes live only in that provider's
   adapter under `src/judge/providers/`. Nothing else may import them.

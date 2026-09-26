@@ -42,7 +42,7 @@ only tells them what their options are.
 | P9 | **Privacy by default** | Jev receives roles and message text, never pubkeys. Solvers receive trade roles, never primary identities. Parties are addressed only through trade-scoped shared keys. |
 | P10 | **Graceful degradation** | Mostro works without Serbero. Serbero's notifications work without Jev. Mediation failures always fall back to a human. |
 | P11 | **Small and legible** | One crate, few modules, few tables. A new contributor should read the whole mediation path in an afternoon. |
-| P12 | **Portable judges** | Jev is the v1 judge, but Serbero depends on the capability (typed, calibrated answers), not on a vendor. The provider is chosen in config; nothing outside its adapter knows which one it is ([§5.1](#51-judge-providers)). |
+| P12 | **Portable judges** | Jev is the v1 judge, but Serbero depends on the capability (typed, calibrated answers), not on a vendor. The provider is chosen in config; nothing outside its adapter knows which one it is ([§5.2](#52-judge-providers)). |
 
 ## 3. Why Jev
 
@@ -56,7 +56,7 @@ party replies:
 
 Jev is built for exactly this shape: text in, typed and calibrated answers out.
 It is the judge Serbero v1 uses; the design keeps the provider replaceable
-([§5.1](#51-judge-providers)).
+([§5.2](#52-judge-providers)).
 
 - **One call per turn.** All questions are independent and run in parallel
   inside a single request. A full evaluation of a dispute conversation costs a
@@ -113,7 +113,7 @@ It is the judge Serbero v1 uses; the design keeps the provider replaceable
 ### In scope (v1)
 
 - Detection of Mostro disputes (`kind 38386`), deduplication, persistence.
-- Solver notifications over NIP-17 / NIP-59 gift-wrapped DMs: new dispute,
+- Solver notifications as NIP-44 direct messages (`kind 14`): new dispute,
   reminder, taken, mediation handoff, final report.
 - Opt-in mediation: take the dispute, chat with both parties through
   trade-scoped shared keys, evaluate each turn with Jev, send templated
@@ -136,14 +136,14 @@ It is the judge Serbero v1 uses; the design keeps the provider replaceable
                kind 38386 dispute events
   ┌────────┐ ─────────────────────────────▶ ┌──────────────────────────────┐
   │ Mostro │                                │           Serbero            │
-  │        │ ◀──── AdminTakeDispute ─────── │                              │
+  │        │ ◀── admin-take-dispute ─────── │                              │
   │        │ ───── SolverDisputeInfo ─────▶ │  notifier   (always on)      │
   └────────┘                                │  mediator   (opt-in)         │
                                             │   ├ session state machine    │
-  ┌─────────────┐   NIP-44 via shared keys  │   ├ judge ──▶ provider (Jev) │
+  ┌─────────────┐   dispute chat (kind 14)  │   ├ judge ──▶ provider (Jev) │
   │ Buyer/Seller│ ◀───────────────────────▶ │   ├ policy (decision table)  │
   └─────────────┘                           │   └ templates / brief        │
-  ┌─────────────┐   NIP-17 gift-wrap DMs    │  store (SQLite)              │
+  ┌─────────────┐   NIP-44 DMs (kind 14)    │  store (SQLite)              │
   │  Solvers    │ ◀──────────────────────── │                              │
   └─────────────┘                           └──────────────────────────────┘
 ```
@@ -154,8 +154,8 @@ It is the judge Serbero v1 uses; the design keeps the provider replaceable
 |---|---|
 | `config` | Load `config.toml`, apply env overrides, validate at startup. |
 | `store` | SQLite connection, migrations, typed queries. No ORM. |
-| `nostr` | Relay client, dispute-event subscription, gift-wrap send and receive. |
-| `mostro` | Take-dispute exchange, `SolverDisputeInfo`, shared-key derivation. |
+| `nostr` | Relay client, subscriptions, NIP-44 direct messages to solvers. |
+| `mostro` | Everything Mostro-specific, via `mostro-core`: transport detection, take-dispute exchange, dispute events, dispute chat keys and envelopes, inbound validation. |
 | `notifier` | Dispute lifecycle, solver notifications, reminder timer, final report. |
 | `mediation` | Session state machine, per-turn evaluation loop, timers. |
 | `judge` | Provider-neutral `Judge` trait, question set, typed answers; one adapter per provider (`typesafe` for Jev), retries. |
@@ -168,11 +168,79 @@ recorded-answers implementation for tests (see [evaluation.md](evaluation.md)).
 
 ### Dependencies
 
-`tokio`, `nostr-sdk` (nip44, nip59), `mostro-core`, `rusqlite` (bundled),
+`tokio`, `nostr-sdk` (nip44), `mostro-core` (transport, dispute and chat helpers), `rusqlite` (bundled),
 `reqwest` (rustls, json), `serde`, `serde_json`, `toml`, `tracing`,
 `tracing-subscriber`, `thiserror`. Nothing else without a written reason.
 
-### 5.1 Judge providers
+### 5.1 Mostro protocol
+
+Serbero follows the [Mostro protocol](https://mostro.network/protocol/) and
+uses `mostro-core` for every wire format, so it never re-implements Mostro
+cryptography. The facts below are the ones Serbero depends on.
+
+**Transport to the daemon.** Serbero speaks only Mostro protocol v2: NIP-44
+direct messages (`kind 14`, message `version: 2`, NIP-40 `expiration` tag),
+built and parsed with `mostro-core`, honouring the node's proof-of-work tags.
+At startup Serbero checks the node's instance-info event (`kind 38385`) and
+refuses to enable mediation if the node does not advertise
+`protocol_version = 2`; notification keeps working, since it only reads public
+dispute events.
+
+**Dispute events.** `kind 38386`, authored by the Mostro node, addressable by
+`d` = dispute id. Tags: `s` (status), `initiator` (`buyer` | `seller`),
+`created_at` (dispute open time), `y` (platform name), `z = dispute`. There is
+no tag naming the solver, so Serbero filters by **author** (the configured
+Mostro pubkey) and learns who took a dispute only from its own actions.
+
+| Status | Meaning |
+|---|---|
+| `initiated` | Open, waiting for a solver. |
+| `in-progress` | A solver took it. A new revision is published on every take, including a takeover. |
+| `settled` / `seller-refunded` | Resolved by a solver (buyer paid / seller refunded). |
+| `released` / `cooperatively-canceled` | Resolved by the parties themselves (same outcomes). |
+
+**Taking a dispute.** Serbero sends `admin-take-dispute`; Mostro answers
+`admin-took-dispute` with `Payload::Dispute(id, SolverDisputeInfo)` (order id,
+trade pubkeys of both parties, `fiat_amount`, `payment_method`, reputation
+info), tells both parties the solver's pubkey, and publishes an `in-progress`
+revision. Any registered solver may take an `initiated` dispute. A solver with
+`write` permission may take over a dispute held by a `read` solver such as
+Serbero; nobody else can. Serbero therefore treats any `in-progress` revision
+newer than its own take as a takeover (§6).
+
+**Dispute chat.** Each party talks to the solver on its own channel:
+
+```text
+shared = ECDH(serbero_key, party_trade_pubkey)
+K_conv = HKDF-SHA256(shared, "mostro:chat:conv:v1")   // encryption; p tag = pub(K_conv)
+K_sign = HKDF-SHA256(shared, "mostro:chat:sign:v1")   // outer signer; author = pub(K_sign)
+```
+
+A message is a `kind 1` inner event signed by the sender's own key (Serbero's
+key outbound, the party's trade key inbound), NIP-44 encrypted under `K_conv`,
+inside a `kind 14` event signed with `K_sign`, with exactly one `p` tag equal
+to `pub(K_conv)` and a real `created_at`. Serbero derives the keys and wraps
+and unwraps with `mostro-core::chat` (`derive_chat_keys`, `wrap_chat_message`,
+`unwrap_chat_message`, `chat_filter`).
+
+Inbound validation follows the protocol's client security requirements, in
+their cheapest-first order: author, `p` tag, clock-skew bound, size, outer-id
+LRU, per-conversation rate limit, outer signature, decryption, inner
+signature, inner signer (that party's trade key only), inner kind 1, durable
+inner-id dedup, and inner/outer timestamp agreement. The subscription is by
+author (`authors = [pub(K_sign)]`) with a persisted `since` cursor that is
+never advanced past Serbero's own clock.
+
+**Relays.** Signed `kind 14` events are outside what NIPs guarantee relays
+store. Operators must configure relays verified to store and serve them.
+
+**Not used in v1: trade-chat disclosure.** A party may voluntarily disclose
+the `K_conv` of the buyer–seller trade chat to the solver, giving read-only
+access to that conversation. It would be strong evidence for the judge (what
+was said before the dispute), but the protocol defines no message to deliver
+it yet. It is noted as a future extension.
+
+### 5.2 Judge providers
 
 Jev is the first model of its kind: a System One model that answers typed
 questions with calibrated probabilities instead of generating text. Serbero v1
@@ -246,18 +314,25 @@ new ──notify──▶ notified ──(s=in-progress)──▶ taken ──(t
                    └─┘ reminder every `renotify_after`
 ```
 
-1. **Detect.** Subscribe to `kind 38386`, `y = <mostro_pubkey>`, `z = dispute`.
-   Insert by `dispute_id` with `ON CONFLICT DO NOTHING`; a duplicate is a no-op.
+1. **Detect.** Subscribe to `kind 38386` authored by the configured Mostro
+   pubkey with `z = dispute` ([§5.1](#51-mostro-protocol)). Insert by
+   `dispute_id` with `ON CONFLICT DO NOTHING`; a duplicate is a no-op. Only the
+   newest revision of each dispute (by `created_at`) is applied.
 2. **Notify.** Send the "new dispute" DM to every configured solver. Record each
    attempt as an event. Move to `notified` if at least one send succeeded.
 3. **Remind.** A timer re-sends to all solvers for disputes still `notified`
    after `renotify_after`.
-4. **Taken.** On `s = in-progress`, record the assigned solver from the `p` tag
-   and notify all solvers. If the assignee is Serbero itself, the mediator owns
-   the session. If it is a human and a mediation session is active, the session
-   ends as `superseded` and Serbero stops writing to the parties.
+4. **Taken.** On `s = in-progress`, mark the dispute `taken` and notify all
+   solvers. Dispute events do not name the solver: if Serbero has just taken the
+   dispute itself, the mediator owns it (`assigned_solver` = Serbero);
+   otherwise the solver is recorded as unknown. An `in-progress` revision newer
+   than Serbero's own take means a `write` solver took it over: the session
+   ends as `superseded` and Serbero stops writing to the parties immediately.
 5. **Resolved.** On a terminal dispute status, close any open session and, if
-   mediation took part, send the final report.
+   mediation took part, send the final report. Terminal statuses (as published
+   by Mostro, kebab-case) are `settled` and `seller-refunded`, set by a solver,
+   and `released` and `cooperatively-canceled`, set when the parties resolved
+   the dispute themselves.
 
 Solvers are always notified, whether or not mediation is enabled. Mediation
 never delays notification.
@@ -279,12 +354,17 @@ deterministic; no Jev call happens before the take.
 1. Send `AdminTakeDispute` to Mostro and wait for `AdminTookDispute` with
    `SolverDisputeInfo` (bounded timeout; failure → no session, notification
    continues as normal).
-2. Store the parties' **trade** pubkeys and the order facts Serbero may render
-   (fiat amount, fiat code). Derive each party's shared chat key by ECDH between
-   Serbero's key and the party's trade pubkey. The keys are never stored: they
-   are re-derived from the trade pubkeys at startup.
-3. Subscribe to gift wraps addressed to both shared pubkeys (one live
-   subscription, updated as sessions open and close; no polling).
+2. Store the parties' **trade** pubkeys and the order facts Serbero may render.
+   `SolverDisputeInfo` carries `fiat_amount` and `payment_method` but not the
+   currency; the fiat code is read from the order's public event (`kind 38383`,
+   `d` = the order id from `SolverDisputeInfo.id`, tag `f`). If it cannot be
+   fetched, templates use their `_noamount` form. Derive each party's chat keys
+   (`K_conv`, `K_sign`) from Serbero's key and the party's trade pubkey
+   ([§5.1](#51-mostro-protocol)). The keys are never stored: they are
+   re-derived from the trade pubkeys at startup.
+3. Subscribe to `kind 14` events authored by both parties' `pub(K_sign)` (one
+   live subscription for all sessions, updated as sessions open and close;
+   bounded by the stored `since` cursors; no polling).
 4. Send each party the opening message in `default_language`: the intro line and
    the first role-specific question (`ask_buyer_sent` / `ask_seller_received`).
    No Jev call is needed for the opener.
@@ -296,8 +376,10 @@ deterministic; no Jev call happens before the take.
 A **turn** starts when a party message arrives and ends when Serbero has
 decided and sent its response.
 
-1. **Ingest.** Authenticate the inner event's author against the party's trade
-   pubkey, deduplicate by inner event id, store the message. Truncate stored
+1. **Ingest.** Validate the event in the protocol's order
+   ([§5.1](#51-mostro-protocol)): the inner signer must be that party's trade
+   key, and the inner event id must be new (durable dedup). Store the message
+   and advance the party's cursor, never past the local clock. Truncate stored
    text at `max_message_chars`; count attachments without storing them.
 2. **Settle.** Wait `quiet_period` (default 20 s) after the latest inbound
    message so that bursts such as "hola" + "help" + "?" become one turn.
@@ -345,8 +427,10 @@ Rules for the paths:
 - Guidance is sent once per path. After it, Serbero watches the dispute status
   and keeps judging turns; it still answers requests for a human and still
   escalates on fraud or contradiction.
-- The session ends by itself when Mostro reports the dispute resolved
-  (released, or cooperatively cancelled). Serbero then sends `resolved_thanks`
+- The session ends by itself when Mostro publishes the dispute as `released`
+  (the seller released) or `cooperatively-canceled` (both parties cancelled).
+  Mostro closes the dispute and publishes the updated dispute event in both
+  cases. Serbero then sends `resolved_thanks`
   and the final report.
 - If the dispute is not resolved within `self_resolution_timeout`, or a party
   rejects the path ("I did not receive anything", "I don't agree to cancel"),
@@ -416,6 +500,8 @@ sessions (
   fiat_code           TEXT,
   buyer_lang          TEXT,
   seller_lang         TEXT,
+  buyer_chat_cursor   INTEGER,               -- `since` for the buyer channel
+  seller_chat_cursor  INTEGER,               -- `since` for the seller channel
   rounds              INTEGER NOT NULL DEFAULT 0,
   handoff_reason      TEXT,
   opened_at           INTEGER NOT NULL,
@@ -496,11 +582,11 @@ max_messages_per_turn = 10
 max_fiat_amount = 0                       # 0 = no limit
 self_resolution_timeout = "2h"           # guiding → handed_off if not resolved
 
-[judge]                                   # see §5.1; switching provider is a config change
+[judge]                                   # see §5.2; switching provider is a config change
 provider = "typesafe"                     # typesafe | recorded | <future providers>
 model = "jev-1.13.0"                      # pin a concrete version; aliases like jev-latest can move
 api_base = "https://api.typesafe.ai"
-api_key_env = "TYPESAFE_API_KEY"
+api_key_env = "TYPESAFE_API_KEY"         # the operator's own key; each operator pays for its usage
 timeout = "10s"
 max_retries = 3                           # retryable errors only, exponential backoff
 
@@ -523,13 +609,15 @@ Serbero logs an operator-actionable error and runs notification only.
 | Failure | Behavior |
 |---|---|
 | A relay drops | `nostr-sdk` reconnects; other relays keep serving. |
+| A relay does not store `kind 14` | Offline party messages are lost on that relay. Operators must use relays verified to store them ([§5.1](#51-mostro-protocol)). |
+| Chat flood from a party | Per-conversation rate limit drops excess before decryption; sustained flooding hands off with `flood`. |
 | All relays drop | Retries continue; notifications resume on reconnect. |
 | SQLite write fails on detect | The dispute is not notified until it is seen again; integrity over delivery. |
 | A solver DM fails | Recorded; the reminder timer covers unattended disputes. |
 | Take-dispute fails or times out | No session; the dispute stays a normal notified dispute. |
 | Judge `Unavailable` (overload, rate limit, network, timeout) | Retry with backoff up to `max_retries`, then `Handoff(judge_unavailable)`. |
 | Judge `Unauthorized` / `InvalidRequest` / `Malformed` | No retry; `Handoff(judge_unavailable)` and an operator error log (key, adapter, or question-set bug). |
-| Restart mid-session | Shared keys re-derived from stored trade pubkeys; subscription rebuilt; pending turns re-evaluated from `messages`. |
+| Restart mid-session | Chat keys re-derived from stored trade pubkeys; subscription rebuilt from the stored cursors; pending turns re-evaluated from `messages`. |
 | Human solver takes over | Session `superseded`; Serbero goes silent immediately. |
 | Serbero offline | Mostro and solvers work exactly as without Serbero. |
 
@@ -537,10 +625,16 @@ Serbero logs an operator-actionable error and runs notification only.
 
 - **What the judge receives:** trade roles, order amount and currency, the payment
   method text, and message text. No pubkeys, no event ids, no Nostr metadata.
+- **Each operator brings its own judge account.** Every Mostro operator that
+  enables mediation contracts the judge provider directly (for Jev, a TypeSafe
+  account) and configures its own API key. Usage, billing, and the provider's
+  terms are the operator's responsibility; Serbero ships no shared key.
 - **Retention:** depends on the provider. TypeSafe does not train on requests,
   and operators handling real disputes should request zero-data retention.
-  Any new provider is reviewed for the same guarantees before it is enabled. The opening message tells
-  parties they are talking to an automated assistant.
+  Any new provider is reviewed for the same guarantees before it is enabled.
+- **Disclosure:** the opening message (`intro`) tells each party they are
+  talking to an automated assistant and that messages in the chat may be
+  monitored and processed by an automated service.
 - **Untrusted input:** party text is only ever placed inside `state`, never in
   question instructions. A party cannot change the questions or the options,
   and every possible answer is one Serbero already handles.

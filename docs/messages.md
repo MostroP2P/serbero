@@ -7,9 +7,9 @@ quotes. No text is generated at runtime.
 
 ## 1. Rendering
 
-- One placeholder exists: `{amount}`, rendered by code from
-  `SolverDisputeInfo` as the fiat amount and currency (for example
-  `50.000 ARS`). If the amount is unknown, the template's `_noamount` form is
+- One placeholder exists: `{amount}`, rendered by code as the fiat amount from
+  `SolverDisputeInfo` plus the currency from the order event (for example
+  `50.000 ARS`; see [spec.md §7.2](spec.md#72-opening)). If either is unknown, the template's `_noamount` form is
   used, which is the same sentence without it.
 - The first message a party receives is `intro` followed by one blank line and
   the question. `intro` is never sent again.
@@ -23,18 +23,23 @@ quotes. No text is generated at runtime.
 
 ### `intro`
 
-- **en:** Hi, I'm Serbero, an automated assistant helping the solver assigned
-  to this dispute. I'll ask you and the other party a few short questions so the
-  case can move faster. I cannot move funds or decide the dispute; a person can
-  take over at any time, just ask.
-- **es:** Hola, soy Serbero, un asistente automático que ayuda a la persona
-  asignada a esta disputa. Les haré unas preguntas breves a ti y a la otra parte
-  para que el caso avance más rápido. No puedo mover fondos ni decidir la
-  disputa; una persona puede intervenir cuando quieras, solo pídelo.
-- **pt:** Olá, sou o Serbero, um assistente automático que ajuda a pessoa
-  responsável por esta disputa. Vou fazer algumas perguntas rápidas a você e à
-  outra parte para agilizar o caso. Não posso mover fundos nem decidir a
-  disputa; uma pessoa pode assumir a qualquer momento, é só pedir.
+Includes the monitoring notice: parties are told their messages may be
+monitored and processed by an automated service.
+
+- **en:** Hi, I'm Serbero, an automated assistant helping with this dispute.
+  I'll ask you and the other party a few short questions. I can't move funds or
+  decide the dispute, and a person can take over whenever you ask. Messages in
+  this chat may be monitored and processed by an automated service.
+- **es:** Hola, soy Serbero, un asistente automático que ayuda con esta disputa.
+  Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos
+  ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los
+  mensajes de este chat pueden ser monitoreados y procesados por un servicio
+  automático.
+- **pt:** Olá, sou o Serbero, um assistente automático que ajuda nesta disputa.
+  Vou fazer algumas perguntas rápidas a você e à outra parte. Não posso mover
+  fundos nem decidir a disputa, e uma pessoa pode assumir quando você pedir. As
+  mensagens deste chat podem ser monitoradas e processadas por um serviço
+  automático.
 
 ### `ask_buyer_sent`
 
@@ -214,8 +219,10 @@ Sent to both parties on every handoff.
 
 ## 3. Solver messages
 
-Sent as NIP-17 gift-wrapped DMs. They never include a party's primary pubkey,
-only the trade role. Solver messages are in English.
+Sent as NIP-44 direct messages (`kind 14`, signed by Serbero's key, one `p`
+tag with the solver's pubkey), the same envelope Mostro protocol v2 uses. Solvers
+read them in Mostro's own clients (Mostrix, `mostro-cli`). They
+never include a party's primary pubkey, only the trade role. Solver messages are in English.
 
 ### New dispute / reminder / taken
 
@@ -233,7 +240,7 @@ dispute: <dispute_id>
 ```text
 Dispute taken
 dispute: <dispute_id>
-solver: <npub | Serbero>
+taken by: Serbero | a solver
 ```
 
 ### Mediation started

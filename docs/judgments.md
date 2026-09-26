@@ -12,7 +12,7 @@ Serbero makes two kinds of Jev request:
 | **Brief** | Once, when the session hands off or starts a self-resolution path | Select quotes and rate the evidence for the solver |
 
 The question set is written once in Serbero's provider-neutral types
-([spec.md §5.1](spec.md#51-judge-providers)). The JSON in this document is its
+([spec.md §5.2](spec.md#52-judge-providers)). The JSON in this document is its
 canonical serialization, which is also what the `typesafe` adapter sends to Jev
 (`POST https://api.typesafe.ai/v1/systemone`, `model = "jev-latest"`). Other
 adapters translate it to their own format.
