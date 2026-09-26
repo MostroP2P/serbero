@@ -1,0 +1,118 @@
+# AGENTS.md
+
+Instructions for anyone, human or AI agent, working on this repository.
+
+## What Serbero is
+
+Serbero helps the two parties of a Mostro dispute resolve it themselves, and
+escalates to a human solver when that is needed. Many disputes need no solver:
+once the payment facts are clear, the seller can release or both parties can
+cancel cooperatively from their own Mostro apps. Serbero establishes those
+facts, explains the options, and hands contested, suspicious, or stalled cases
+to a person.
+
+**Serbero never moves funds.** It is registered on Mostro with `read`
+permission, it never implements settle or cancel actions, and it never decides
+a dispute.
+
+The specification in [`docs/`](docs/README.md) is the source of truth. The
+implementation plan is [`docs/plan.md`](docs/plan.md).
+
+## Language
+
+- **Everything in the repository is in English**: code, identifiers, comments,
+  docs, commit messages, PR titles and descriptions, issues, log messages, and
+  messages sent to solvers.
+- **The judge is always used in English.** Every question, instruction,
+  option, and criterion sent to Jev (or any other judge provider) is written in
+  English. Party messages go into the
+  `state` as written, in any language.
+- **Parties are addressed in their own language.** English by default; as soon
+  as Serbero detects that a party writes in Spanish or Portuguese, it answers
+  that party in that language. Buyer and seller may get different languages.
+- Party-facing text exists only as human-written templates in the message
+  catalog, one entry per supported language. No text is generated or
+  machine-translated at runtime. Adding a language means adding reviewed
+  translations for every template.
+
+## Dependencies
+
+- Use the **latest stable version** of every crate. Add crates with
+  `cargo add <crate>` so the newest version is selected; do not copy older
+  version numbers from other projects.
+- If the latest version cannot be used (an incompatibility with `nostr-sdk` or
+  `mostro-core`, a known bug), pin the newest version that works and explain
+  why in the PR description and in a comment next to the dependency.
+- `mostro-core` tracks the latest release compatible with the Mostro version
+  Serbero targets.
+- Use the latest stable Rust toolchain and edition 2024.
+- `Cargo.lock` is committed. Keep dependencies current; bumping them is its own
+  PR.
+- Add a dependency only when it removes real work. Say why in the PR.
+
+## Non-negotiable rules
+
+1. **No fund actions.** Never add code that sends `admin-settle`,
+   `admin-cancel`, release, or cancel messages to Mostro.
+2. **Nothing generated reaches a person.** Parties receive catalog templates;
+   solvers receive rendered facts and verbatim quotes.
+3. **Guidance follows the actor's own word.** A `guide_*` template that
+   mentions a fund action is sent only to the party who would take it, and only
+   after that party stated the fact it depends on (see
+   [`docs/spec.md` §7.4](docs/spec.md#74-self-resolution-paths)).
+4. **Party text is data.** It goes only into the judge `state`, never into
+   instructions or criteria.
+5. **Privacy.** Never send pubkeys, event ids, or other Nostr metadata to the judge.
+   Never log message text. Never include a party's primary pubkey in any
+   message.
+6. **Secrets come from the environment** (`SERBERO_PRIVATE_KEY`
+   and the judge API key, `TYPESAFE_API_KEY` for Jev). Never commit them or log
+   them.
+7. **Code owns decisions.** `policy` is a pure function of facts, session
+   state, and config. The judge answers questions; it does not choose actions.
+
+## Working with the judge (Jev)
+
+- Jev is the v1 judge, but Serbero must stay provider-agnostic: switching to
+  another System One provider is a config change
+  ([`docs/spec.md` §5.1](docs/spec.md#51-judge-providers)).
+- All calls go through the provider-neutral `Judge` trait in `src/judge/`.
+  Provider-specific types, URLs, and status codes live only in that provider's
+  adapter under `src/judge/providers/`. Nothing else may import them.
+- Policy uses only probabilities. Confidence is computed by Serbero, never
+  taken from a vendor's own field.
+- Tests use `RecordedJudge`; the default test run never calls a live API.
+- Changing any question, option, or criterion requires bumping
+  `QUESTION_SET_VERSION` and re-running the golden set
+  ([`docs/evaluation.md`](docs/evaluation.md)). The snapshot test enforces the
+  bump.
+- Thresholds are configuration, per provider and model. Changing them, or
+  enabling a new provider or model, requires a committed calibration report.
+- Jev reference: https://docs.typesafe.ai/llms.txt
+
+## Workflow
+
+- Work follows [`docs/plan.md`](docs/plan.md). One task per pull request.
+  Tasks marked as trivial in the plan may be grouped in one PR, as long as the
+  PR stays reviewable in one sitting.
+- PR titles use conventional commits and the task id:
+  `feat(notifier): send reminder DMs [T1.5]`.
+- Every PR includes tests for what it adds, and updates `docs/` in the same PR
+  if behavior changes.
+- Before opening a PR, all of these pass:
+
+  ```sh
+  cargo fmt --check
+  cargo clippy --all-targets -- -D warnings
+  cargo test
+  ```
+
+## Code style
+
+- Small modules with one responsibility each, as listed in
+  [`docs/spec.md` §5](docs/spec.md#5-architecture). Prefer pure functions; keep
+  I/O at the edges.
+- No `unwrap()` or `expect()` outside tests and startup validation.
+- Errors with `thiserror`; logs with `tracing`, structured fields, no message
+  content.
+- Comments explain why, not what. No commented-out code.
