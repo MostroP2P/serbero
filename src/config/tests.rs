@@ -234,3 +234,25 @@ fn secrets_debug_output_is_redacted() {
     assert!(!debug.contains(PRIVATE_KEY), "secret leaked: {debug}");
     assert!(debug.contains("<redacted>"));
 }
+
+#[test]
+fn empty_private_key_env_name_is_rejected() {
+    let text = format!("[serbero]\nprivate_key_env = \"\"\n{}", minimal(""));
+
+    let err = error_of(&text, base_env());
+
+    assert!(
+        err.contains("serbero.private_key_env must name an environment variable"),
+        "{err}"
+    );
+}
+
+#[test]
+fn malformed_judge_key_env_name_is_rejected() {
+    let err = error_of(
+        &minimal("[judge]\napi_key_env = \"TYPESAFE KEY\"\n"),
+        base_env(),
+    );
+
+    assert!(err.contains("judge.api_key_env"), "{err}");
+}

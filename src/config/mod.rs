@@ -231,6 +231,8 @@ impl Thresholds {
 
 impl Config {
     fn validate(&self) -> Result<()> {
+        check_env_name("serbero.private_key_env", &self.serbero.private_key_env)?;
+        check_env_name("judge.api_key_env", &self.judge.api_key_env)?;
         check_pubkey("mostro.pubkey", &self.mostro.pubkey)?;
         if self.mostro.relays.is_empty() {
             return invalid("mostro.relays must list at least one relay");
@@ -391,6 +393,21 @@ fn check_pubkey(field: &str, value: &str) -> Result<()> {
     } else {
         invalid(format!(
             "{field} must be a 64-character hex public key, got {value:?}"
+        ))
+    }
+}
+
+fn check_env_name(field: &str, value: &str) -> Result<()> {
+    let valid = !value.is_empty()
+        && !value.starts_with(|c: char| c.is_ascii_digit())
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_');
+    if valid {
+        Ok(())
+    } else {
+        invalid(format!(
+            "{field} must name an environment variable (letters, digits, underscore), got {value:?}"
         ))
     }
 }
