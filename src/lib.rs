@@ -2,6 +2,7 @@
 //! escalates to a human solver when needed. See `docs/spec.md`.
 
 pub mod config;
+pub mod daemon;
 pub mod error;
 pub mod logging;
 pub mod mostro;

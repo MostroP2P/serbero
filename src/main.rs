@@ -1,11 +1,6 @@
 use std::process::ExitCode;
-use std::time::Duration;
 
 use serbero::config::Settings;
-use serbero::store::Store;
-
-/// How long startup waits for the first relay connections.
-const RELAY_CONNECT_WAIT: Duration = Duration::from_secs(10);
 
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -22,32 +17,11 @@ async fn main() -> ExitCode {
         eprintln!("serbero: {e}");
         return ExitCode::FAILURE;
     }
-    match run(&settings).await {
+    match serbero::daemon::run(&settings).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             tracing::error!(error = %e, "serbero stopped");
             ExitCode::FAILURE
         }
     }
-}
-
-async fn run(settings: &Settings) -> serbero::error::Result<()> {
-    let config = &settings.config;
-    let store = Store::open(&config.serbero.db_path)?;
-    let keys = serbero::nostr::keys_from_secret(&settings.secrets.private_key)?;
-    let client = serbero::nostr::connect(&config.mostro.relays, RELAY_CONNECT_WAIT).await?;
-    tracing::info!(
-        version = env!("CARGO_PKG_VERSION"),
-        pubkey = %keys.public_key(),
-        schema = store.schema_version()?,
-        relays = config.mostro.relays.len(),
-        solvers = config.solvers.len(),
-        mediation = config.mediation.enabled,
-        "serbero started"
-    );
-
-    serbero::signal::shutdown().await;
-    tracing::info!("shutting down");
-    serbero::nostr::shutdown(&client).await;
-    Ok(())
 }
