@@ -1,6 +1,8 @@
 //! Relay connectivity (`docs/spec.md` §5): one client for all of Serbero's
 //! subscriptions and messages.
 
+pub mod dm;
+
 use std::time::Duration;
 
 use nostr_sdk::prelude::*;

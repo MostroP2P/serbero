@@ -5,5 +5,6 @@ pub mod config;
 pub mod error;
 pub mod logging;
 pub mod nostr;
+pub mod notifier;
 pub mod signal;
 pub mod store;

@@ -219,10 +219,11 @@ Sent to both parties on every handoff.
 
 ## 3. Solver messages
 
-Sent as NIP-44 direct messages (`kind 14`, signed by Serbero's key, one `p`
-tag with the solver's pubkey), the same envelope Mostro protocol v2 uses. Solvers
-read them in Mostro's own clients (Mostrix, `mostro-cli`). They
-never include a party's primary pubkey, only the trade role. Solver messages are in English.
+Sent as Mostro protocol v2 `send-dm` messages: a `Message::Dm` with action
+`send-dm` and a `text_message` payload, wrapped by `mostro-core` into a NIP-44
+`kind 14` event signed by Serbero, with one `p` tag for the solver. Solvers
+read them in Mostro's own clients (Mostrix, `mostro-cli`). They never include a
+party's primary pubkey, only the trade role. Solver messages are in English.
 
 ### New dispute / reminder / taken
 
