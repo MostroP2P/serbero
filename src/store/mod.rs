@@ -1,6 +1,8 @@
 //! SQLite persistence (`docs/spec.md` §8). No ORM: typed functions over
 //! plain SQL.
 
+pub mod disputes;
+pub mod events;
 pub mod migrations;
 
 use std::path::Path;
@@ -80,6 +82,16 @@ mod tests {
         assert_eq!(synchronous, 1, "1 = NORMAL");
         drop(store);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn new_database_is_at_the_latest_version() {
+        let store = Store::open_in_memory().unwrap();
+
+        assert_eq!(
+            store.schema_version().unwrap() as usize,
+            migrations::MIGRATIONS.len()
+        );
     }
 
     #[test]
