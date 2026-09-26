@@ -174,8 +174,10 @@ Asked once for each party with new messages, with `<party>` replaced by
 }
 ```
 
-The `<party>_language` options are generated from `[mediation].languages`, so
-enabling a language adds it to the question.
+The `<party>_language` options are generated from `[mediation].languages`,
+each described by the English name in its catalog file
+([spec.md §7.7](spec.md#77-languages)), so enabling a language adds it to the
+question. The three languages above are the initial ones.
 
 While the session is `guiding`, one more question is asked for each party with
 new messages:
@@ -250,8 +252,8 @@ checked in order and the first match wins.
 | 3 | `outside_scope` | `Handoff(outside_scope)` |
 | 4 | State is `guiding` and `rejects_path(buyer)` or `rejects_path(seller)` | `Handoff(self_resolution_stalled)` |
 | 5 | State is `guiding` | `Wait` (resolution or `self_resolution_timeout` ends it) |
-| 6 | `seller_received_for_guide` | `Guide(PaymentArrived)` |
-| 7 | `buyer_not_sent_for_guide` | `Guide(PaymentNotSent)` |
+| 6 | `seller_received_for_guide` | `Guide(PaymentArrived)` if both parties' languages are validated ([spec.md §7.7](spec.md#77-languages)), otherwise `Handoff(facts_gathered)` |
+| 7 | `buyer_not_sent_for_guide` | `Guide(PaymentNotSent)` if both parties' languages are validated, otherwise `Handoff(facts_gathered)` |
 | 8 | `buyer_sent` and `seller_not_received` and `conflict` and details and check already asked (or known) | `Handoff(conflicting_claims)` |
 | 9 | `rounds ≥ max_rounds` | `Handoff(round_limit)` |
 | 10 | Next questions (§4.1) produce at least one template | `Ask { … }` |

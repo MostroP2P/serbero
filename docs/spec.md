@@ -34,7 +34,7 @@ only tells them what their options are.
 | P1 | **Fund isolation** | Serbero is registered on Mostro with `read` permission only. Mostro rejects any settle or cancel it could ever send. Safety is enforced by the protocol, not by software discipline. |
 | P2 | **Parties first, human when needed** | The goal of every session is for the parties to resolve the dispute themselves. Anything contested, suspicious, or stalled goes to a human, who always has the final word. Serbero never states an outcome. |
 | P3 | **Guidance follows the actor's own word** | Serbero describes a fund-related option only to the party who would take it, and only after that party has stated the fact the option depends on. The seller hears about releasing only after the seller says the fiat arrived; the buyer's claim never triggers it. |
-| P4 | **The user's language** | Parties are addressed in their own language: English by default, Spanish or Portuguese as soon as Serbero detects it. Everything else (code, docs, Jev questions, solver messages) is English. |
+| P4 | **The user's language** | Parties are addressed in their own language, from any language with a catalog file: English by default, switching as soon as Serbero detects another enabled language ([§7.7](#77-languages)). Everything else (code, docs, Jev questions, solver messages) is English. |
 | P5 | **Code owns the workflow** | Transport, state, timers, retries, and decisions are ordinary Rust. Jev answers narrow questions; it never chooses what Serbero does. |
 | P6 | **Nothing generated reaches a person** | Every message a party or solver receives is a human-written template or a verbatim quote. Jev output is numbers and labels only. |
 | P7 | **Calibrated uncertainty** | Decisions use Jev's probabilities against explicit, configurable thresholds. Uncertain facts are treated as unknown and trigger a question, never a guess. |
@@ -94,7 +94,7 @@ It is the judge Serbero v1 uses; the design keeps the provider replaceable
   improvise a question for an unusual case; unusual cases go to a human, which
   is the correct outcome for them anyway.
 - **It does not translate.** Each template exists in each supported language.
-  Adding a language means adding a human translation.
+  Adding a language means adding a human translation ([§7.7](#77-languages)).
 - **It does not see images.** Screenshots or receipts sent as attachments are
   recorded as "attachment sent" and forwarded to the solver as a reference.
   Jev cannot read them.
@@ -105,8 +105,9 @@ It is the judge Serbero v1 uses; the design keeps the provider replaceable
   party's own statement at a high threshold. The worst plausible Jev error causes a
   wrong question or an early handoff to a human.
 - **It is an external service.** Conversation text leaves the host. See §11.
-- **English questions work best.** Party text in other languages must be
-  validated (see [evaluation.md](evaluation.md)) before a language is enabled.
+- **English questions work best.** Before the judge's reading of a language
+  can trigger self-resolution guidance, that language is validated with a
+  golden set ([§7.7](#77-languages), [evaluation.md](evaluation.md)).
 
 ## 4. Scope
 
@@ -160,7 +161,7 @@ It is the judge Serbero v1 uses; the design keeps the provider replaceable
 | `mediation` | Session state machine, per-turn evaluation loop, timers. |
 | `judge` | Provider-neutral `Judge` trait, question set, typed answers; one adapter per provider (`typesafe` for Jev), retries. |
 | `policy` | Pure function: (session facts, answers, config) → next action. |
-| `messages` | Template catalog (en / es / pt), rendering, solver brief. |
+| `messages` | Template catalog (one file per language), rendering, solver brief. |
 
 `policy` and `messages` are pure and hold most of the product logic, so most
 tests need neither relays nor a judge. `judge` sits behind a small trait with a
@@ -503,6 +504,56 @@ the brief ([messages.md §3](messages.md#3-solver-messages)). The recipient is
 the assigned human solver if there is one, otherwise every `write` solver,
 otherwise every solver.
 
+### 7.7 Languages
+
+Serbero is multilingual by design. English, Spanish and Portuguese are the
+first languages, not a fixed set: no code names a language, and adding one is
+a translation plus a line of config.
+
+**A language is a file.** Each language is one file, `messages/<code>.toml`
+(ISO 639-1 code, for example `fr.toml`), holding:
+
+- its English name (`name = "French"`), used as the option description in the
+  judge's language question;
+- every party template ([messages.md §2](messages.md#2-party-templates));
+- its own word lists for the template rules: fund-action words and verdict
+  words ([messages.md §4](messages.md#4-template-rules)).
+
+The files are embedded at build time; the set of supported languages is the
+set of files present. `[mediation].languages` enables a subset of them.
+
+**Detection.** The judge's `<party>_language` question offers every enabled
+language plus `other` and `unknown`
+([judgments.md §2.2](judgments.md#22-per-party-questions-latest-messages)).
+A party writing in a language that is not enabled keeps receiving the current
+language (initially `default_language`); the brief tells the solver which
+language was detected.
+
+**Two levels of support.** Talking in a language needs only a good translation.
+Guidance that mentions a fund action also needs evidence that the judge reads
+that language reliably.
+
+| Level | Requires | Serbero can |
+|---|---|---|
+| **Conversational** | A catalog file reviewed by a native speaker, and the code listed in `[mediation].languages`. | Ask its questions, detect requests for a human and fraud signals, and hand off with a brief. |
+| **Validated** | Additionally, a golden set in that language that meets the targets in [evaluation.md §2](evaluation.md#2-metrics-and-targets) for the active judge, recorded as `validated_languages` in that judge's thresholds. | Everything above, plus the self-resolution guidance of §7.4. |
+
+A self-resolution path is offered only when both parties' current languages
+are validated for the active judge. Otherwise the turn that would have guided
+the parties hands off with `facts_gathered`, so a conversational language never
+exposes the parties to guidance the judge has not been measured on.
+
+**Adding a language:**
+
+1. Copy `messages/en.toml` to `messages/<code>.toml`, translate every
+   template, and fill in its name and word lists. A native speaker reviews it.
+2. The catalog tests pass (every template present, word rules, length).
+3. Add the code to `[mediation].languages`: the language is conversational.
+4. Optionally, write its golden set, run the evaluation, and add the code to
+   `validated_languages` for the active judge: the language is validated.
+
+Steps 1–3 are one small PR and need no code change.
+
 ## 8. Data model
 
 SQLite, five tables. Timestamps are Unix seconds (UTC).
@@ -603,7 +654,7 @@ renotify_after = "15m"
 [mediation]
 enabled = false
 default_language = "en"                   # language of the opening message
-languages = ["en", "es", "pt"]            # must exist in the template catalog
+languages = ["en", "es", "pt"]            # any language with a messages/<code>.toml file (§7.7)
 quiet_period = "20s"
 response_timeout = "30m"                  # per question, before the reminder and again before handoff
 max_rounds = 3
@@ -627,6 +678,7 @@ human_request = 0.80
 fraud = 0.60
 conflict = 0.75
 outside_scope = 0.80
+validated_languages = ["en", "es"]       # languages whose golden set passed for this judge (§7.7)
 ```
 
 Startup fails fast on a missing key, an unknown language, or a solver list that

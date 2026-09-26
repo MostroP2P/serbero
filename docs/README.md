@@ -16,7 +16,7 @@ Serbero never moves funds and never decides a dispute.
 |---|---|
 | [spec.md](spec.md) | Goals, principles, scope, architecture, lifecycle, self-resolution paths, data model, configuration, degraded mode |
 | [judgments.md](judgments.md) | The Jev question set: state shape, every question, thresholds, and the decision table code applies to the answers |
-| [messages.md](messages.md) | Every party-facing template (en / es / pt) and every solver-facing DM |
+| [messages.md](messages.md) | Every party-facing template (one catalog file per language) and every solver-facing DM |
 | [evaluation.md](evaluation.md) | How the question set is validated and how thresholds are calibrated before and after release |
 | [plan.md](plan.md) | Implementation plan: phases of atomic tasks, each one a pull request |
 
