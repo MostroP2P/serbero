@@ -7,6 +7,14 @@ pub enum Error {
     #[error("invalid configuration: {0}")]
     Config(String),
 
+    /// A database operation failed.
+    #[error("database error: {0}")]
+    Store(#[from] rusqlite::Error),
+
+    /// The database schema cannot be brought to the expected version.
+    #[error("database schema error: {0}")]
+    Schema(String),
+
     /// The tracing subscriber could not be installed.
     #[error("logging setup failed: {0}")]
     Logging(String),
