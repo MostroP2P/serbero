@@ -16,6 +16,9 @@ use crate::store::Store;
 /// How long startup waits for the first relay connections.
 const RELAY_CONNECT_WAIT: Duration = Duration::from_secs(10);
 
+/// How often the reminder timer looks for unattended disputes.
+const REMINDER_TICK: Duration = Duration::from_secs(60);
+
 /// Runs Serbero until Ctrl-C.
 pub async fn run(settings: &Settings) -> Result<()> {
     let config = &settings.config;
@@ -52,7 +55,8 @@ pub async fn run(settings: &Settings) -> Result<()> {
             tracing::error!(error = %e, "cannot listen for shutdown signal");
         }
     };
-    let result = event_loop(&client, &notifier, shutdown).await;
+    let renotify_after = config.notify.renotify_after.as_secs() as i64;
+    let result = event_loop(&client, &notifier, renotify_after, shutdown).await;
     tracing::info!("shutting down");
     crate::nostr::shutdown(&client).await;
     result
@@ -75,19 +79,27 @@ pub async fn subscribe_disputes(client: &Client, mostro: PublicKey) -> Result<()
     Ok(())
 }
 
-/// Feeds relay events to the notifier until `shutdown` completes or the
-/// client shuts down. A failure handling one event is logged and does not
-/// stop the loop.
+/// Feeds relay events to the notifier and runs the reminder timer until
+/// `shutdown` completes or the client shuts down. A failure handling one
+/// event or tick is logged and does not stop the loop.
 pub async fn event_loop<S: DmSender>(
     client: &Client,
     notifier: &Notifier<S>,
+    renotify_after: i64,
     shutdown: impl Future<Output = ()>,
 ) -> Result<()> {
     let mut notifications = client.notifications();
+    let mut reminders = tokio::time::interval(REMINDER_TICK);
+    reminders.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     tokio::pin!(shutdown);
     loop {
         tokio::select! {
             () = &mut shutdown => return Ok(()),
+            _ = reminders.tick() => {
+                if let Err(e) = notifier.remind(renotify_after, now()).await {
+                    tracing::error!(error = %e, "reminder tick failed");
+                }
+            }
             notification = notifications.next() => match notification {
                 Some(ClientNotification::Event { event, .. }) => {
                     if let Err(e) = notifier.handle_event(&event, now()).await {

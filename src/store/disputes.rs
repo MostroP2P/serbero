@@ -142,6 +142,21 @@ pub fn mark_notified(conn: &Connection, dispute_id: &str, now: i64) -> Result<bo
     Ok(updated == 1)
 }
 
+/// Disputes waiting for a solver whose last notification attempt is at or
+/// before `cutoff`: `new` ones (never delivered) and `notified` ones.
+pub fn list_awaiting_solver(conn: &Connection, cutoff: i64) -> Result<Vec<Dispute>> {
+    let mut stmt = conn.prepare(
+        "SELECT dispute_id, initiator, status, status_at, lifecycle, assigned_solver,
+                first_seen_at, last_notified_at, updated_at
+         FROM disputes
+         WHERE lifecycle IN ('new', 'notified')
+           AND COALESCE(last_notified_at, first_seen_at) <= ?1
+         ORDER BY first_seen_at",
+    )?;
+    let rows = stmt.query_map([cutoff], from_row)?;
+    rows.map(|row| row?).collect()
+}
+
 fn from_row(row: &Row<'_>) -> rusqlite::Result<Result<Dispute>> {
     let initiator: String = row.get(1)?;
     let lifecycle: String = row.get(4)?;
@@ -297,6 +312,22 @@ mod tests {
         let update = apply_status(store.conn(), "nope", "settled", 950, 1_100).unwrap();
 
         assert_eq!(update, StatusUpdate::NotFound);
+    }
+
+    #[test]
+    fn lists_only_disputes_awaiting_a_solver_past_the_cutoff() {
+        let store = Store::open_in_memory().unwrap();
+        for id in ["new-old", "notified-old", "notified-recent", "taken"] {
+            insert_if_new(store.conn(), &new_dispute(id, 900)).unwrap();
+        }
+        mark_notified(store.conn(), "notified-old", 1_100).unwrap();
+        mark_notified(store.conn(), "notified-recent", 1_900).unwrap();
+        set_lifecycle(store.conn(), "taken", Lifecycle::Taken, 1_000).unwrap();
+
+        let due = list_awaiting_solver(store.conn(), 1_500).unwrap();
+
+        let ids: Vec<_> = due.iter().map(|d| d.dispute_id.as_str()).collect();
+        assert_eq!(ids, ["new-old", "notified-old"]);
     }
 
     #[test]

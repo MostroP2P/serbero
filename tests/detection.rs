@@ -47,7 +47,7 @@ async fn disputes_from_the_node_are_stored() {
     let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
     let loop_client = client.clone();
     let task = tokio::spawn(async move {
-        daemon::event_loop(&loop_client, &notifier, async {
+        daemon::event_loop(&loop_client, &notifier, 900, async {
             let _ = stopped.await;
         })
         .await

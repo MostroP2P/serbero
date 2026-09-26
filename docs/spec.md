@@ -347,8 +347,9 @@ new ──notify──▶ notified ──(s=in-progress)──▶ taken ──(t
    the same across revisions).
 2. **Notify.** Send the "new dispute" DM to every configured solver. Record each
    attempt as an event. Move to `notified` if at least one send succeeded.
-3. **Remind.** A timer re-sends to all solvers for disputes still `notified`
-   after `renotify_after`.
+3. **Remind.** A timer checks every minute. A dispute still `notified`
+   `renotify_after` after its last notification gets a reminder; a dispute
+   still `new` (every first DM failed) gets its first notification again.
 4. **Taken.** On `s = in-progress`, mark the dispute `taken` and notify all
    solvers. Dispute events do not name the solver: if Serbero has just taken the
    dispute itself, the mediator owns it (`assigned_solver` = Serbero);
