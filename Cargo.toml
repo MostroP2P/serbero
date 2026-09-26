@@ -7,7 +7,9 @@ license = "MIT"
 repository = "https://github.com/MostroP2P/serbero"
 
 [dependencies]
+serde = { version = "1.0.229", features = ["derive"] }
 thiserror = "2.0.21"
+toml = "1.1.6"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt"] }
 

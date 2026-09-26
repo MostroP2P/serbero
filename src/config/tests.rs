@@ -1,0 +1,236 @@
+use std::collections::HashMap;
+use std::time::Duration;
+
+use super::*;
+
+const SAMPLE: &str = include_str!("../../config.sample.toml");
+const PRIVATE_KEY: &str = "4444444444444444444444444444444444444444444444444444444444444444";
+const MOSTRO: &str = "1111111111111111111111111111111111111111111111111111111111111111";
+
+fn env(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> {
+    let map: HashMap<String, String> = pairs
+        .iter()
+        .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+        .collect();
+    move |name| map.get(name).cloned()
+}
+
+fn base_env() -> impl Fn(&str) -> Option<String> {
+    env(&[("SERBERO_PRIVATE_KEY", PRIVATE_KEY)])
+}
+
+fn minimal(extra: &str) -> String {
+    format!("[mostro]\npubkey = \"{MOSTRO}\"\nrelays = [\"wss://relay.example\"]\n{extra}")
+}
+
+fn error_of(text: &str, env: impl Fn(&str) -> Option<String>) -> String {
+    Settings::parse(text, env).unwrap_err().to_string()
+}
+
+#[test]
+fn sample_config_loads() {
+    let settings = Settings::parse(SAMPLE, base_env()).unwrap();
+
+    let config = &settings.config;
+    assert_eq!(config.solvers.len(), 2);
+    assert_eq!(config.solvers[0].permission, Permission::Write);
+    assert_eq!(config.notify.renotify_after, Duration::from_secs(900));
+    assert_eq!(config.mediation.quiet_period, Duration::from_secs(20));
+    assert!(!config.mediation.enabled);
+    assert_eq!(settings.secrets.private_key.expose(), PRIVATE_KEY);
+}
+
+#[test]
+fn sample_config_has_thresholds_for_its_judge() {
+    let settings = Settings::parse(SAMPLE, base_env()).unwrap();
+
+    let thresholds = settings.config.judge.active_thresholds().unwrap();
+    assert_eq!(thresholds.guide, 0.90);
+}
+
+#[test]
+fn minimal_config_uses_spec_defaults() {
+    let settings = Settings::parse(&minimal(""), base_env()).unwrap();
+
+    let config = &settings.config;
+    assert_eq!(config.serbero.db_path, PathBuf::from("serbero.db"));
+    assert_eq!(config.mediation.languages, ["en", "es", "pt"]);
+    assert_eq!(config.mediation.default_language, "en");
+    assert_eq!(config.judge.judge_key(), "typesafe/jev-1.13.0");
+    assert!(config.solvers.is_empty());
+}
+
+#[test]
+fn missing_private_key_env_fails_with_variable_name() {
+    let err = error_of(&minimal(""), env(&[]));
+
+    assert!(err.contains("SERBERO_PRIVATE_KEY"), "{err}");
+    assert!(err.contains("not set"), "{err}");
+}
+
+#[test]
+fn malformed_private_key_is_rejected_without_echoing_it() {
+    let err = error_of(
+        &minimal(""),
+        env(&[("SERBERO_PRIVATE_KEY", "nsec-not-hex")]),
+    );
+
+    assert!(err.contains("64-character hex private key"), "{err}");
+    assert!(!err.contains("nsec-not-hex"), "secret leaked: {err}");
+}
+
+#[test]
+fn enabled_mediation_requires_judge_key() {
+    let err = error_of(&minimal("[mediation]\nenabled = true\n"), base_env());
+
+    assert!(err.contains("TYPESAFE_API_KEY"), "{err}");
+}
+
+#[test]
+fn enabled_mediation_with_recorded_judge_needs_no_key() {
+    let text = minimal("[mediation]\nenabled = true\n[judge]\nprovider = \"recorded\"\n");
+
+    assert!(Settings::parse(&text, base_env()).is_ok());
+}
+
+#[test]
+fn judge_key_is_read_when_present() {
+    let settings = Settings::parse(
+        &minimal("[mediation]\nenabled = true\n"),
+        env(&[
+            ("SERBERO_PRIVATE_KEY", PRIVATE_KEY),
+            ("TYPESAFE_API_KEY", "ts-key"),
+        ]),
+    )
+    .unwrap();
+
+    assert_eq!(settings.secrets.judge_api_key.unwrap().expose(), "ts-key");
+}
+
+#[test]
+fn unknown_language_is_rejected() {
+    let err = error_of(
+        &minimal("[mediation]\nlanguages = [\"en\", \"fr\"]\n"),
+        base_env(),
+    );
+
+    assert!(err.contains("\"fr\" has no template catalog"), "{err}");
+}
+
+#[test]
+fn default_language_must_be_enabled() {
+    let text = minimal("[mediation]\nlanguages = [\"en\"]\ndefault_language = \"es\"\n");
+
+    let err = error_of(&text, base_env());
+
+    assert!(err.contains("default_language"), "{err}");
+}
+
+#[test]
+fn bad_mostro_pubkey_is_rejected() {
+    let text = "[mostro]\npubkey = \"npub1abc\"\nrelays = [\"wss://relay.example\"]\n";
+
+    let err = error_of(text, base_env());
+
+    assert!(err.contains("mostro.pubkey"), "{err}");
+}
+
+#[test]
+fn bad_solver_pubkey_names_its_index() {
+    let text = minimal(&format!(
+        "[[solvers]]\npubkey = \"{MOSTRO}\"\npermission = \"write\"\n\
+         [[solvers]]\npubkey = \"xyz\"\npermission = \"read\"\n"
+    ));
+
+    let err = error_of(&text, base_env());
+
+    assert!(err.contains("solvers[1].pubkey"), "{err}");
+}
+
+#[test]
+fn unknown_permission_is_rejected() {
+    let text = minimal(&format!(
+        "[[solvers]]\npubkey = \"{MOSTRO}\"\npermission = \"admin\"\n"
+    ));
+
+    let err = error_of(&text, base_env());
+
+    assert!(err.contains("admin"), "{err}");
+}
+
+#[test]
+fn bad_duration_is_rejected() {
+    let err = error_of(
+        &minimal("[notify]\nrenotify_after = \"15 minutes\"\n"),
+        base_env(),
+    );
+
+    assert!(err.contains("unknown unit"), "{err}");
+}
+
+#[test]
+fn zero_duration_is_rejected() {
+    let err = error_of(&minimal("[mediation]\nquiet_period = \"0s\"\n"), base_env());
+
+    assert!(
+        err.contains("mediation.quiet_period must be greater than 0"),
+        "{err}"
+    );
+}
+
+#[test]
+fn relay_without_websocket_scheme_is_rejected() {
+    let text = format!("[mostro]\npubkey = \"{MOSTRO}\"\nrelays = [\"https://relay.example\"]\n");
+
+    let err = error_of(&text, base_env());
+
+    assert!(err.contains("wss://"), "{err}");
+}
+
+#[test]
+fn misspelled_field_is_rejected() {
+    let err = error_of(&minimal("[notify]\nrenotify_afer = \"15m\"\n"), base_env());
+
+    assert!(err.contains("renotify_afer"), "{err}");
+}
+
+#[test]
+fn unknown_provider_is_rejected() {
+    let err = error_of(&minimal("[judge]\nprovider = \"acme\"\n"), base_env());
+
+    assert!(err.contains("\"acme\" is unknown"), "{err}");
+}
+
+#[test]
+fn threshold_out_of_range_is_rejected() {
+    let text = minimal(
+        "[judge.thresholds.\"typesafe/jev-1.13.0\"]\n\
+         guide = 1.5\nfact = 0.8\nhuman_request = 0.8\nfraud = 0.6\nconflict = 0.75\noutside_scope = 0.8\n",
+    );
+
+    let err = error_of(&text, base_env());
+
+    assert!(err.contains("guide = 1.5"), "{err}");
+}
+
+#[test]
+fn thresholds_for_another_model_are_not_active() {
+    let text = minimal(
+        "[judge.thresholds.\"typesafe/jev-0.9\"]\n\
+         guide = 0.9\nfact = 0.8\nhuman_request = 0.8\nfraud = 0.6\nconflict = 0.75\noutside_scope = 0.8\n",
+    );
+
+    let settings = Settings::parse(&text, base_env()).unwrap();
+
+    assert!(settings.config.judge.active_thresholds().is_none());
+}
+
+#[test]
+fn secrets_debug_output_is_redacted() {
+    let settings = Settings::parse(&minimal(""), base_env()).unwrap();
+
+    let debug = format!("{settings:?}");
+
+    assert!(!debug.contains(PRIVATE_KEY), "secret leaked: {debug}");
+    assert!(debug.contains("<redacted>"));
+}
