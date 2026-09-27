@@ -18,8 +18,8 @@ pub struct OrderFacts {
 }
 
 impl OrderFacts {
-    /// Reads `f` and `published_at`. Supported nodes always publish both; a
-    /// missing or malformed one is logged and left unknown. A `created_at`
+    /// Reads `f` and `published_at`. Supported nodes always publish both; if
+    /// either is missing or malformed, both are treated as unknown. A `created_at`
     /// tag (from unsupported nodes) is ignored, and so is the event's own
     /// `created_at`, which is the time of the latest revision.
     pub fn from_event(event: &Event) -> Self {
@@ -29,14 +29,18 @@ impl OrderFacts {
                 _ => None,
             })
         };
-        let fiat_code = tag("f");
+        let fiat_code = tag("f").filter(|f| !f.is_empty());
         let published_at = tag("published_at").and_then(|v| v.parse().ok());
-        if fiat_code.is_none() || published_at.is_none() {
-            tracing::warn!(event_id = %event.id, "order event lacks f or published_at; order facts unknown");
-        }
-        Self {
-            fiat_code,
-            published_at,
+        match (fiat_code, published_at) {
+            (Some(fiat_code), Some(published_at)) => Self {
+                fiat_code: Some(fiat_code),
+                published_at: Some(published_at),
+            },
+            // The event breaks the protocol: trust neither value.
+            _ => {
+                tracing::warn!(event_id = %event.id, "order event lacks a valid f or published_at; order facts unknown");
+                Self::default()
+            }
         }
     }
 }
@@ -53,10 +57,16 @@ pub async fn fetch(
         .kind(Kind::Custom(NOSTR_ORDER_EVENT_KIND))
         .author(mostro)
         .identifier(order_id);
-    match newest_event(client, filter, timeout).await? {
-        Some(event) => Ok(OrderFacts::from_event(&event)),
-        None => {
+    // The take already happened: failing to read the order must never abort
+    // the session, so every failure means unknown facts.
+    match newest_event(client, filter, timeout).await {
+        Ok(Some(event)) => Ok(OrderFacts::from_event(&event)),
+        Ok(None) => {
             tracing::warn!(order_id, "order event not found; order facts unknown");
+            Ok(OrderFacts::default())
+        }
+        Err(e) => {
+            tracing::warn!(order_id, error = %e, "cannot fetch order event; order facts unknown");
             Ok(OrderFacts::default())
         }
     }
@@ -96,6 +106,19 @@ mod tests {
         ]));
 
         assert_eq!(facts.published_at, None);
+    }
+
+    #[test]
+    fn one_valid_tag_is_not_trusted_without_the_other() {
+        let only_currency = OrderFacts::from_event(&order(&[&["d", "o1"], &["f", "ARS"]]));
+        let bad_time = OrderFacts::from_event(&order(&[
+            &["d", "o1"],
+            &["f", "ARS"],
+            &["published_at", "soon"],
+        ]));
+
+        assert_eq!(only_currency, OrderFacts::default());
+        assert_eq!(bad_time, OrderFacts::default());
     }
 
     #[test]
