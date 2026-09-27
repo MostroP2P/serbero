@@ -110,11 +110,13 @@ pub fn set_lifecycle(
     Ok(updated == 1)
 }
 
-/// Moves a dispute to `notified` and stamps the notification time.
+/// Moves a dispute waiting for a solver (`new` or `notified`) to `notified`
+/// and stamps the notification time. A dispute already taken or resolved is
+/// left alone, so a notification that finishes late cannot regress it.
 pub fn mark_notified(conn: &Connection, dispute_id: &str, now: i64) -> Result<bool> {
     let updated = conn.execute(
         "UPDATE disputes SET lifecycle = 'notified', last_notified_at = ?2, updated_at = ?2
-         WHERE dispute_id = ?1",
+         WHERE dispute_id = ?1 AND lifecycle IN ('new', 'notified')",
         params![dispute_id, now],
     )?;
     Ok(updated == 1)
@@ -277,6 +279,25 @@ mod tests {
         let dispute = get(store.conn(), "d1").unwrap().unwrap();
         assert_eq!(dispute.lifecycle, Lifecycle::Notified);
         assert_eq!(dispute.last_notified_at, Some(1_050));
+    }
+
+    #[test]
+    fn mark_notified_never_regresses_a_taken_or_resolved_dispute() {
+        let store = Store::open_in_memory().unwrap();
+        for (id, lifecycle) in [
+            ("taken", Lifecycle::Taken),
+            ("resolved", Lifecycle::Resolved),
+        ] {
+            insert_if_new(store.conn(), &new_dispute(id, 900)).unwrap();
+            set_lifecycle(store.conn(), id, lifecycle, 1_000).unwrap();
+
+            let updated = mark_notified(store.conn(), id, 1_100).unwrap();
+
+            assert!(!updated);
+            let dispute = get(store.conn(), id).unwrap().unwrap();
+            assert_eq!(dispute.lifecycle, lifecycle);
+            assert_eq!(dispute.last_notified_at, None);
+        }
     }
 
     #[test]
