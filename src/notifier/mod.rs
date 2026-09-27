@@ -73,6 +73,60 @@ impl<S: DmSender> Notifier<S> {
         Ok(change)
     }
 
+    /// Reminds solvers of disputes nobody has taken `renotify_after` after
+    /// their last notification, and retries disputes whose first
+    /// notification never got through. Returns how many disputes were
+    /// processed.
+    pub async fn remind(&self, renotify_after: i64, now: i64) -> Result<usize> {
+        let due = {
+            let store = lock(&self.store)?;
+            disputes::list_awaiting_solver(store.conn(), now - renotify_after)?
+        };
+        let mut processed = 0;
+        for dispute in &due {
+            // Events are handled concurrently with this loop: skip disputes
+            // taken or resolved since the due list was read.
+            let current = {
+                let store = lock(&self.store)?;
+                disputes::get(store.conn(), &dispute.dispute_id)?
+            };
+            let Some(dispute) =
+                current.filter(|d| matches!(d.lifecycle, Lifecycle::New | Lifecycle::Notified))
+            else {
+                continue;
+            };
+            processed += 1;
+            let (notification, text) = match dispute.lifecycle {
+                Lifecycle::New => (
+                    "new_dispute",
+                    text::new_dispute(&dispute.dispute_id, dispute.initiator),
+                ),
+                _ => (
+                    "reminder",
+                    text::reminder(&dispute.dispute_id, now - dispute.first_seen_at),
+                ),
+            };
+            let delivered = notify_solvers(
+                &self.store,
+                &self.sender,
+                &self.solvers,
+                &dispute.dispute_id,
+                notification,
+                &text,
+                now,
+            )
+            .await?;
+            if delivered > 0 {
+                let store = lock(&self.store)?;
+                disputes::mark_notified(store.conn(), &dispute.dispute_id, now)?;
+            }
+        }
+        if processed > 0 {
+            tracing::info!(count = processed, "reminder tick");
+        }
+        Ok(processed)
+    }
+
     /// Tells every solver about a new dispute; the dispute becomes
     /// `notified` once at least one DM was delivered.
     async fn notify_new(&self, dispute: &DisputeEvent, now: i64) -> Result<()> {
@@ -325,6 +379,71 @@ mod tests {
             .unwrap();
 
         assert_eq!(lifecycle(&n, "d1"), Lifecycle::New);
+    }
+
+    #[tokio::test]
+    async fn reminder_fires_once_per_interval() {
+        let mostro = Keys::generate();
+        let n = notifier(&mostro);
+        n.handle_event(&dispute_event(&mostro, "d1", "initiated", 100), 1_000)
+            .await
+            .unwrap();
+
+        let early = n.remind(900, 1_899).await.unwrap();
+        let due = n.remind(900, 1_900).await.unwrap();
+        let again = n.remind(900, 1_901).await.unwrap();
+        let next = n.remind(900, 2_800).await.unwrap();
+
+        assert_eq!((early, due, again, next), (0, 1, 0, 1));
+        let texts = n.sender.texts();
+        assert_eq!(texts.len(), 3);
+        assert_eq!(texts[1], "Dispute still unattended (15 min)\ndispute: d1");
+        assert_eq!(texts[2], "Dispute still unattended (30 min)\ndispute: d1");
+    }
+
+    #[tokio::test]
+    async fn taken_disputes_get_no_reminders() {
+        let mostro = Keys::generate();
+        let n = notifier(&mostro);
+        n.handle_event(&dispute_event(&mostro, "d1", "initiated", 100), 1_000)
+            .await
+            .unwrap();
+        {
+            let store = n.store.lock().unwrap();
+            disputes::set_lifecycle(store.conn(), "d1", Lifecycle::Taken, 1_100).unwrap();
+        }
+
+        let reminded = n.remind(900, 5_000).await.unwrap();
+
+        assert_eq!(reminded, 0);
+    }
+
+    #[tokio::test]
+    async fn failed_first_notification_is_retried_as_new_dispute() {
+        let mostro = Keys::generate();
+        let solvers = vec![solver()];
+        let failing = FakeSender {
+            failing: [solvers[0].pubkey].into(),
+            ..Default::default()
+        };
+        let n = notifier_with(&mostro, failing, solvers.clone());
+        n.handle_event(&dispute_event(&mostro, "d1", "initiated", 100), 1_000)
+            .await
+            .unwrap();
+        let n = Notifier::new(
+            Arc::clone(&n.store),
+            FakeSender::default(),
+            solvers,
+            mostro.public_key(),
+        );
+
+        n.remind(900, 1_900).await.unwrap();
+
+        assert_eq!(
+            n.sender.texts(),
+            ["New Mostro dispute\ndispute: d1\nopened by: seller"]
+        );
+        assert_eq!(lifecycle(&n, "d1"), Lifecycle::Notified);
     }
 
     #[tokio::test]

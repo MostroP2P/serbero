@@ -340,6 +340,14 @@ new ──notify──▶ notified ──(s=in-progress)──▶ taken ──(t
                    └─┘ reminder every `renotify_after`
 ```
 
+0. **Start.** Before any request, open the relay notification stream so
+   nothing can be missed. Fetch the disputes the relays already store, keep
+   the newest revision of each (relays may disagree), and apply them oldest
+   first. Only then subscribe to new dispute events, from the moment the sync
+   started. A dispute whose newest revision is already past `initiated` (it
+   was opened and taken or resolved while Serbero was offline, or before
+   Serbero was installed) is recorded without notifying anyone: solvers only
+   hear about disputes that are waiting for them.
 1. **Detect.** Subscribe to `kind 38386` authored by the configured Mostro
    pubkey with `z = dispute` ([§5.1](#51-mostro-protocol)). Insert by
    `dispute_id` with `ON CONFLICT DO NOTHING`; a duplicate is a no-op. Only the
@@ -348,10 +356,14 @@ new ──notify──▶ notified ──(s=in-progress)──▶ taken ──(t
    the same across revisions).
 2. **Notify.** Send the "new dispute" DM to every configured solver. Record each
    attempt as an event. Move to `notified` if at least one send succeeded.
-3. **Remind.** A timer re-sends to all solvers for disputes still `notified`
-   after `renotify_after`.
-4. **Taken.** On `s = in-progress`, mark the dispute `taken` and notify all
-   solvers. Dispute events do not name the solver: if Serbero has just taken the
+3. **Remind.** A timer in its own task checks every minute, starting one minute
+   after the startup sync, so reminder delivery never delays dispute events.
+   A dispute still `notified` `renotify_after` after its last notification gets
+   a reminder; a dispute still `new` (every first DM failed) gets its first
+   notification again. Each dispute is re-read just before sending, so one
+   taken or resolved in the meantime is skipped.
+4. **Taken.** On `s = in-progress` for a dispute that was waiting for a
+   solver, mark it `taken` and notify all solvers. Dispute events do not name the solver: if Serbero has just taken the
    dispute itself, the mediator owns it (`assigned_solver` = Serbero);
    otherwise the solver is recorded as unknown. An `in-progress` revision newer
    than Serbero's own take means a `write` solver took it over: the session
