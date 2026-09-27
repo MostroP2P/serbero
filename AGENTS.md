@@ -21,8 +21,22 @@ implementation plan is [`docs/plan.md`](docs/plan.md).
 ## Language
 
 - **Everything in the repository is in English**: code, identifiers, comments,
-  docs, commit messages, PR titles and descriptions, issues, log messages, and
-  messages sent to solvers.
+  doc comments, test names, file and branch names, configuration keys and
+  sample values, docs, specs, commit messages, PR titles and descriptions,
+  review replies, issues, log and error messages, and messages sent to
+  solvers. This holds even when the person asking for the change writes in
+  another language.
+- **The only non-English text allowed** is:
+  - party-facing translations in `messages/<code>.toml` (one file per
+    language, reviewed by a native speaker);
+  - party messages inside test fixtures and golden cases, because they must
+    reproduce what real users write;
+  - verbatim party quotes inside solver messages (briefs, transcripts,
+    updates), which stay in the language the party wrote them in, because the
+    solver must see exactly what was said.
+
+  Everything around them (keys, comments, labels, file names, the solver
+  message's own wording) stays in English.
 - **The judge is always used in English.** Every question, instruction,
   option, and criterion sent to Jev (or any other judge provider) is written in
   English. Party messages go into the
@@ -88,6 +102,46 @@ implementation plan is [`docs/plan.md`](docs/plan.md).
   Gift wraps (NIP-59) are deprecated and must not be used anywhere, including
   solver notifications.
 - Follow the protocol's chat client security requirements exactly.
+
+## Working with relays
+
+Relays are slow, down, or silently not delivering far more often than a healthy
+test network suggests. One relay taking 10 s to answer once kept the Mostro
+app's order book empty for 8 s on every cold start (appv2
+`docs/OPTIMIZATION_PLAN.md` PR 2.11, `docs/RELAYS.md`). These rules keep
+Serbero from repeating that:
+
+1. **Nothing relay-bound runs before the live subscription, and nothing
+   relay-bound gates the event loop.** Open the notification stream before
+   sending any REQ (it buffers what relays send), then subscribe. Other relay
+   work, such as the backlog fetch, may start right after, but only in
+   background tasks, so the event loop consumes live events as soon as it runs
+   (`docs/spec.md` §6, `src/daemon/mod.rs`).
+2. **Never await `fetch_events` on a path that gates live events, startup,
+   notifications or reminders.** It returns only when every relay has sent
+   EOSE or the timeout passes, so the slowest relay decides the latency. Run
+   such fetches in a background task, with a timeout.
+3. **Choose the read strategy by what is read:**
+   - One replaceable or addressable event (for example the node's
+     `kind 38385`): take the first answer plus a short grace for a newer one,
+     then close the request. This is appv2's `first_answer::newest_answer`.
+   - A backlog of many events where a stale revision can cause side effects
+     (disputes): wait for all relays, bounded, in the background, and apply
+     only the newest revision of each `d` tag. Live events keep flowing
+     meanwhile.
+4. **Order revisions by NIP-01:** the later event `created_at`, then the lowest
+   id. Never order by which relay answered first.
+5. **A fetch that timed out is not complete.** `fetch_events(..).timeout(..)`
+   returns `Ok` with whatever arrived, even if a relay answered nothing. Keep
+   a periodic resync, plus a resync when a relay reconnects, for what slow
+   relays held back.
+6. **Long-lived subscriptions use a fixed id and are re-sent when a relay
+   connects.** nostr-sdk 0.45 can drop a refused REQ from a relay's registry,
+   and a relay can report `Connected` while delivering nothing. Never
+   CLOSE + REQ a subscription while relays are offline.
+7. **Every change to relay-bound code is tested against a silent relay**
+   (`MockRelay::run_with_opts` with `unresponsive_connection`), asserting that
+   startup and live events stay fast. `tests/detection.rs` has examples.
 
 ## Working with the judge (Jev)
 
