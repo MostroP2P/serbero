@@ -198,6 +198,7 @@ async fn serbero_handles_a_real_dispute_end_to_end() {
                     seller_trade_pubkey: &seller,
                     fiat_amount: Some(&fiat_amount),
                     fiat_code: facts.fiat_code.as_deref(),
+                    payment_method: Some(&info.payment_method),
                     order_published_at: facts.published_at,
                     now,
                 },
@@ -211,6 +212,7 @@ async fn serbero_handles_a_real_dispute_end_to_end() {
         .unwrap();
     send_to_party(
         &client,
+        &notifier.outbound_gate(),
         &store,
         &serbero,
         &session,
@@ -228,6 +230,10 @@ async fn serbero_handles_a_real_dispute_end_to_end() {
     // Ortsom's teardown hands the dispute to its write solver.
     let output = ortsom.wait_with_output().await.unwrap();
     let report = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success() && !report.contains("[FAIL]"),
+        "the Ortsom scenario itself failed:\n{report}"
+    );
     println!(
         "ortsom: {}",
         report
