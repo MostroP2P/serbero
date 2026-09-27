@@ -17,6 +17,7 @@ pub fn keys_from_secret(secret: &Secret) -> Result<Keys> {
 /// Parses a hex public key from the config.
 pub fn public_key(field: &str, hex: &str) -> Result<PublicKey> {
     PublicKey::from_hex(hex)
+        .and_then(|pk| pk.xonly().map(|_| pk))
         .map_err(|e| Error::Nostr(format!("{field} is not a valid public key: {e}")))
 }
 

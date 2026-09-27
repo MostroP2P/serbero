@@ -46,9 +46,7 @@ async fn run(settings: &Settings) -> serbero::error::Result<()> {
         "serbero started"
     );
 
-    if let Err(e) = tokio::signal::ctrl_c().await {
-        tracing::error!(error = %e, "cannot listen for shutdown signal");
-    }
+    serbero::signal::shutdown().await;
     tracing::info!("shutting down");
     serbero::nostr::shutdown(&client).await;
     Ok(())

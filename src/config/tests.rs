@@ -5,7 +5,7 @@ use super::*;
 
 const SAMPLE: &str = include_str!("../../config.sample.toml");
 const PRIVATE_KEY: &str = "4444444444444444444444444444444444444444444444444444444444444444";
-const MOSTRO: &str = "1111111111111111111111111111111111111111111111111111111111111111";
+const MOSTRO: &str = "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
 
 fn env(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> {
     let map: HashMap<String, String> = pairs
@@ -99,7 +99,10 @@ fn malformed_private_key_is_rejected_without_echoing_it() {
         env(&[("SERBERO_PRIVATE_KEY", "nsec-not-hex")]),
     );
 
-    assert!(err.contains("64-character hex private key"), "{err}");
+    assert!(
+        err.contains("64-character hex secp256k1 private key"),
+        "{err}"
+    );
     assert!(!err.contains("nsec-not-hex"), "secret leaked: {err}");
 }
 
@@ -279,4 +282,30 @@ fn malformed_judge_key_env_name_is_rejected() {
     );
 
     assert!(err.contains("judge.api_key_env"), "{err}");
+}
+
+#[test]
+fn zero_private_key_is_rejected() {
+    let zeros = "0".repeat(64);
+
+    let err = error_of(
+        &minimal(""),
+        env(&[("SERBERO_PRIVATE_KEY", zeros.as_str())]),
+    );
+
+    assert!(
+        err.contains("valid 64-character hex secp256k1 private key"),
+        "{err}"
+    );
+}
+
+#[test]
+fn pubkey_off_the_curve_is_rejected() {
+    // 64 hex digits, but not the x-coordinate of any secp256k1 point.
+    let off_curve = "0".repeat(64);
+    let text = format!("[mostro]\npubkey = \"{off_curve}\"\nrelays = [\"wss://relay.example\"]\n");
+
+    let err = error_of(&text, base_env());
+
+    assert!(err.contains("mostro.pubkey"), "{err}");
 }

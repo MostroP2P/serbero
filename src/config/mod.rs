@@ -10,6 +10,7 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use nostr_sdk::prelude::{PublicKey, SecretKey};
 use serde::Deserialize;
 
 use crate::error::{Error, Result};
@@ -339,8 +340,10 @@ impl Secrets {
                 "environment variable {key_env} (serbero.private_key_env) is not set"
             ))
         })?;
-        if !is_hex_key(&private_key) {
-            return invalid(format!("{key_env} must be a 64-character hex private key"));
+        if !is_hex_key(&private_key) || SecretKey::from_hex(&private_key).is_err() {
+            return invalid(format!(
+                "{key_env} must be a valid 64-character hex secp256k1 private key"
+            ));
         }
 
         let judge_api_key = read(&config.judge.api_key_env).map(Secret);
@@ -388,7 +391,7 @@ fn is_hex_key(value: &str) -> bool {
 }
 
 fn check_pubkey(field: &str, value: &str) -> Result<()> {
-    if is_hex_key(value) {
+    if is_hex_key(value) && PublicKey::from_hex(value).and_then(|pk| pk.xonly()).is_ok() {
         Ok(())
     } else {
         invalid(format!(
