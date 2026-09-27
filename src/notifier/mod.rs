@@ -82,7 +82,20 @@ impl<S: DmSender> Notifier<S> {
             let store = lock(&self.store)?;
             disputes::list_awaiting_solver(store.conn(), now - renotify_after)?
         };
+        let mut processed = 0;
         for dispute in &due {
+            // Events are handled concurrently with this loop: skip disputes
+            // taken or resolved since the due list was read.
+            let current = {
+                let store = lock(&self.store)?;
+                disputes::get(store.conn(), &dispute.dispute_id)?
+            };
+            let Some(dispute) =
+                current.filter(|d| matches!(d.lifecycle, Lifecycle::New | Lifecycle::Notified))
+            else {
+                continue;
+            };
+            processed += 1;
             let (notification, text) = match dispute.lifecycle {
                 Lifecycle::New => (
                     "new_dispute",
@@ -108,10 +121,10 @@ impl<S: DmSender> Notifier<S> {
                 disputes::mark_notified(store.conn(), &dispute.dispute_id, now)?;
             }
         }
-        if !due.is_empty() {
-            tracing::info!(count = due.len(), "reminder tick");
+        if processed > 0 {
+            tracing::info!(count = processed, "reminder tick");
         }
-        Ok(due.len())
+        Ok(processed)
     }
 
     /// Tells every solver about a new dispute; the dispute becomes
