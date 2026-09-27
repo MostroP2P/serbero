@@ -19,6 +19,10 @@ pub enum Error {
     #[error("nostr error: {0}")]
     Nostr(String),
 
+    /// An event from a relay does not match the Mostro protocol.
+    #[error("invalid event: {0}")]
+    InvalidEvent(String),
+
     /// The tracing subscriber could not be installed.
     #[error("logging setup failed: {0}")]
     Logging(String),
