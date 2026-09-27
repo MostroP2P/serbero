@@ -42,7 +42,8 @@ async fn disputes_from_the_node_are_stored() {
     daemon::subscribe_disputes(&client, mostro.public_key())
         .await
         .unwrap();
-    let notifier = Notifier::new(Arc::clone(&store), mostro.public_key());
+    let sender = serbero::nostr::dm::RelayDmSender::new(client.clone(), Keys::generate());
+    let notifier = Notifier::new(Arc::clone(&store), sender, vec![], mostro.public_key());
     let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
     let loop_client = client.clone();
     let task = tokio::spawn(async move {
