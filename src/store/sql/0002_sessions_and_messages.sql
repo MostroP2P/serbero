@@ -8,6 +8,7 @@ CREATE TABLE sessions (
     seller_trade_pubkey TEXT NOT NULL,
     fiat_amount         TEXT,
     fiat_code           TEXT,
+    payment_method      TEXT,
     order_published_at  INTEGER,
     buyer_lang          TEXT,
     seller_lang         TEXT,
