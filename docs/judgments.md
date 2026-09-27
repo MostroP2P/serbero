@@ -355,7 +355,12 @@ verdict. It is never shown to the parties.
 
 - The question set is defined in `src/judge/questions.rs` in provider-neutral
   types and serialized to the exact JSON above.
-- `QUESTION_SET_VERSION` is stored with every evaluation.
+- Every evaluation stores the question-set identifier:
+  `QUESTION_SET_VERSION` plus a short hash of the rendered questions. The
+  rendered questions include the options generated from
+  `[mediation].languages`, so enabling a language changes the identifier even
+  though the version is unchanged. Recorded answers and evaluation reports are
+  keyed by this identifier and are never reused across language sets.
 - A snapshot test hashes the serialized question set. Changing any
   instruction, option, or criterion fails the test until the version is bumped
   and the golden set is re-run ([evaluation.md](evaluation.md)).

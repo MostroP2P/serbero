@@ -526,8 +526,9 @@ set of files present. `[mediation].languages` enables a subset of them.
 language plus `other` and `unknown`
 ([judgments.md §2.2](judgments.md#22-per-party-questions-latest-messages)).
 A party writing in a language that is not enabled keeps receiving the current
-language (initially `default_language`); the brief tells the solver which
-language was detected.
+language (initially `default_language`). The judge can only answer `other`
+for such a language, so the brief tells the solver that the party writes in a
+language that is not enabled, without naming it.
 
 **Two levels of support.** Talking in a language needs only a good translation.
 Guidance that mentions a fund action also needs evidence that the judge reads
@@ -548,11 +549,18 @@ exposes the parties to guidance the judge has not been measured on.
 1. Copy `messages/en.toml` to `messages/<code>.toml`, translate every
    template, and fill in its name and word lists. A native speaker reviews it.
 2. The catalog tests pass (every template present, word rules, length).
-3. Add the code to `[mediation].languages`: the language is conversational.
+3. Add the code to `[mediation].languages`. This changes the options of the
+   judge's language question, so before deploying, run the language-question
+   golden cases of the already validated languages against the new option set
+   (no new labels are needed). If they still meet their targets, the new
+   language is conversational.
 4. Optionally, write its golden set, run the evaluation, and add the code to
    `validated_languages` for the active judge: the language is validated.
 
-Steps 1–3 are one small PR and need no code change.
+Steps 1–3 are one small PR and need no code change. Every evaluation records
+the question-set identifier, which covers the enabled languages
+([judgments.md §6](judgments.md#6-versioning)), so results from different
+language sets are never mixed.
 
 ## 8. Data model
 

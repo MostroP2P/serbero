@@ -262,6 +262,7 @@ Rendered from the last turn's facts and the brief request
 Dispute <dispute_id> · handed off: conflicting_claims
 Topic: payment_not_confirmed (0.91) · rounds: 2 · duration: 14 min
 Order: 50.000 ARS via Mercado Pago · created 3 h 20 min before the dispute
+Languages: buyer es · seller other (not enabled; addressed in en)
 
 Buyer — says sent (0.96), details given (0.88)
   "ya envié el pago a las 14:10 desde mi cuenta de Mercado Pago, ref 8841…"  [1 attachment]
