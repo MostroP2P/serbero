@@ -22,7 +22,7 @@ uuid = { version = "1.26.1", features = ["v4"] }
 
 [dev-dependencies]
 nostr-sdk = { version = "0.45.4", features = ["local-relay"] }
-tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "time", "test-util"] }
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "time", "test-util", "process"] }
 
 [lints.rust]
 unsafe_code = "forbid"
