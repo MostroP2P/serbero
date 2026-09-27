@@ -15,6 +15,10 @@ pub enum Error {
     #[error("database schema error: {0}")]
     Schema(String),
 
+    /// A Nostr key, relay, or event operation failed.
+    #[error("nostr error: {0}")]
+    Nostr(String),
+
     /// The tracing subscriber could not be installed.
     #[error("logging setup failed: {0}")]
     Logging(String),
