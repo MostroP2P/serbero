@@ -382,3 +382,97 @@ async fn events_from_other_authors_are_ignored() {
     let store = n.store.lock().unwrap();
     assert!(disputes::get(store.conn(), "d1").unwrap().is_none());
 }
+
+mod sessions_end {
+    use super::*;
+    use crate::store::sessions::{self, NewSession, SessionState};
+
+    fn with_session(n: &Notifier<FakeSender>) {
+        let store = n.store.lock().unwrap();
+        sessions::insert(
+            store.conn(),
+            &NewSession {
+                session_id: "s1",
+                dispute_id: "d1",
+                buyer_trade_pubkey: "b",
+                seller_trade_pubkey: "s",
+                fiat_amount: None,
+                fiat_code: None,
+                order_published_at: None,
+                now: 1_000,
+            },
+        )
+        .unwrap();
+    }
+
+    fn state(n: &Notifier<FakeSender>) -> SessionState {
+        let store = n.store.lock().unwrap();
+        sessions::get(store.conn(), "s1").unwrap().unwrap().state
+    }
+
+    #[tokio::test]
+    async fn serberos_own_take_does_not_end_the_session() {
+        let mostro = Keys::generate();
+        let n = notifier(&mostro);
+        n.handle_event(&dispute_event(&mostro, "d1", "initiated", 100), 1_000)
+            .await
+            .unwrap();
+        with_session(&n);
+
+        // The in-progress revision Mostro publishes for Serbero's own take.
+        let change = n
+            .handle_event(&dispute_event(&mostro, "d1", "in-progress", 200), 1_001)
+            .await
+            .unwrap();
+
+        assert_eq!(change, Change::Taken);
+        assert_eq!(state(&n), SessionState::Opening);
+    }
+
+    #[tokio::test]
+    async fn a_takeover_supersedes_the_session() {
+        let mostro = Keys::generate();
+        let n = notifier(&mostro);
+        n.handle_event(&dispute_event(&mostro, "d1", "initiated", 100), 1_000)
+            .await
+            .unwrap();
+        with_session(&n);
+        n.handle_event(&dispute_event(&mostro, "d1", "in-progress", 200), 1_001)
+            .await
+            .unwrap();
+
+        let change = n
+            .handle_event(&dispute_event(&mostro, "d1", "in-progress", 300), 1_002)
+            .await
+            .unwrap();
+
+        assert_eq!(change, Change::TakenAgain);
+        assert_eq!(state(&n), SessionState::Superseded);
+        let store = n.store.lock().unwrap();
+        let ended = events::list_for_dispute(store.conn(), "d1")
+            .unwrap()
+            .into_iter()
+            .find(|e| e.kind == "session_superseded")
+            .unwrap();
+        assert_eq!(ended.session_id.as_deref(), Some("s1"));
+    }
+
+    #[tokio::test]
+    async fn a_final_status_closes_the_session() {
+        let mostro = Keys::generate();
+        let n = notifier(&mostro);
+        n.handle_event(&dispute_event(&mostro, "d1", "initiated", 100), 1_000)
+            .await
+            .unwrap();
+        with_session(&n);
+        n.handle_event(&dispute_event(&mostro, "d1", "in-progress", 200), 1_001)
+            .await
+            .unwrap();
+
+        n.handle_event(&dispute_event(&mostro, "d1", "released", 300), 1_002)
+            .await
+            .unwrap();
+
+        assert_eq!(state(&n), SessionState::Closed);
+    }
+}

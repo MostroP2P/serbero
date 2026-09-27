@@ -16,7 +16,7 @@ use crate::error::{Error, Result};
 use crate::mostro::chat::ChannelKeys;
 use crate::store::Store;
 use crate::store::messages::{self, Direction, NewMessage};
-use crate::store::sessions::{Party, Session};
+use crate::store::sessions::{self, Party, Session};
 
 /// The channel between Serbero and one party of a session.
 pub fn channel(serbero: &Keys, session: &Session, party: Party) -> Result<ChannelKeys> {
@@ -44,6 +44,18 @@ pub async fn send_to_party(
     session: &Session,
     message: &Outbound<'_>,
 ) -> Result<EventId> {
+    // A human may have taken over since the caller read the session: re-read
+    // it and send nothing once it ended (`docs/spec.md` §6, step 4).
+    let current = {
+        let store = store
+            .lock()
+            .map_err(|_| Error::Schema("store lock poisoned".into()))?;
+        sessions::get(store.conn(), &session.session_id)?
+    };
+    match current {
+        Some(current) if !current.state.is_terminal() => {}
+        _ => return Err(Error::SessionEnded(session.session_id.clone())),
+    }
     let keys = channel(serbero, session, message.party)?;
     let event = wrap_chat_message(serbero, keys.conv(), keys.sign(), message.text)
         .await

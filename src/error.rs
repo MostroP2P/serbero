@@ -23,6 +23,11 @@ pub enum Error {
     #[error("invalid event: {0}")]
     InvalidEvent(String),
 
+    /// A message was not sent because its session has ended (closed, or
+    /// superseded by a human solver).
+    #[error("session {0} has ended; nothing more is sent")]
+    SessionEnded(String),
+
     /// The tracing subscriber could not be installed.
     #[error("logging setup failed: {0}")]
     Logging(String),

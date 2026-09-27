@@ -15,6 +15,7 @@ use crate::error::{Error, Result};
 use crate::mostro::dispute_event::{self, DisputeEvent};
 use crate::nostr::dm::DmSender;
 use crate::store::disputes::{self, Lifecycle, NewDispute, StatusUpdate};
+use crate::store::sessions::{self, SessionState};
 use crate::store::{Store, events};
 
 /// What a dispute event changed in the store.
@@ -250,7 +251,18 @@ fn transition(
                 disputes::set_lifecycle(conn, id, Lifecycle::Taken, now)?;
                 Change::Taken
             }
-            Lifecycle::Taken => Change::TakenAgain,
+            Lifecycle::Taken => {
+                // Only a `write` solver can take over from Serbero, so a newer
+                // take while Serbero assists means a human now owns the case.
+                end_live_session(
+                    conn,
+                    dispute,
+                    SessionState::Superseded,
+                    "session_superseded",
+                    now,
+                )?;
+                Change::TakenAgain
+            }
             Lifecycle::Resolved => Change::Updated {
                 from: existing.status,
                 to: dispute.status.clone(),
@@ -258,6 +270,7 @@ fn transition(
         },
         status if dispute_event::is_final(status) => {
             disputes::set_lifecycle(conn, id, Lifecycle::Resolved, now)?;
+            end_live_session(conn, dispute, SessionState::Closed, "session_closed", now)?;
             let by = if dispute_event::resolved_by_parties(status) {
                 "parties"
             } else {
@@ -277,6 +290,32 @@ fn transition(
             to: other.clone(),
         },
     })
+}
+
+/// Ends the dispute's live session, if any, and records why.
+fn end_live_session(
+    conn: &rusqlite::Connection,
+    dispute: &DisputeEvent,
+    state: SessionState,
+    kind: &str,
+    now: i64,
+) -> Result<()> {
+    let Some(session) = sessions::live_for_dispute(conn, &dispute.dispute_id)? else {
+        return Ok(());
+    };
+    sessions::set_state(conn, &session.session_id, state, now)?;
+    events::append(
+        conn,
+        &events::NewEvent {
+            dispute_id: &dispute.dispute_id,
+            session_id: Some(&session.session_id),
+            kind,
+            payload: json!({ "status": dispute.status.to_string() }),
+            now,
+        },
+    )?;
+    tracing::info!(dispute_id = %dispute.dispute_id, session_id = %session.session_id, %state, "session ended");
+    Ok(())
 }
 
 fn lock(store: &Mutex<Store>) -> Result<std::sync::MutexGuard<'_, Store>> {
