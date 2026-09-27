@@ -202,6 +202,19 @@ Mostro pubkey) and learns who took a dispute only from its own actions.
 | `settled` / `seller-refunded` | Resolved by a solver (buyer paid / seller refunded). |
 | `released` / `cooperatively-canceled` | Resolved by the parties themselves (same outcomes). |
 
+**Order events.** `kind 38383`, authored by the Mostro node, addressable by
+`d` = order id. Serbero reads two tags from the order behind a dispute:
+
+| Tag | Meaning | If absent |
+|---|---|---|
+| `f` | Fiat currency code (ISO 4217). | Templates use their `_noamount` form. |
+| `published_at` | When the order was created, in Unix seconds (NIP-69; named as in NIP-23). The same value in every revision of the order. | Omitted from the brief. Nodes released before `mostrod` #1000 do not publish it. |
+
+`published_at` is never taken from the event's own `created_at`, which is the
+time of the latest revision. Dispute events are different: they keep their
+`created_at` tag for the dispute's open time (see above), and Serbero reads
+each tag only from the event kind that defines it.
+
 **Taking a dispute.** Serbero sends `admin-take-dispute`; Mostro answers
 `admin-took-dispute` with `Payload::Dispute(id, SolverDisputeInfo)` (order id,
 trade pubkeys of both parties, `fiat_amount`, `payment_method`, reputation
@@ -361,9 +374,10 @@ deterministic; no Jev call happens before the take.
    continues as normal).
 2. Store the parties' **trade** pubkeys and the order facts Serbero may render.
    `SolverDisputeInfo` carries `fiat_amount` and `payment_method` but not the
-   currency; the fiat code is read from the order's public event (`kind 38383`,
-   `d` = the order id from `SolverDisputeInfo.id`, tag `f`). If it cannot be
-   fetched, templates use their `_noamount` form. Derive each party's chat keys
+   currency or the order's creation time. Both are read from the order's public
+   event (`kind 38383`, `d` = the order id from `SolverDisputeInfo.id`, tags `f`
+   and `published_at`; see above). If the event cannot be fetched, templates
+   use their `_noamount` form and the brief omits the order's age. Derive each party's chat keys
    (`K_conv`, `K_sign`) from Serbero's key and the party's trade pubkey
    ([§5.1](#51-mostro-protocol)). The keys are never stored: they are
    re-derived from the trade pubkeys at startup.
@@ -503,6 +517,7 @@ sessions (
   seller_trade_pubkey TEXT NOT NULL,
   fiat_amount         TEXT,
   fiat_code           TEXT,
+  order_published_at  INTEGER,               -- order creation time (published_at tag), if known
   buyer_lang          TEXT,
   seller_lang         TEXT,
   buyer_chat_cursor   INTEGER,               -- `since` for the buyer channel
