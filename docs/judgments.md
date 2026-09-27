@@ -354,7 +354,9 @@ verdict. It is never shown to the parties.
 ## 6. Versioning
 
 - The question set is defined in `src/judge/questions.rs` in provider-neutral
-  types and serialized to the exact JSON above.
+  types and serialized to the JSON above. The `<party>_language` options are
+  generated from `[mediation].languages`; the `en`, `es` and `pt` entries shown
+  are the initial set.
 - Every evaluation stores the question-set identifier:
   `QUESTION_SET_VERSION` plus a short hash of the rendered questions. The
   rendered questions include the options generated from

@@ -79,7 +79,7 @@ least 5.
 Run with `cargo run --bin eval -- --lang es` against the judge configured in
 `[judge]` (or `--provider typesafe --model jev-latest`). It sends each case, compares the answers with the labels, and writes a report.
 
-| Question | Metric | Target to enable a language |
+| Question | Metric | Target to validate a language |
 |---|---|---|
 | `seller_receipt = says_received` | Precision at threshold `guide` | ≥ 0.98 |
 | `buyer_payment = says_not_sent` | Precision at threshold `guide` | ≥ 0.98 |
