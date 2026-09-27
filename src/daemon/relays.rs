@@ -53,28 +53,54 @@ pub async fn subscribe_disputes(
 }
 
 /// Re-sends the dispute subscription to one relay.
-async fn resubscribe(
-    client: &Client,
-    relay: &RelayUrl,
-    mostro: PublicKey,
-    since: Timestamp,
-) -> Result<()> {
-    let target = vec![(relay.clone(), vec![dispute_filter(mostro)?.since(since)])];
-    let output = client
-        .subscribe(target)
-        .with_id(SubscriptionId::new(SUBSCRIPTION_ID))
-        .await
-        .map_err(|e| Error::Nostr(format!("cannot resubscribe on {relay}: {e}")))?;
-    if output.success.contains_key(relay) {
-        tracing::info!(%relay, "dispute subscription re-sent");
+/// Every long-lived subscription Serbero holds, by id: the dispute feed and
+/// each live session's chat. The relay watcher re-sends all of them to any
+/// relay that connects (AGENTS.md, relay rule 6).
+pub type Registry = Arc<std::sync::Mutex<HashMap<String, Filter>>>;
+
+/// Records a long-lived subscription so reconnections re-send it.
+pub fn register(registry: &Registry, id: &str, filter: Filter) {
+    if let Ok(mut subscriptions) = registry.lock() {
+        subscriptions.insert(id.to_owned(), filter);
     }
-    Ok(())
 }
 
-/// Watches relay status forever. Whenever a relay becomes connected, the
-/// dispute subscription is re-sent to it and a backlog resync is requested,
-/// so disputes published while it was unreachable are not lost.
-pub async fn watch(client: Client, mostro: PublicKey, since: Timestamp, resync: Arc<Notify>) {
+/// Forgets a subscription that was closed.
+pub fn unregister(registry: &Registry, id: &str) {
+    if let Ok(mut subscriptions) = registry.lock() {
+        subscriptions.remove(id);
+    }
+}
+
+/// Re-sends every registered subscription to one relay. A relay that still
+/// has one refuses the duplicate id, which is harmless.
+async fn resubscribe_all(client: &Client, relay: &RelayUrl, registry: &Registry) {
+    let subscriptions: Vec<(String, Filter)> = match registry.lock() {
+        Ok(s) => s.iter().map(|(id, f)| (id.clone(), f.clone())).collect(),
+        Err(_) => return,
+    };
+    for (id, filter) in subscriptions {
+        let target = vec![(relay.clone(), vec![filter])];
+        match client
+            .subscribe(target)
+            .with_id(SubscriptionId::new(&id))
+            .await
+        {
+            Ok(output) if output.success.contains_key(relay) => {
+                tracing::info!(%relay, subscription = %id, "subscription re-sent");
+            }
+            Ok(_) => {}
+            Err(e) => {
+                tracing::warn!(%relay, subscription = %id, error = %e, "cannot re-send subscription")
+            }
+        }
+    }
+}
+
+/// Watches relay status forever. Whenever a relay becomes connected, every
+/// registered subscription is re-sent to it and a backlog resync is
+/// requested, so nothing published while it was unreachable is lost.
+pub async fn watch(client: Client, registry: Registry, resync: Arc<Notify>) {
     let mut connected: HashMap<RelayUrl, bool> = client
         .relays()
         .await
@@ -90,9 +116,7 @@ pub async fn watch(client: Client, mostro: PublicKey, since: Timestamp, resync: 
                 .unwrap_or(false);
             if now_connected && !was_connected {
                 tracing::info!(relay = %url, "relay connected");
-                if let Err(e) = resubscribe(&client, &url, mostro, since).await {
-                    tracing::warn!(relay = %url, error = %e, "cannot re-send dispute subscription");
-                }
+                resubscribe_all(&client, &url, &registry).await;
                 resync.notify_one();
             }
         }

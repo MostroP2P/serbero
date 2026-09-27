@@ -10,6 +10,7 @@ use std::time::Instant;
 use nostr_sdk::prelude::*;
 
 use super::inbound::{Inbox, Received, Rejected};
+use crate::daemon::relays::{self, Registry};
 use crate::error::{Error, Result};
 use crate::store::Store;
 use crate::store::sessions::{self, Session};
@@ -25,6 +26,7 @@ pub struct Chats {
     serbero: Keys,
     store: Arc<Mutex<Store>>,
     inbox: Mutex<Inbox>,
+    registry: Registry,
 }
 
 impl Chats {
@@ -33,12 +35,14 @@ impl Chats {
         serbero: Keys,
         store: Arc<Mutex<Store>>,
         max_message_chars: usize,
+        registry: Registry,
     ) -> Self {
         Self {
             client,
             serbero,
             store,
             inbox: Mutex::new(Inbox::new(max_message_chars)),
+            registry,
         }
     }
 
@@ -65,9 +69,11 @@ impl Chats {
             session,
             Instant::now(),
         )?;
+        let id = subscription_id(&session.session_id);
+        relays::register(&self.registry, &id.to_string(), filter.clone());
         self.client
             .subscribe(filter)
-            .with_id(subscription_id(&session.session_id))
+            .with_id(id)
             .await
             .map_err(|e| Error::Nostr(format!("cannot subscribe to session chat: {e}")))?;
         Ok(())
@@ -79,6 +85,7 @@ impl Chats {
             .lock()
             .map_err(|_| poisoned())?
             .remove_session(session_id);
+        relays::unregister(&self.registry, &subscription_id(session_id).to_string());
         self.client
             .unsubscribe(&subscription_id(session_id))
             .await

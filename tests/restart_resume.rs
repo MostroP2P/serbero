@@ -84,6 +84,7 @@ async fn start_serbero(
         serbero.clone(),
         Arc::clone(store),
         2_000,
+        Default::default(),
     ));
     let notifications = client.notifications();
     assert_eq!(chats.resume().await.unwrap(), 1);

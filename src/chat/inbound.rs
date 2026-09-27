@@ -54,6 +54,8 @@ pub enum Rejected {
     RateLimited,
     Invalid(String),
     DuplicateInner,
+    /// The session is closed or superseded.
+    SessionEnded,
 }
 
 struct Channel {
@@ -146,6 +148,22 @@ impl Inbox {
         now: Instant,
     ) -> Result<std::result::Result<Received, Rejected>> {
         // 1. Author: a lookup, no crypto.
+        let Some(channel) = self.channels.get_mut(&event.pubkey) else {
+            return Ok(Err(Rejected::UnknownAuthor));
+        };
+        // A session closed or superseded since the channel was opened gets
+        // nothing more: forget its channels and drop the event.
+        let session_id = channel.session_id.clone();
+        let ended = {
+            let store = store
+                .lock()
+                .map_err(|_| Error::Schema("store lock poisoned".into()))?;
+            sessions::get(store.conn(), &session_id)?.is_none_or(|s| s.state.is_terminal())
+        };
+        if ended {
+            self.remove_session(&session_id);
+            return Ok(Err(Rejected::SessionEnded));
+        }
         let Some(channel) = self.channels.get_mut(&event.pubkey) else {
             return Ok(Err(Rejected::UnknownAuthor));
         };
