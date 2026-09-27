@@ -108,9 +108,12 @@ app's order book empty for 8 s on every cold start (appv2
 `docs/OPTIMIZATION_PLAN.md` PR 2.11, `docs/RELAYS.md`). These rules keep
 Serbero from repeating that:
 
-1. **Nothing relay-bound runs before the live subscription.** Open the
-   notification stream, subscribe, start the event loop, and only then do
-   anything else that talks to relays.
+1. **Nothing relay-bound runs before the live subscription, and nothing
+   relay-bound gates the event loop.** Open the notification stream before
+   sending any REQ (it buffers what relays send), then subscribe. Other relay
+   work, such as the backlog fetch, may start right after, but only in
+   background tasks, so the event loop consumes live events as soon as it runs
+   (`docs/spec.md` §6, `src/daemon/mod.rs`).
 2. **Never await `fetch_events` on a path that gates live events, startup,
    notifications or reminders.** It returns only when every relay has sent
    EOSE or the timeout passes, so the slowest relay decides the latency. Run
