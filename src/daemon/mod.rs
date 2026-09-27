@@ -57,7 +57,21 @@ pub async fn run(settings: &Settings) -> Result<()> {
     );
 
     let renotify_after = config.notify.renotify_after.as_secs() as i64;
-    let (notifications, background) = start(&client, &notifier, mostro, renotify_after).await?;
+    let (notifications, mut background) = start(&client, &notifier, mostro, renotify_after).await?;
+
+    // Resume the chat channels of live sessions (restart-safe, §10).
+    let chats = Arc::new(crate::chat::channels::Chats::new(
+        client.clone(),
+        keys.clone(),
+        Arc::clone(&store),
+        config.mediation.max_message_chars,
+    ));
+    let chat_notifications = client.notifications();
+    chats.resume().await?;
+    let chat_task = Arc::clone(&chats);
+    background.push(tokio::spawn(async move {
+        chat_task.run(chat_notifications).await
+    }));
     let result = event_loop(notifications, &notifier, crate::signal::shutdown()).await;
     drop(background);
     tracing::info!("shutting down");
@@ -72,6 +86,11 @@ pub struct Background {
 }
 
 impl Background {
+    /// Adds a task that stops with the others.
+    pub fn push(&mut self, task: JoinHandle<()>) {
+        self.tasks.push(task);
+    }
+
     /// Waits until the first backlog sync has been applied.
     pub async fn first_sync(&mut self) {
         let _ = self.synced.wait_for(|done| *done).await;
