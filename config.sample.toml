@@ -1,0 +1,58 @@
+# Serbero configuration. Copy to config.toml and edit.
+# Reference: docs/spec.md §9. Secrets are never stored here: each *_env
+# field names the environment variable that holds the secret.
+
+[serbero]
+private_key_env = "SERBERO_PRIVATE_KEY"   # hex private key of Serbero's solver identity
+db_path = "serbero.db"
+log_level = "info"                        # overridden by SERBERO_LOG
+
+[mostro]
+# Replace with the hex pubkey of the Mostro node Serbero serves.
+pubkey = "1111111111111111111111111111111111111111111111111111111111111111"
+# Use relays verified to store kind 14 events (docs/spec.md §5.1).
+relays = ["wss://relay.mostro.network", "wss://nos.lol"]
+
+# One entry per solver to notify. `write` solvers receive handoffs first.
+[[solvers]]
+pubkey = "2222222222222222222222222222222222222222222222222222222222222222"
+permission = "write"
+
+[[solvers]]
+pubkey = "3333333333333333333333333333333333333333333333333333333333333333"
+permission = "read"
+
+[notify]
+renotify_after = "15m"
+
+[mediation]
+enabled = false
+default_language = "en"                   # language of the opening message
+languages = ["en", "es", "pt"]
+quiet_period = "20s"
+response_timeout = "30m"
+max_rounds = 3
+max_message_chars = 2000
+max_messages_per_turn = 10
+max_fiat_amount = 0                       # 0 = no limit
+self_resolution_timeout = "2h"
+
+[judge]
+provider = "typesafe"                     # typesafe | recorded
+model = "jev-1.13.0"                      # pin a concrete version
+api_base = "https://api.typesafe.ai"
+api_key_env = "TYPESAFE_API_KEY"          # the operator's own key
+timeout = "10s"
+max_retries = 3
+
+# Calibrated thresholds, one table per "<provider>/<model>". Without a table
+# for the configured judge, mediation stays disabled. These values are
+# illustrative only: uncomment them only after a calibration report for this
+# judge is committed (docs/evaluation.md §3).
+# [judge.thresholds."typesafe/jev-1.13.0"]
+# guide = 0.90
+# fact = 0.80
+# human_request = 0.80
+# fraud = 0.60
+# conflict = 0.75
+# outside_scope = 0.80
