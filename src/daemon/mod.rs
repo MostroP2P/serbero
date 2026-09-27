@@ -57,7 +57,25 @@ pub async fn run(settings: &Settings) -> Result<()> {
     );
 
     let renotify_after = config.notify.renotify_after.as_secs() as i64;
-    let (notifications, background) = start(&client, &notifier, mostro, renotify_after).await?;
+    let (notifications, mut background) = start(&client, &notifier, mostro, renotify_after).await?;
+
+    // Resume the chat channels of live sessions (restart-safe, §10), in the
+    // background, so no chat subscription gates live disputes.
+    let chats = Arc::new(crate::chat::channels::Chats::new(
+        client.clone(),
+        keys.clone(),
+        Arc::clone(&store),
+        config.mediation.max_message_chars,
+        background.registry(),
+    ));
+    let chat_notifications = client.notifications();
+    let chat_task = Arc::clone(&chats);
+    background.push(tokio::spawn(async move {
+        if let Err(e) = chat_task.resume().await {
+            tracing::error!(error = %e, "cannot resume chat channels");
+        }
+        chat_task.run(chat_notifications).await;
+    }));
     let result = event_loop(notifications, &notifier, crate::signal::shutdown()).await;
     drop(background);
     tracing::info!("shutting down");
@@ -69,9 +87,20 @@ pub async fn run(settings: &Settings) -> Result<()> {
 pub struct Background {
     tasks: Vec<JoinHandle<()>>,
     synced: watch::Receiver<bool>,
+    registry: relays::Registry,
 }
 
 impl Background {
+    /// The long-lived subscriptions the relay watcher repairs.
+    pub fn registry(&self) -> relays::Registry {
+        self.registry.clone()
+    }
+
+    /// Adds a task that stops with the others.
+    pub fn push(&mut self, task: JoinHandle<()>) {
+        self.tasks.push(task);
+    }
+
     /// Waits until the first backlog sync has been applied.
     pub async fn first_sync(&mut self) {
         let _ = self.synced.wait_for(|done| *done).await;
@@ -103,6 +132,12 @@ pub async fn start<S: DmSender + Send + Sync + 'static>(
     let notifications = client.notifications();
     let since = Timestamp::now();
     subscribe_disputes(client, mostro, since).await?;
+    let registry = relays::Registry::default();
+    relays::register(
+        &registry,
+        relays::SUBSCRIPTION_ID,
+        dispute_filter(mostro)?.since(since),
+    );
 
     let resync = Arc::new(Notify::new());
     let (synced_tx, synced_rx) = watch::channel(false);
@@ -114,7 +149,7 @@ pub async fn start<S: DmSender + Send + Sync + 'static>(
             Arc::clone(&resync),
             synced_tx,
         )),
-        tokio::spawn(relays::watch(client.clone(), mostro, since, resync)),
+        tokio::spawn(relays::watch(client.clone(), registry.clone(), resync)),
         tokio::spawn(reminder_loop(
             Arc::clone(notifier),
             renotify_after,
@@ -126,6 +161,7 @@ pub async fn start<S: DmSender + Send + Sync + 'static>(
         Background {
             tasks,
             synced: synced_rx,
+            registry,
         },
     ))
 }

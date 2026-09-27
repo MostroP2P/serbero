@@ -5,6 +5,7 @@
 //! `kind 14` signed with `K_sign` and addressed to `pub(K_conv)`. Inbound
 //! messages are validated in the protocol's order (see `inbound`).
 
+pub mod channels;
 pub mod inbound;
 
 use std::sync::Mutex;

@@ -260,3 +260,29 @@ async fn the_cursor_follows_the_outer_timestamp() {
         Some(event.created_at.as_secs() as i64)
     );
 }
+
+#[tokio::test]
+async fn a_terminal_session_stores_nothing_more() {
+    let mut f = fixture();
+    sessions::set_state(
+        f.store.lock().unwrap().conn(),
+        "s1",
+        sessions::SessionState::Superseded,
+        500,
+    )
+    .unwrap();
+    let event = on_channel(&f, &f.buyer.clone(), &f.buyer.clone(), "¿sigues ahí?").await;
+
+    assert_eq!(handle(&mut f, &event), Err(Rejected::SessionEnded));
+    assert!(
+        messages::list_for_session(f.store.lock().unwrap().conn(), "s1")
+            .unwrap()
+            .is_empty()
+    );
+    let again = on_channel(&f, &f.buyer.clone(), &f.buyer.clone(), "hola").await;
+    assert_eq!(
+        handle(&mut f, &again),
+        Err(Rejected::UnknownAuthor),
+        "its channels were forgotten"
+    );
+}
