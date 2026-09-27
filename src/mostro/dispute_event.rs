@@ -63,12 +63,12 @@ pub fn parse(event: &Event, mostro: &PublicKey) -> Result<DisputeEvent> {
 }
 
 /// Final statuses: a solver or the parties closed the dispute.
-pub fn is_final(status: DisputeStatus) -> bool {
+pub fn is_final(status: &DisputeStatus) -> bool {
     !matches!(status, DisputeStatus::Initiated | DisputeStatus::InProgress)
 }
 
 /// Final statuses reached without a solver's decision.
-pub fn resolved_by_parties(status: DisputeStatus) -> bool {
+pub fn resolved_by_parties(status: &DisputeStatus) -> bool {
     matches!(
         status,
         DisputeStatus::Released | DisputeStatus::CooperativelyCanceled
@@ -279,11 +279,11 @@ mod tests {
 
     #[test]
     fn classifies_final_statuses() {
-        assert!(!is_final(DisputeStatus::Initiated));
-        assert!(!is_final(DisputeStatus::InProgress));
-        assert!(is_final(DisputeStatus::Settled) && !resolved_by_parties(DisputeStatus::Settled));
-        assert!(is_final(DisputeStatus::SellerRefunded));
-        assert!(resolved_by_parties(DisputeStatus::Released));
-        assert!(resolved_by_parties(DisputeStatus::CooperativelyCanceled));
+        assert!(!is_final(&DisputeStatus::Initiated));
+        assert!(!is_final(&DisputeStatus::InProgress));
+        assert!(is_final(&DisputeStatus::Settled) && !resolved_by_parties(&DisputeStatus::Settled));
+        assert!(is_final(&DisputeStatus::SellerRefunded));
+        assert!(resolved_by_parties(&DisputeStatus::Released));
+        assert!(resolved_by_parties(&DisputeStatus::CooperativelyCanceled));
     }
 }

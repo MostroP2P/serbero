@@ -79,22 +79,42 @@ pub fn get(conn: &Connection, dispute_id: &str) -> Result<Option<Dispute>> {
     .transpose()
 }
 
-/// Records a newer dispute event revision. Revisions whose `created_at` is
-/// not newer than the stored one are ignored (relays may deliver them out
-/// of order). Returns `true` if the status was updated.
+/// Result of applying a dispute event revision.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StatusUpdate {
+    Applied,
+    /// The stored revision is as new or newer; relays may deliver
+    /// revisions out of order.
+    Stale,
+    NotFound,
+}
+
+/// Records a dispute event revision if it is newer than the stored one.
 pub fn apply_status(
     conn: &Connection,
     dispute_id: &str,
     status: &str,
     status_at: i64,
     now: i64,
-) -> Result<bool> {
+) -> Result<StatusUpdate> {
     let updated = conn.execute(
         "UPDATE disputes SET status = ?2, status_at = ?3, updated_at = ?4
          WHERE dispute_id = ?1 AND status_at < ?3",
         params![dispute_id, status, status_at, now],
     )?;
-    Ok(updated == 1)
+    if updated == 1 {
+        return Ok(StatusUpdate::Applied);
+    }
+    let exists: bool = conn.query_row(
+        "SELECT EXISTS (SELECT 1 FROM disputes WHERE dispute_id = ?1)",
+        [dispute_id],
+        |row| row.get(0),
+    )?;
+    Ok(if exists {
+        StatusUpdate::Stale
+    } else {
+        StatusUpdate::NotFound
+    })
 }
 
 pub fn set_lifecycle(
@@ -247,9 +267,9 @@ mod tests {
         let store = Store::open_in_memory().unwrap();
         insert_if_new(store.conn(), &new_dispute("d1", 900)).unwrap();
 
-        let updated = apply_status(store.conn(), "d1", "in-progress", 950, 1_100).unwrap();
+        let update = apply_status(store.conn(), "d1", "in-progress", 950, 1_100).unwrap();
 
-        assert!(updated);
+        assert_eq!(update, StatusUpdate::Applied);
         let dispute = get(store.conn(), "d1").unwrap().unwrap();
         assert_eq!(dispute.status, "in-progress");
         assert_eq!(dispute.status_at, 950);
@@ -265,8 +285,18 @@ mod tests {
         let older = apply_status(store.conn(), "d1", "in-progress", 950, 1_200).unwrap();
         let equal = apply_status(store.conn(), "d1", "in-progress", 960, 1_200).unwrap();
 
-        assert!(!older && !equal);
+        assert_eq!(older, StatusUpdate::Stale);
+        assert_eq!(equal, StatusUpdate::Stale);
         assert_eq!(get(store.conn(), "d1").unwrap().unwrap().status, "settled");
+    }
+
+    #[test]
+    fn revision_for_unknown_dispute_is_not_found() {
+        let store = Store::open_in_memory().unwrap();
+
+        let update = apply_status(store.conn(), "nope", "settled", 950, 1_100).unwrap();
+
+        assert_eq!(update, StatusUpdate::NotFound);
     }
 
     #[test]
