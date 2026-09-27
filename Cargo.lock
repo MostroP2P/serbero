@@ -1463,6 +1463,7 @@ dependencies = [
 name = "serbero"
 version = "0.1.0"
 dependencies = [
+ "futures-util",
  "mostro-core",
  "nostr-sdk",
  "rusqlite",
@@ -1473,6 +1474,7 @@ dependencies = [
  "toml",
  "tracing",
  "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]
