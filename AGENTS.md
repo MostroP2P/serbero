@@ -21,8 +21,19 @@ implementation plan is [`docs/plan.md`](docs/plan.md).
 ## Language
 
 - **Everything in the repository is in English**: code, identifiers, comments,
-  docs, commit messages, PR titles and descriptions, issues, log messages, and
-  messages sent to solvers.
+  doc comments, test names, file and branch names, configuration keys and
+  sample values, docs, specs, commit messages, PR titles and descriptions,
+  review replies, issues, log and error messages, and messages sent to
+  solvers. This holds even when the person asking for the change writes in
+  another language.
+- **The only non-English text allowed** is:
+  - party-facing translations in `messages/<code>.toml` (one file per
+    language, reviewed by a native speaker);
+  - party messages inside test fixtures and golden cases, because they must
+    reproduce what real users write.
+
+  Everything around them (keys, comments, labels, file names) stays in
+  English.
 - **The judge is always used in English.** Every question, instruction,
   option, and criterion sent to Jev (or any other judge provider) is written in
   English. Party messages go into the
