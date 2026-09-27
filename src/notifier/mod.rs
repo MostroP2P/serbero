@@ -19,8 +19,10 @@ pub struct Solver {
 
 /// Sends `text` to every solver and records each attempt as a
 /// `notification_sent` or `notification_failed` event. Returns how many
-/// DMs were delivered. Individual failures are recorded, not returned:
-/// one unreachable solver must not stop the others.
+/// DMs were delivered. Delivery failures are recorded, not returned: one
+/// unreachable solver must not stop the others. If recording an attempt
+/// fails, every solver is still tried and the first recording error is
+/// returned afterwards.
 pub async fn notify_solvers<S: DmSender>(
     store: &Mutex<Store>,
     sender: &S,
@@ -39,6 +41,7 @@ pub async fn notify_solvers<S: DmSender>(
         return Ok(0);
     }
     let mut delivered = 0;
+    let mut record_error = None;
     for solver in solvers {
         let result = sender.send_dm(solver.pubkey, text).await;
         let (kind, payload) = match &result {
@@ -64,21 +67,40 @@ pub async fn notify_solvers<S: DmSender>(
                 tracing::warn!(dispute_id, notification, solver = %solver.pubkey, error = %e, "notification failed");
             }
         }
-        let store = store
-            .lock()
-            .map_err(|_| Error::Schema("store lock poisoned".into()))?;
-        events::append(
-            store.conn(),
-            &events::NewEvent {
-                dispute_id,
-                session_id: None,
-                kind,
-                payload,
-                now,
-            },
-        )?;
+        // A failed audit write must not stop the remaining solvers from
+        // being notified; the first such error is returned at the end.
+        if let Err(e) = record_attempt(store, dispute_id, kind, payload, now) {
+            tracing::error!(dispute_id, notification, error = %e, "cannot record notification attempt");
+            record_error.get_or_insert(e);
+        }
     }
-    Ok(delivered)
+    match record_error {
+        Some(e) => Err(e),
+        None => Ok(delivered),
+    }
+}
+
+fn record_attempt(
+    store: &Mutex<Store>,
+    dispute_id: &str,
+    kind: &str,
+    payload: serde_json::Value,
+    now: i64,
+) -> Result<()> {
+    let store = store
+        .lock()
+        .map_err(|_| Error::Schema("store lock poisoned".into()))?;
+    events::append(
+        store.conn(),
+        &events::NewEvent {
+            dispute_id,
+            session_id: None,
+            kind,
+            payload,
+            now,
+        },
+    )?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -171,6 +193,20 @@ mod tests {
         assert_eq!(events[0].kind, "notification_failed");
         assert_eq!(events[0].payload["error"], "nostr error: relay rejected");
         assert_eq!(events[1].kind, "notification_sent");
+    }
+
+    #[tokio::test]
+    async fn audit_failure_does_not_skip_the_remaining_solvers() {
+        let store = Store::open_in_memory().unwrap();
+        store.conn().execute_batch("DROP TABLE events;").unwrap();
+        let store = Mutex::new(store);
+        let sender = FakeSender::default();
+        let solvers = [solver(), solver(), solver()];
+
+        let result = notify_solvers(&store, &sender, &solvers, "d1", "new_dispute", "hi", 10).await;
+
+        assert!(result.is_err());
+        assert_eq!(sender.texts().len(), 3, "every solver was still notified");
     }
 
     #[tokio::test]
