@@ -41,6 +41,7 @@ fn store_with_session(buyer: &Keys, seller: &Keys) -> Mutex<Store> {
             seller_trade_pubkey: &s,
             fiat_amount: Some("50000"),
             fiat_code: Some("ARS"),
+            payment_method: None,
             order_published_at: None,
             now: 1,
         },

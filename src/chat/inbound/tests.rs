@@ -38,6 +38,7 @@ fn fixture() -> Fixture {
             seller_trade_pubkey: &seller_hex,
             fiat_amount: None,
             fiat_code: None,
+            payment_method: None,
             order_published_at: None,
             now: 100,
         },
@@ -206,4 +207,56 @@ async fn removed_sessions_stop_being_accepted() {
     let event = on_channel(&f, &f.buyer.clone(), &f.buyer.clone(), "hola").await;
 
     assert_eq!(handle(&mut f, &event), Err(Rejected::UnknownAuthor));
+}
+
+#[tokio::test]
+async fn long_messages_are_truncated_to_the_configured_limit() {
+    let mut f = fixture();
+    f.inbox = Inbox::new(5);
+    let session = sessions::get(f.store.lock().unwrap().conn(), "s1")
+        .unwrap()
+        .unwrap();
+    f.inbox
+        .add_session(&f.serbero, &session, Instant::now())
+        .unwrap();
+    let event = on_channel(&f, &f.buyer.clone(), &f.buyer.clone(), "ñandú-envié").await;
+
+    let received = handle(&mut f, &event).unwrap();
+
+    assert_eq!(received.content, "ñandú");
+}
+
+#[test]
+fn an_uncursored_session_is_read_from_its_opening() {
+    let f = fixture();
+    let session = sessions::get(f.store.lock().unwrap().conn(), "s1")
+        .unwrap()
+        .unwrap();
+
+    let filter = Inbox::default()
+        .add_session(&f.serbero, &session, Instant::now())
+        .unwrap();
+
+    assert_eq!(
+        filter.since,
+        Some(Timestamp::from_secs(session.opened_at as u64))
+    );
+}
+
+#[tokio::test]
+async fn the_cursor_follows_the_outer_timestamp() {
+    let mut f = fixture();
+    let event = on_channel(&f, &f.buyer.clone(), &f.buyer.clone(), "hola").await;
+
+    f.inbox
+        .handle(&f.store, &event, Timestamp::now(), Instant::now())
+        .unwrap()
+        .unwrap();
+
+    let store = f.store.lock().unwrap();
+    let session = sessions::get(store.conn(), "s1").unwrap().unwrap();
+    assert_eq!(
+        session.buyer_chat_cursor,
+        Some(event.created_at.as_secs() as i64)
+    );
 }
