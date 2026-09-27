@@ -398,6 +398,7 @@ mod sessions_end {
                 seller_trade_pubkey: "s",
                 fiat_amount: None,
                 fiat_code: None,
+                payment_method: None,
                 order_published_at: None,
                 now: 1_000,
             },
@@ -441,8 +442,9 @@ mod sessions_end {
             .await
             .unwrap();
 
+        // The human's take comes after Serbero opened its session (1_000).
         let change = n
-            .handle_event(&dispute_event(&mostro, "d1", "in-progress", 300), 1_002)
+            .handle_event(&dispute_event(&mostro, "d1", "in-progress", 2_000), 2_001)
             .await
             .unwrap();
 
@@ -455,6 +457,23 @@ mod sessions_end {
             .find(|e| e.kind == "session_superseded")
             .unwrap();
         assert_eq!(ended.session_id.as_deref(), Some("s1"));
+    }
+
+    #[tokio::test]
+    async fn a_takeover_is_caught_even_if_serberos_own_take_was_missed() {
+        let mostro = Keys::generate();
+        let n = notifier(&mostro);
+        n.handle_event(&dispute_event(&mostro, "d1", "initiated", 100), 1_000)
+            .await
+            .unwrap();
+        with_session(&n);
+
+        // Only the human's later take reaches Serbero.
+        n.handle_event(&dispute_event(&mostro, "d1", "in-progress", 2_000), 2_001)
+            .await
+            .unwrap();
+
+        assert_eq!(state(&n), SessionState::Superseded);
     }
 
     #[tokio::test]

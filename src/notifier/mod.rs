@@ -41,12 +41,18 @@ pub enum Change {
 
 pub struct Notifier<S> {
     store: Arc<Mutex<Store>>,
+    gate: Arc<crate::chat::OutboundGate>,
     sender: S,
     solvers: Vec<Solver>,
     mostro: PublicKey,
 }
 
 impl<S: DmSender> Notifier<S> {
+    /// The gate chat senders must hold while sending (`chat::send_to_party`).
+    pub fn outbound_gate(&self) -> Arc<crate::chat::OutboundGate> {
+        Arc::clone(&self.gate)
+    }
+
     pub fn new(
         store: Arc<Mutex<Store>>,
         sender: S,
@@ -55,6 +61,7 @@ impl<S: DmSender> Notifier<S> {
     ) -> Self {
         Self {
             store,
+            gate: Arc::default(),
             sender,
             solvers,
             mostro,
@@ -71,7 +78,12 @@ impl<S: DmSender> Notifier<S> {
                 return Ok(Change::Unchanged);
             }
         };
-        let change = record(&self.store, &dispute, now)?;
+        // Exclusive: no party message is in flight while a revision may end
+        // a session, and none starts after it did.
+        let change = {
+            let _no_sends = self.gate.write().await;
+            record(&self.store, &dispute, now)?
+        };
         if change != Change::Unchanged {
             tracing::info!(dispute_id = %dispute.dispute_id, status = %dispute.status, ?change, "dispute event");
         }
@@ -246,14 +258,14 @@ fn transition(
 ) -> Result<Change> {
     let id = &dispute.dispute_id;
     Ok(match &dispute.status {
-        DisputeStatus::InProgress => match existing.lifecycle {
-            Lifecycle::New | Lifecycle::Notified => {
-                disputes::set_lifecycle(conn, id, Lifecycle::Taken, now)?;
-                Change::Taken
-            }
-            Lifecycle::Taken => {
-                // Only a `write` solver can take over from Serbero, so a newer
-                // take while Serbero assists means a human now owns the case.
+        DisputeStatus::InProgress => {
+            // Serbero opens its session only after its own take succeeded, so
+            // an in-progress revision newer than the session's opening is
+            // someone else's take: only a `write` solver can take over from
+            // Serbero. This holds even if Serbero's own revision was missed.
+            let taken_over = sessions::live_for_dispute(conn, id)?
+                .is_some_and(|s| dispute.revision_at > s.opened_at);
+            if taken_over {
                 end_live_session(
                     conn,
                     dispute,
@@ -261,13 +273,19 @@ fn transition(
                     "session_superseded",
                     now,
                 )?;
-                Change::TakenAgain
             }
-            Lifecycle::Resolved => Change::Updated {
-                from: existing.status,
-                to: dispute.status.clone(),
-            },
-        },
+            match existing.lifecycle {
+                Lifecycle::New | Lifecycle::Notified => {
+                    disputes::set_lifecycle(conn, id, Lifecycle::Taken, now)?;
+                    Change::Taken
+                }
+                Lifecycle::Taken => Change::TakenAgain,
+                Lifecycle::Resolved => Change::Updated {
+                    from: existing.status,
+                    to: dispute.status.clone(),
+                },
+            }
+        }
         status if dispute_event::is_final(status) => {
             disputes::set_lifecycle(conn, id, Lifecycle::Resolved, now)?;
             end_live_session(conn, dispute, SessionState::Closed, "session_closed", now)?;

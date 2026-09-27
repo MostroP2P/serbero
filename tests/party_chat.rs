@@ -89,6 +89,7 @@ async fn serbero_and_a_party_exchange_messages_through_a_relay() {
     // Outbound: Serbero asks the buyer.
     send_to_party(
         &serbero_client,
+        &serbero::chat::OutboundGate::default(),
         &store,
         &serbero,
         &session,
@@ -181,6 +182,7 @@ async fn nothing_is_sent_once_the_session_is_superseded() {
 
     let result = send_to_party(
         &client,
+        &serbero::chat::OutboundGate::default(),
         &store,
         &serbero,
         &session,
