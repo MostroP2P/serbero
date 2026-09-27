@@ -510,8 +510,9 @@ SQLite, five tables. Timestamps are Unix seconds (UTC).
 ```sql
 disputes (
   dispute_id        TEXT PRIMARY KEY,
-  initiator         TEXT NOT NULL,           -- 'buyer' | 'seller'
+  initiator         TEXT NOT NULL,           -- 'buyer' | 'seller' | 'unknown' (Mostro's flags disagree)
   status            TEXT NOT NULL,           -- Mostro dispute status
+  status_at         INTEGER NOT NULL,        -- created_at of the applied revision; older ones are ignored
   lifecycle         TEXT NOT NULL,           -- new | notified | taken | resolved
   assigned_solver   TEXT,
   first_seen_at     INTEGER NOT NULL,
