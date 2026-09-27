@@ -326,7 +326,7 @@ pub trait Judge: Send + Sync {
 
 | `provider` | Status | Notes |
 |---|---|---|
-| `typesafe` | v1 | Jev via `POST {api_base}/v1/systemone`. |
+| `typesafe` | v1 | Jev via `POST {api_base}/v1/systemone`; health check `GET {api_base}/v1/models` (validates the key, costs nothing). Retries 408, 429 and 5xx (including 529) and network errors with backoff from 0.5 s doubling to 5 s, honoring `retry-after`. |
 | `recorded` | v1 | Replays stored answers. Used by tests and for dry runs. |
 | *new vendor* | future | One file in `src/judge/providers/` implementing `Judge`; nothing else changes. |
 
