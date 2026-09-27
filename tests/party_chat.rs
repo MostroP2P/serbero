@@ -89,6 +89,7 @@ async fn serbero_and_a_party_exchange_messages_through_a_relay() {
     // Outbound: Serbero asks the buyer.
     send_to_party(
         &serbero_client,
+        &serbero::chat::OutboundGate::default(),
         &store,
         &serbero,
         &session,
@@ -158,5 +159,49 @@ async fn serbero_and_a_party_exchange_messages_through_a_relay() {
             (Direction::Out, Party::Buyer, Some("ask_buyer_sent")),
             (Direction::In, Party::Buyer, None)
         ]
+    );
+}
+
+#[tokio::test]
+async fn nothing_is_sent_once_the_session_is_superseded() {
+    let relay = MockRelay::run().await.unwrap();
+    let url = relay.url().await.to_string();
+    let (serbero, buyer, seller) = (Keys::generate(), Keys::generate(), Keys::generate());
+    let store = store_with_session(&buyer, &seller);
+    let session = sessions::get(store.lock().unwrap().conn(), "s1")
+        .unwrap()
+        .unwrap();
+    let client = serbero::nostr::connect(&[url], WAIT).await.unwrap();
+    sessions::set_state(
+        store.lock().unwrap().conn(),
+        "s1",
+        sessions::SessionState::Superseded,
+        2,
+    )
+    .unwrap();
+
+    let result = send_to_party(
+        &client,
+        &serbero::chat::OutboundGate::default(),
+        &store,
+        &serbero,
+        &session,
+        &Outbound {
+            party: Party::Seller,
+            text: "¿Te llegó el pago?",
+            template_id: Some("ask_seller_received"),
+            lang: Some("es"),
+        },
+    )
+    .await;
+
+    assert!(matches!(
+        result,
+        Err(serbero::error::Error::SessionEnded(_))
+    ));
+    assert!(
+        messages::list_for_session(store.lock().unwrap().conn(), "s1")
+            .unwrap()
+            .is_empty()
     );
 }

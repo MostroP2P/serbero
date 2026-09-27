@@ -16,7 +16,13 @@ use crate::error::{Error, Result};
 use crate::mostro::chat::ChannelKeys;
 use crate::store::Store;
 use crate::store::messages::{self, Direction, NewMessage};
-use crate::store::sessions::{Party, Session};
+use crate::store::sessions::{self, Party, Session};
+
+/// Serializes party messages with session-ending revisions: senders hold it
+/// shared from the state check until the message is recorded, and the
+/// notifier holds it exclusively while applying a revision. A session that
+/// ended can therefore never receive a message sent after the fact.
+pub type OutboundGate = tokio::sync::RwLock<()>;
 
 /// The channel between Serbero and one party of a session.
 pub fn channel(serbero: &Keys, session: &Session, party: Party) -> Result<ChannelKeys> {
@@ -39,11 +45,25 @@ pub struct Outbound<'a> {
 /// accepts the event; nothing is recorded then. Returns the inner event id.
 pub async fn send_to_party(
     client: &Client,
+    gate: &OutboundGate,
     store: &Mutex<Store>,
     serbero: &Keys,
     session: &Session,
     message: &Outbound<'_>,
 ) -> Result<EventId> {
+    let _sending = gate.read().await;
+    // A human may have taken over since the caller read the session: re-read
+    // it and send nothing once it ended (`docs/spec.md` §6, step 4).
+    let current = {
+        let store = store
+            .lock()
+            .map_err(|_| Error::Schema("store lock poisoned".into()))?;
+        sessions::get(store.conn(), &session.session_id)?
+    };
+    match current {
+        Some(current) if !current.state.is_terminal() => {}
+        _ => return Err(Error::SessionEnded(session.session_id.clone())),
+    }
     let keys = channel(serbero, session, message.party)?;
     let event = wrap_chat_message(serbero, keys.conv(), keys.sign(), message.text)
         .await
