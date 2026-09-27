@@ -340,11 +340,23 @@ new ──notify──▶ notified ──(s=in-progress)──▶ taken ──(t
                    └─┘ reminder every `renotify_after`
 ```
 
-0. **Start.** Before any request, open the relay notification stream so
-   nothing can be missed. Fetch the disputes the relays already store, keep
-   the newest revision of each (relays may disagree), and apply them oldest
-   first. Only then subscribe to new dispute events, from the moment the sync
-   started. A dispute whose newest revision is already past `initiated` (it
+0. **Start.** Nothing relay-bound runs before the live subscription, so a
+   slow relay can never delay a new dispute:
+   - Open the relay notification stream, then subscribe at once to new
+     dispute events (fixed subscription id, from the start time).
+   - In the background, fetch the disputes the relays already store, keep the
+     newest revision of each (NIP-01: later `created_at`, then lowest id;
+     relays may disagree), and apply them oldest first. This fetch waits for
+     every relay's EOSE, bounded at 15 s: taking the first relay's answer is
+     not safe for a backlog of many disputes, because a relay holding a stale
+     `initiated` revision would notify solvers about a dispute already taken.
+     Live events are applied meanwhile; stale backlog revisions lose to them.
+   - Repeat the backlog sync every 10 minutes and whenever a relay
+     (re)connects, so a relay that was slow, down, or silently not delivering
+     cannot hide a dispute for long.
+   - Every few seconds, check relay status; when a relay becomes connected,
+     re-send the subscription to it (defensive: nostr-sdk can drop a refused
+     REQ from a relay's registry). A dispute whose newest revision is already past `initiated` (it
    was opened and taken or resolved while Serbero was offline, or before
    Serbero was installed) is recorded without notifying anyone: solvers only
    hear about disputes that are waiting for them.
@@ -357,7 +369,8 @@ new ──notify──▶ notified ──(s=in-progress)──▶ taken ──(t
 2. **Notify.** Send the "new dispute" DM to every configured solver. Record each
    attempt as an event. Move to `notified` if at least one send succeeded.
 3. **Remind.** A timer in its own task checks every minute, starting one minute
-   after the startup sync, so reminder delivery never delays dispute events.
+   after the first backlog sync, so reminder delivery never delays dispute
+   events and reminders never act on state the relays have not confirmed.
    A dispute still `notified` `renotify_after` after its last notification gets
    a reminder; a dispute still `new` (every first DM failed) gets its first
    notification again. Each dispute is re-read just before sending, so one
@@ -711,7 +724,8 @@ Serbero logs an operator-actionable error and runs notification only.
 
 | Failure | Behavior |
 |---|---|
-| A relay drops | `nostr-sdk` reconnects; other relays keep serving. |
+| A relay drops | `nostr-sdk` reconnects; other relays keep serving. On reconnect the dispute subscription is re-sent to it and the backlog is re-synced. |
+| A relay is slow or silent | It never delays startup or live disputes; the backlog sync gives up on it after 15 s and the periodic resync picks up what it held back. |
 | A relay does not store `kind 14` | Offline party messages are lost on that relay. Operators must use relays verified to store them ([§5.1](#51-mostro-protocol)). |
 | Chat flood from a party | Per-conversation rate limit drops excess before decryption; sustained flooding hands off with `flood`. |
 | All relays drop | Retries continue; notifications resume on reconnect. |
