@@ -30,10 +30,13 @@ implementation plan is [`docs/plan.md`](docs/plan.md).
   - party-facing translations in `messages/<code>.toml` (one file per
     language, reviewed by a native speaker);
   - party messages inside test fixtures and golden cases, because they must
-    reproduce what real users write.
+    reproduce what real users write;
+  - verbatim party quotes inside solver messages (briefs, transcripts,
+    updates), which stay in the language the party wrote them in, because the
+    solver must see exactly what was said.
 
-  Everything around them (keys, comments, labels, file names) stays in
-  English.
+  Everything around them (keys, comments, labels, file names, the solver
+  message's own wording) stays in English.
 - **The judge is always used in English.** Every question, instruction,
   option, and criterion sent to Jev (or any other judge provider) is written in
   English. Party messages go into the
