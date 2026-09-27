@@ -612,6 +612,7 @@ sessions (
   seller_trade_pubkey TEXT NOT NULL,
   fiat_amount         TEXT,
   fiat_code           TEXT,
+  payment_method      TEXT,                  -- from SolverDisputeInfo; part of the judge's state
   order_published_at  INTEGER,               -- order creation time (published_at tag), if known
   buyer_lang          TEXT,
   seller_lang         TEXT,

@@ -39,6 +39,7 @@ pub struct Session {
     pub seller_trade_pubkey: String,
     pub fiat_amount: Option<String>,
     pub fiat_code: Option<String>,
+    pub payment_method: Option<String>,
     pub order_published_at: Option<i64>,
     pub buyer_lang: Option<String>,
     pub seller_lang: Option<String>,
@@ -75,6 +76,8 @@ pub struct NewSession<'a> {
     pub seller_trade_pubkey: &'a str,
     pub fiat_amount: Option<&'a str>,
     pub fiat_code: Option<&'a str>,
+    /// As the take response gave it (`SolverDisputeInfo::payment_method`).
+    pub payment_method: Option<&'a str>,
     pub order_published_at: Option<i64>,
     pub now: i64,
 }
@@ -85,8 +88,8 @@ pub fn insert(conn: &Connection, session: &NewSession<'_>) -> Result<bool> {
     let result = conn.execute(
         "INSERT INTO sessions
              (session_id, dispute_id, state, buyer_trade_pubkey, seller_trade_pubkey,
-              fiat_amount, fiat_code, order_published_at, opened_at, updated_at)
-         VALUES (?1, ?2, 'opening', ?3, ?4, ?5, ?6, ?7, ?8, ?8)",
+              fiat_amount, fiat_code, payment_method, order_published_at, opened_at, updated_at)
+         VALUES (?1, ?2, 'opening', ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9)",
         params![
             session.session_id,
             session.dispute_id,
@@ -94,6 +97,7 @@ pub fn insert(conn: &Connection, session: &NewSession<'_>) -> Result<bool> {
             session.seller_trade_pubkey,
             session.fiat_amount,
             session.fiat_code,
+            session.payment_method,
             session.order_published_at,
             session.now,
         ],
@@ -111,7 +115,7 @@ pub fn insert(conn: &Connection, session: &NewSession<'_>) -> Result<bool> {
 }
 
 const COLUMNS: &str = "session_id, dispute_id, state, buyer_trade_pubkey, seller_trade_pubkey,
-     fiat_amount, fiat_code, order_published_at, buyer_lang, seller_lang,
+     fiat_amount, fiat_code, payment_method, order_published_at, buyer_lang, seller_lang,
      buyer_chat_cursor, seller_chat_cursor, rounds, handoff_reason, opened_at, updated_at";
 
 pub fn get(conn: &Connection, session_id: &str) -> Result<Option<Session>> {
@@ -201,15 +205,16 @@ fn from_row(row: &Row<'_>) -> rusqlite::Result<Result<Session>> {
         seller_trade_pubkey: row.get(4)?,
         fiat_amount: row.get(5)?,
         fiat_code: row.get(6)?,
-        order_published_at: row.get(7)?,
-        buyer_lang: row.get(8)?,
-        seller_lang: row.get(9)?,
-        buyer_chat_cursor: row.get(10)?,
-        seller_chat_cursor: row.get(11)?,
-        rounds: row.get(12)?,
-        handoff_reason: row.get(13)?,
-        opened_at: row.get(14)?,
-        updated_at: row.get(15)?,
+        payment_method: row.get(7)?,
+        order_published_at: row.get(8)?,
+        buyer_lang: row.get(9)?,
+        seller_lang: row.get(10)?,
+        buyer_chat_cursor: row.get(11)?,
+        seller_chat_cursor: row.get(12)?,
+        rounds: row.get(13)?,
+        handoff_reason: row.get(14)?,
+        opened_at: row.get(15)?,
+        updated_at: row.get(16)?,
     }))
 }
 
@@ -295,6 +300,7 @@ pub(crate) mod testing {
             seller_trade_pubkey: "seller-trade",
             fiat_amount: Some("50000"),
             fiat_code: Some("ARS"),
+            payment_method: Some("Mercado Pago"),
             order_published_at: Some(90),
             now: 200,
         }
@@ -315,6 +321,7 @@ mod tests {
         assert_eq!(session.state, SessionState::Opening);
         assert_eq!(session.trade_pubkey(Party::Seller), "seller-trade");
         assert_eq!(session.fiat_code.as_deref(), Some("ARS"));
+        assert_eq!(session.payment_method.as_deref(), Some("Mercado Pago"));
         assert_eq!(session.order_published_at, Some(90));
         assert_eq!(session.rounds, 0);
     }
