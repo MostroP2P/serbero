@@ -36,7 +36,21 @@ scripts/staging-ortsom.sh            # or: scripts/staging-ortsom.sh /path/to/or
 
 The script reads the stack's identities from Ortsom's files (never printing
 them) and runs `tests/staging_ortsom.rs`, which the default `cargo test`
-skips.
+skips. It runs Ortsom's `dispute_by_buyer` by default. To also exercise
+party replies, run Ortsom's `dispute_answers_external_solver`, which Ortsom
+skips unless its local config declares how long to wait for an external
+solver:
+
+```sh
+# in the Ortsom checkout that will run the scenario, gitignored:
+printf '\n[daemon_limits]\nexternal_solver_wait_secs = 60\n' >> ortsom.regtest.local.toml
+
+SERBERO_STAGING_SCENARIO=dispute_answers_external_solver scripts/staging-ortsom.sh
+# ORTSOM_RUN_DIR=/path/to/another/ortsom/worktree runs the scenario from there
+```
+
+In that scenario the seller opens the dispute, and both parties answer each
+message from the external solver with `ortsom-ack: <received text>`.
 
 ## What it checks
 
@@ -47,8 +61,10 @@ skips.
 4. Serbero takes the dispute and receives `SolverDisputeInfo` (buyer and
    seller trade keys, amount, payment method).
 5. Serbero reads the order's `f` and `published_at`.
-6. Serbero writes to the buyer on the dispute chat.
-7. Ortsom's teardown has its `write` solver take the dispute over and cancel
+6. Serbero writes to the buyer and the seller on the dispute chat.
+7. With `dispute_answers_external_solver`: both parties' replies arrive,
+   pass the protocol's inbound validation, and are stored.
+8. Ortsom's teardown has its `write` solver take the dispute over and cancel
    it: Serbero supersedes its session and records the resolution.
 
 ## Checklist (T2.8)
@@ -57,7 +73,8 @@ skips.
 |---|---|
 | Take | Verified by the staging test |
 | Send | Verified by the staging test (the relay accepts the message) |
-| Receive | **Not yet in staging.** Ortsom's clients do not answer the solver chat. Covered by `tests/party_chat.rs` through a relay; staging needs an Ortsom scenario where a party replies to the solver |
+| Receive | Verified with Ortsom's `dispute_answers_external_solver`: both parties' replies received, validated and stored |
 | Human takeover | Verified by the staging test |
 
-First run: 2026-09-27, `mostrod` 0.18.8 (`main` @ `1e793aa`), all checks pass.
+First run: 2026-09-27, `mostrod` 0.18.8 (`main` @ `1e793aa`), all checks pass,
+with both `dispute_by_buyer` and `dispute_answers_external_solver`.

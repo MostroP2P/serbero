@@ -27,8 +27,14 @@ export SERBERO_STAGING_RELAY="ws://127.0.0.1:7000"
 export SERBERO_STAGING_MOSTRO_PUBKEY="$(toml_value "$local_toml" mostro pubkey)"
 export SERBERO_STAGING_SOLVER_NSEC="$(toml_value "$local_toml" solver nsec)"
 export SERBERO_STAGING_DAEMON_NSEC="$(toml_value "$settings" nostr nsec_privkey)"
-export SERBERO_STAGING_ORTSOM_DIR="$ORTSOM_DIR"
-export SERBERO_STAGING_ORTSOM_BIN="${ORTSOM_BIN:-$ORTSOM_DIR/target/release/ortsom}"
+# Where Ortsom runs its scenario: the stack's checkout by default, or another
+# worktree of it (ORTSOM_RUN_DIR) that shares the same stack configuration.
+RUN_DIR="${ORTSOM_RUN_DIR:-$ORTSOM_DIR}"
+export SERBERO_STAGING_ORTSOM_DIR="$RUN_DIR"
+export SERBERO_STAGING_ORTSOM_BIN="${ORTSOM_BIN:-$RUN_DIR/target/release/ortsom}"
+# dispute_by_buyer (default) or dispute_answers_external_solver, where both
+# parties reply to Serbero on the dispute chat.
+export SERBERO_STAGING_SCENARIO="${SERBERO_STAGING_SCENARIO:-dispute_by_buyer}"
 
 for v in SERBERO_STAGING_MOSTRO_PUBKEY SERBERO_STAGING_SOLVER_NSEC SERBERO_STAGING_DAEMON_NSEC; do
   [[ -n "${!v}" ]] || { echo "could not read $v from the Ortsom stack files" >&2; exit 1; }

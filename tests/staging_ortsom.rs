@@ -130,10 +130,13 @@ async fn serbero_handles_a_real_dispute_end_to_end() {
             .collect()
     };
 
-    // A real dispute, opened by Ortsom's buyer.
+    // A real dispute, opened by an Ortsom scenario. With
+    // dispute_answers_external_solver both parties also answer Serbero.
+    let scenario = env("SERBERO_STAGING_SCENARIO");
+    let expect_replies = scenario == "dispute_answers_external_solver";
     let ortsom_dir = env("SERBERO_STAGING_ORTSOM_DIR");
     let ortsom = tokio::process::Command::new(env("SERBERO_STAGING_ORTSOM_BIN"))
-        .args(["run", "dispute_by_buyer"])
+        .args(["run", &scenario])
         .current_dir(&ortsom_dir)
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -210,6 +213,54 @@ async fn serbero_handles_a_real_dispute_end_to_end() {
     let session = sessions::get(store.lock().unwrap().conn(), "staging")
         .unwrap()
         .unwrap();
+
+    // Listen on both parties' channels before writing to them.
+    let mut chat_notifications = client.notifications();
+    let mut inbox = serbero::chat::inbound::Inbox::default();
+    let chat_filter = inbox
+        .add_session(&serbero, &session, std::time::Instant::now())
+        .unwrap();
+    client
+        .subscribe(chat_filter)
+        .with_id(SubscriptionId::new("serbero-chat-staging"))
+        .await
+        .unwrap();
+    let replies = Arc::new(Mutex::new(Vec::new()));
+    let (chat_store, chat_replies) = (Arc::clone(&store), Arc::clone(&replies));
+    tokio::spawn(async move {
+        while let Some(notification) = chat_notifications.next().await {
+            if let ClientNotification::Event { event, .. } = notification
+                && let Ok(Ok(received)) = inbox.handle(
+                    &chat_store,
+                    &event,
+                    Timestamp::now(),
+                    std::time::Instant::now(),
+                )
+            {
+                println!(
+                    "received from the {}: {:?}",
+                    received.party, received.content
+                );
+                chat_replies.lock().unwrap().push(received);
+            }
+        }
+    });
+
+    send_to_party(
+        &client,
+        &notifier.outbound_gate(),
+        &store,
+        &serbero,
+        &session,
+        &Outbound {
+            party: Party::Seller,
+            text: "Has the payment for this order arrived in your account?",
+            template_id: Some("ask_seller_received"),
+            lang: Some("en"),
+        },
+    )
+    .await
+    .expect("could not write to the seller");
     send_to_party(
         &client,
         &notifier.outbound_gate(),
@@ -225,7 +276,28 @@ async fn serbero_handles_a_real_dispute_end_to_end() {
     )
     .await
     .expect("could not write to the buyer");
-    println!("wrote to the buyer on the dispute chat");
+    println!("wrote to the buyer and the seller on the dispute chat");
+
+    if expect_replies {
+        let received = wait_until(Duration::from_secs(90), || {
+            let replies = replies.lock().unwrap();
+            let from = |party| {
+                replies
+                    .iter()
+                    .any(|r: &serbero::chat::inbound::Received| r.party == party)
+            };
+            (from(Party::Buyer) && from(Party::Seller)).then(|| replies.clone())
+        })
+        .await;
+        for reply in &received {
+            assert!(
+                reply.content.starts_with("ortsom-ack: "),
+                "unexpected reply {:?}",
+                reply.content
+            );
+        }
+        println!("both parties answered on the dispute chat");
+    }
 
     // Ortsom's teardown hands the dispute to its write solver.
     let output = ortsom.wait_with_output().await.unwrap();
