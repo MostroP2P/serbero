@@ -3,7 +3,9 @@
 
 pub mod disputes;
 pub mod events;
+pub mod messages;
 pub mod migrations;
+pub mod sessions;
 
 use std::path::Path;
 use std::time::Duration;

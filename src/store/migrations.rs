@@ -13,10 +13,16 @@ pub struct Migration {
 }
 
 /// Every migration Serbero ships, in order.
-pub const MIGRATIONS: &[Migration] = &[Migration {
-    name: "disputes_and_events",
-    sql: include_str!("sql/0001_disputes_and_events.sql"),
-}];
+pub const MIGRATIONS: &[Migration] = &[
+    Migration {
+        name: "disputes_and_events",
+        sql: include_str!("sql/0001_disputes_and_events.sql"),
+    },
+    Migration {
+        name: "sessions_and_messages",
+        sql: include_str!("sql/0002_sessions_and_messages.sql"),
+    },
+];
 
 /// Brings `conn` up to the latest version in `migrations`. Each migration
 /// runs in its own transaction together with its version record, so a
