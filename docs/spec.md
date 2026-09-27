@@ -179,8 +179,9 @@ uses `mostro-core` for every wire format, so it never re-implements Mostro
 cryptography. The facts below are the ones Serbero depends on.
 
 **Supported Mostro versions.** Serbero targets the first `mostrod` release
-after v0.18.8 and later ones: protocol v2 only, and order events carrying
-`published_at` (`mostrod` #1000). Older nodes are not supported.
+after v0.18.8 and later ones: protocol v2 only, and order and dispute events
+carrying `published_at` (`mostrod` #1000 for orders, #1001 for disputes).
+Older nodes are not supported.
 
 **Transport to the daemon.** Serbero speaks only Mostro protocol v2: NIP-44
 direct messages (`kind 14`, message `version: 2`, NIP-40 `expiration` tag),
@@ -192,10 +193,11 @@ dispute events.
 
 **Dispute events.** `kind 38386`, authored by the Mostro node, addressable by
 `d` = dispute id. Tags: `s` (status), `initiator` (`buyer` | `seller`),
-`created_at` (dispute open time, identical in every revision; emitted by
-`mostrod`'s `create_dispute_event_tags` although the protocol's example omits
-it), `y` (platform name), `z = dispute`. Revisions are ordered by the event's
-own `created_at`, which Mostro bumps on every status change. There is
+`published_at` (when the dispute was opened, in Unix seconds; identical in
+every revision; `mostrod` #1001 renamed it from the former `created_at` tag,
+matching order events), `y` (platform name), `z = dispute`. Revisions are
+ordered by the event's own `created_at`, which Mostro bumps on every status
+change; `published_at` is never used for ordering. There is
 no tag naming the solver, so Serbero filters by **author** (the configured
 Mostro pubkey) and learns who took a dispute only from its own actions.
 
@@ -217,9 +219,10 @@ Mostro pubkey) and learns who took a dispute only from its own actions.
 Supported nodes always publish both tags. An order event missing either one
 does not follow the protocol: Serbero logs it and treats the order facts as
 unknown. `published_at` is never taken from the event's own `created_at`,
-which is the time of the latest revision. Dispute events are different: they keep their
-`created_at` tag for the dispute's open time (see above), and Serbero reads
-each tag only from the event kind that defines it.
+which is the time of the latest revision. Dispute events use the same
+`published_at` tag for the dispute's open time (see above). A `created_at`
+tag on either kind comes from a node older than Serbero supports and is
+ignored.
 
 **Taking a dispute.** Serbero sends `admin-take-dispute`; Mostro answers
 `admin-took-dispute` with `Payload::Dispute(id, SolverDisputeInfo)` (order id,
@@ -340,8 +343,8 @@ new ──notify──▶ notified ──(s=in-progress)──▶ taken ──(t
    pubkey with `z = dispute` ([§5.1](#51-mostro-protocol)). Insert by
    `dispute_id` with `ON CONFLICT DO NOTHING`; a duplicate is a no-op. Only the
    newest revision of each dispute is applied, ordered by the event's own
-   `created_at` (the `created_at` tag is the dispute's open time and stays the
-   same across revisions).
+   `created_at` (the `published_at` tag is the dispute's open time and stays
+   the same across revisions).
 2. **Notify.** Send the "new dispute" DM to every configured solver. Record each
    attempt as an event. Move to `notified` if at least one send succeeded.
 3. **Remind.** A timer re-sends to all solvers for disputes still `notified`
