@@ -178,6 +178,10 @@ Serbero follows the [Mostro protocol](https://mostro.network/protocol/) and
 uses `mostro-core` for every wire format, so it never re-implements Mostro
 cryptography. The facts below are the ones Serbero depends on.
 
+**Supported Mostro versions.** Serbero targets the first `mostrod` release
+after v0.18.8 and later ones: protocol v2 only, and order events carrying
+`published_at` (`mostrod` #1000). Older nodes are not supported.
+
 **Transport to the daemon.** Serbero speaks only Mostro protocol v2: NIP-44
 direct messages (`kind 14`, message `version: 2`, NIP-40 `expiration` tag),
 built and parsed with `mostro-core`, honouring the node's proof-of-work tags.
@@ -205,13 +209,15 @@ Mostro pubkey) and learns who took a dispute only from its own actions.
 **Order events.** `kind 38383`, authored by the Mostro node, addressable by
 `d` = order id. Serbero reads two tags from the order behind a dispute:
 
-| Tag | Meaning | If absent |
-|---|---|---|
-| `f` | Fiat currency code (ISO 4217). | Templates use their `_noamount` form. |
-| `published_at` | When the order was created, in Unix seconds (NIP-69; named as in NIP-23). The same value in every revision of the order. | Omitted from the brief. Nodes released before `mostrod` #1000 do not publish it. |
+| Tag | Meaning |
+|---|---|
+| `f` | Fiat currency code (ISO 4217). |
+| `published_at` | When the order was created, in Unix seconds (NIP-69; named as in NIP-23). The same value in every revision of the order. |
 
-`published_at` is never taken from the event's own `created_at`, which is the
-time of the latest revision. Dispute events are different: they keep their
+Supported nodes always publish both tags. An order event missing either one
+does not follow the protocol: Serbero logs it and treats the order facts as
+unknown. `published_at` is never taken from the event's own `created_at`,
+which is the time of the latest revision. Dispute events are different: they keep their
 `created_at` tag for the dispute's open time (see above), and Serbero reads
 each tag only from the event kind that defines it.
 
@@ -376,8 +382,9 @@ deterministic; no Jev call happens before the take.
    `SolverDisputeInfo` carries `fiat_amount` and `payment_method` but not the
    currency or the order's creation time. Both are read from the order's public
    event (`kind 38383`, `d` = the order id from `SolverDisputeInfo.id`, tags `f`
-   and `published_at`; see above). If the event cannot be fetched, templates
-   use their `_noamount` form and the brief omits the order's age. Derive each party's chat keys
+   and `published_at`; see above). If the event cannot be fetched from the
+   relays, templates use their `_noamount` form and the brief omits the
+   order's age; the session goes on. Derive each party's chat keys
    (`K_conv`, `K_sign`) from Serbero's key and the party's trade pubkey
    ([§5.1](#51-mostro-protocol)). The keys are never stored: they are
    re-derived from the trade pubkeys at startup.
