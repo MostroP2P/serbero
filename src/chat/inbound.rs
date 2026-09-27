@@ -34,9 +34,6 @@ const RATE_BURST: f64 = 60.0;
 /// Outer event ids remembered to drop duplicate relay deliveries cheaply.
 const SEEN_OUTER_CAPACITY: usize = 4_096;
 
-/// How far back a new channel's subscription starts when it has no cursor.
-const INITIAL_LOOKBACK_SECS: u64 = 7 * 24 * 60 * 60;
-
 /// A message from a party, accepted and stored.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Received {
@@ -67,14 +64,33 @@ struct Channel {
     bucket: TokenBucket,
 }
 
+/// Default for `[mediation].max_message_chars`.
+pub const DEFAULT_MAX_MESSAGE_CHARS: usize = 2_000;
+
 /// Every live chat channel, keyed by its author, `pub(K_sign)`.
-#[derive(Default)]
 pub struct Inbox {
     channels: HashMap<PublicKey, Channel>,
     seen_outer: SeenSet,
+    max_message_chars: usize,
+}
+
+impl Default for Inbox {
+    fn default() -> Self {
+        Self::new(DEFAULT_MAX_MESSAGE_CHARS)
+    }
 }
 
 impl Inbox {
+    /// An empty inbox that truncates stored text at `max_message_chars`
+    /// (`[mediation].max_message_chars`, `docs/spec.md` §7.3).
+    pub fn new(max_message_chars: usize) -> Self {
+        Self {
+            channels: HashMap::new(),
+            seen_outer: SeenSet::default(),
+            max_message_chars,
+        }
+    }
+
     /// Registers both channels of a session. Returns their subscription
     /// filter: the two authors, from the oldest stored cursor on.
     pub fn add_session(
@@ -102,18 +118,14 @@ impl Inbox {
                 },
             );
         }
+        // A party with no cursor yet has sent nothing Serbero stored, so its
+        // channel is read from the session's opening; replies sent while
+        // Serbero was down are never cut off by a rolling window.
         let since = [session.buyer_chat_cursor, session.seller_chat_cursor]
             .into_iter()
-            .map(|c| c.map_or(0, |c| c.max(0) as u64))
+            .map(|c| c.unwrap_or(session.opened_at).max(0) as u64)
             .min()
             .unwrap_or(0);
-        let since = if since == 0 {
-            Timestamp::now()
-                .as_secs()
-                .saturating_sub(INITIAL_LOOKBACK_SECS)
-        } else {
-            since
-        };
         Ok(Filter::new()
             .kind(Kind::PrivateDirectMessage)
             .authors(authors)
@@ -157,6 +169,7 @@ impl Inbox {
             Err(e) => return Ok(Err(Rejected::Invalid(e.to_string()))),
         };
         let (content, attachments) = describe(&message.content);
+        let content = truncate(&content, self.max_message_chars);
         let created_at = message.created_at.as_secs() as i64;
         let store = store
             .lock()
@@ -179,9 +192,11 @@ impl Inbox {
         if !stored {
             return Ok(Err(Rejected::DuplicateInner));
         }
-        // The cursor never passes Serbero's own clock: a peer setting both
+        // Relays filter `since` on the outer `created_at`, so that is what the
+        // cursor tracks; the inner time only orders the transcript. The
+        // cursor never passes Serbero's own clock: a peer setting both
         // timestamps in the future must not blind the subscription.
-        let cursor = created_at.min(local_now.as_secs() as i64);
+        let cursor = (event.created_at.as_secs() as i64).min(local_now.as_secs() as i64);
         sessions::advance_chat_cursor(
             store.conn(),
             &channel.session_id,
@@ -216,6 +231,14 @@ fn describe(content: &str) -> (String, u32) {
             (format!("[{kind} attachment]"), 1)
         }
         _ => (content.to_owned(), 0),
+    }
+}
+
+/// Keeps at most `max` characters, cutting on a character boundary.
+fn truncate(text: &str, max: usize) -> String {
+    match text.char_indices().nth(max) {
+        Some((cut, _)) => text[..cut].to_owned(),
+        None => text.to_owned(),
     }
 }
 
