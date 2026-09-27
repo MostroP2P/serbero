@@ -297,9 +297,13 @@ async fn a_timeout_is_unavailable() {
 
 #[tokio::test]
 async fn a_network_failure_is_unavailable() {
-    let server = MockServer::start().await;
-    let config = config(&server);
-    drop(server);
+    // Port 1 is reserved and nothing listens on it; a dropped mock server's
+    // port could be reused by a test running in parallel.
+    let config = JudgeConfig {
+        api_base: "http://127.0.0.1:1".into(),
+        timeout: Duration::from_millis(500),
+        ..JudgeConfig::default()
+    };
 
     let err = TypeSafeJudge::new(&config, KEY)
         .unwrap()
