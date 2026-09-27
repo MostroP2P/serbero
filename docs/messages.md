@@ -16,8 +16,11 @@ quotes. No text is generated at runtime.
 - The language is the party's detected language
   ([judgments.md §3](judgments.md#3-from-answers-to-facts)), or
   `default_language` until one is detected.
-- The catalog lives in `messages/catalog.toml`, embedded at build time, one
-  table per template id with one key per language.
+- The catalog is one file per language, `messages/<code>.toml`, embedded at
+  build time ([spec.md §7.7](spec.md#77-languages)). Each file holds the
+  language's English name, every template keyed by template id, and the
+  language's word lists for the rules in §4. Below, each template is shown in
+  the three initial languages.
 
 ## 2. Party templates
 
@@ -259,6 +262,7 @@ Rendered from the last turn's facts and the brief request
 Dispute <dispute_id> · handed off: conflicting_claims
 Topic: payment_not_confirmed (0.91) · rounds: 2 · duration: 14 min
 Order: 50.000 ARS via Mercado Pago · created 3 h 20 min before the dispute
+Languages: buyer es · seller other (not enabled; addressed in en)
 
 Buyer — says sent (0.96), details given (0.88)
   "ya envié el pago a las 14:10 desde mi cuenta de Mercado Pago, ref 8841…"  [1 attachment]
@@ -297,16 +301,17 @@ mediation: yes · outcome: handed_off (conflicting_claims) · rounds: 2 · durat
 
 ## 4. Template rules
 
-Enforced by tests over `messages/catalog.toml`:
+Enforced by tests over every `messages/<code>.toml`:
 
-1. Every template has every language in `[mediation].languages`.
+1. Every language file has every template id that `en.toml` has, and a
+   non-empty name and word lists.
 2. The only placeholder is `{amount}`; every template that uses it has a
    `_noamount` form.
-3. Fund-action words (`release`, `cancel`, and their translations such as
-   `liberar`, `cancelación`, `cancelamento`) appear only in `guide_*`
-   templates. Verdict words (`winner`, `loser`, `guilty`, `ganador`,
-   `culpable`, `vencedor`, and so on) appear in no template. Adding a language
-   means extending both lists in the same change.
+3. Each language file lists its own fund-action words (`release`, `cancel`;
+   `liberar`, `cancelación`; `liberar`, `cancelamento`; …) and verdict words
+   (`winner`, `guilty`; `ganador`, `culpable`; `vencedor`, `culpado`; …).
+   Fund-action words appear only in `guide_*` templates; verdict words appear
+   in no template.
 4. `guide_*` templates describe options the party can choose in their own
    Mostro app, conditioned on what that party verified ("if you have checked
    that…"). They never tell a party that they must act, and they always offer

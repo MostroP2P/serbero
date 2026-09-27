@@ -27,13 +27,18 @@ implementation plan is [`docs/plan.md`](docs/plan.md).
   option, and criterion sent to Jev (or any other judge provider) is written in
   English. Party messages go into the
   `state` as written, in any language.
-- **Parties are addressed in their own language.** English by default; as soon
-  as Serbero detects that a party writes in Spanish or Portuguese, it answers
-  that party in that language. Buyer and seller may get different languages.
+- **Parties are addressed in their own language.** Serbero is multilingual:
+  any language with a catalog file (`messages/<code>.toml`) can be enabled.
+  English is the default; as soon as Serbero detects that a party writes in
+  another enabled language (initially Spanish or Portuguese), it answers that
+  party in that language. Buyer and seller may get different languages.
+- **No code names a language.** Language lists come from the catalog files and
+  the config. Adding a language is a new catalog file plus config, never a code
+  change ([`docs/spec.md` §7.7](docs/spec.md#77-languages)).
 - Party-facing text exists only as human-written templates in the message
-  catalog, one entry per supported language. No text is generated or
-  machine-translated at runtime. Adding a language means adding reviewed
-  translations for every template.
+  catalog, one file per supported language. No text is generated or
+  machine-translated at runtime. A new language file is reviewed by a native
+  speaker.
 
 ## Dependencies
 

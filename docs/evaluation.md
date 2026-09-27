@@ -66,7 +66,7 @@ The set grows in three steps:
 | Step | Per language | Purpose |
 |---|---|---|
 | **Spike** ([plan.md T0.7](plan.md#phase-0--foundation)) | ~40 conversations, Spanish only | Early answer to one question: does the judge understand how Mostro users write? Focused on the critical judgments. |
-| **Release gate** | ~150 conversations each for en and es | Enough to enable a language and calibrate thresholds. |
+| **Validation** | ~150 conversations per language (en and es for v1) | Enough to validate a language and calibrate thresholds. |
 | **Production** | grows over time | Real turns marked wrong by solvers (§5) become new cases. |
 
 Within the release-gate set, every option of the critical questions
@@ -79,7 +79,7 @@ least 5.
 Run with `cargo run --bin eval -- --lang es` against the judge configured in
 `[judge]` (or `--provider typesafe --model jev-latest`). It sends each case, compares the answers with the labels, and writes a report.
 
-| Question | Metric | Target to enable a language |
+| Question | Metric | Target to validate a language |
 |---|---|---|
 | `seller_receipt = says_received` | Precision at threshold `guide` | ≥ 0.98 |
 | `buyer_payment = says_not_sent` | Precision at threshold `guide` | ≥ 0.98 |
@@ -103,8 +103,13 @@ allows no false positives among them; it says nothing about positives the
 judge misses, which the coverage and recall targets measure. Targets are
 re-checked as the set grows.
 
-A language is added to `[mediation].languages` only when it meets every
-target. English and Spanish are the release gate for v1; Portuguese follows.
+Meeting every target makes a language **validated** for the judge that was
+evaluated: its code is added to that judge's `validated_languages`, and
+self-resolution guidance becomes available in it. A language without a golden
+set can still be enabled as **conversational**
+([spec.md §7.7](spec.md#77-languages)). English and Spanish are validated for
+the v1 release; other languages follow the same procedure whenever a golden
+set exists.
 
 ## 3. Choosing thresholds
 
