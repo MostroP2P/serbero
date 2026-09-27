@@ -2,6 +2,7 @@
 //! subscriptions and messages.
 
 pub mod dm;
+pub mod first_answer;
 
 use std::time::Duration;
 

@@ -7,6 +7,7 @@ license = "MIT"
 repository = "https://github.com/MostroP2P/serbero"
 
 [dependencies]
+futures-util = "0.3.34"
 mostro-core = "0.15.1"
 nostr-sdk = "0.45.4"
 rusqlite = { version = "0.40.2", features = ["bundled"] }
@@ -17,10 +18,11 @@ tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "signal",
 toml = "1.1.6"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt"] }
+uuid = { version = "1.26.1", features = ["v4"] }
 
 [dev-dependencies]
 nostr-sdk = { version = "0.45.4", features = ["local-relay"] }
-tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "time"] }
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "time", "test-util"] }
 
 [lints.rust]
 unsafe_code = "forbid"
