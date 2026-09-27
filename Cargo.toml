@@ -2,5 +2,18 @@
 name = "serbero"
 version = "0.1.0"
 edition = "2024"
+description = "Helps the parties of a Mostro dispute resolve it themselves, and escalates to a human solver when needed"
+license = "MIT"
+repository = "https://github.com/MostroP2P/serbero"
 
 [dependencies]
+thiserror = "2.0.21"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt"] }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
