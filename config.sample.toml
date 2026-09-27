@@ -45,11 +45,14 @@ api_key_env = "TYPESAFE_API_KEY"          # the operator's own key
 timeout = "10s"
 max_retries = 3
 
-# Placeholder values until calibration (docs/evaluation.md §3) commits real ones.
-[judge.thresholds."typesafe/jev-1.13.0"]
-guide = 0.90
-fact = 0.80
-human_request = 0.80
-fraud = 0.60
-conflict = 0.75
-outside_scope = 0.80
+# Calibrated thresholds, one table per "<provider>/<model>". Without a table
+# for the configured judge, mediation stays disabled. These values are
+# illustrative only: uncomment them only after a calibration report for this
+# judge is committed (docs/evaluation.md §3).
+# [judge.thresholds."typesafe/jev-1.13.0"]
+# guide = 0.90
+# fact = 0.80
+# human_request = 0.80
+# fraud = 0.60
+# conflict = 0.75
+# outside_scope = 0.80

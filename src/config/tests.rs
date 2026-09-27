@@ -41,11 +41,35 @@ fn sample_config_loads() {
 }
 
 #[test]
-fn sample_config_has_thresholds_for_its_judge() {
+fn sample_config_ships_no_active_thresholds() {
     let settings = Settings::parse(SAMPLE, base_env()).unwrap();
 
-    let thresholds = settings.config.judge.active_thresholds().unwrap();
-    assert_eq!(thresholds.guide, 0.90);
+    assert!(settings.config.judge.active_thresholds().is_none());
+}
+
+#[test]
+fn sample_thresholds_parse_once_uncommented() {
+    let uncommented = SAMPLE
+        .replace("# [judge.thresholds", "[judge.thresholds")
+        .replace("\n# guide", "\nguide");
+    let uncommented = [
+        "fact",
+        "human_request",
+        "fraud",
+        "conflict",
+        "outside_scope",
+    ]
+    .iter()
+    .fold(uncommented, |text, name| {
+        text.replace(&format!("\n# {name} ="), &format!("\n{name} ="))
+    });
+
+    let settings = Settings::parse(&uncommented, base_env()).unwrap();
+
+    assert_eq!(
+        settings.config.judge.active_thresholds().unwrap().guide,
+        0.90
+    );
 }
 
 #[test]
