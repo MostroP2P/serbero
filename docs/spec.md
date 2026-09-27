@@ -293,8 +293,10 @@ pub trait Judge: Send + Sync {
     /// Stable identifier, e.g. "typesafe/jev-1.13.0", stored with every evaluation.
     fn id(&self) -> &str;
     fn capabilities(&self) -> Capabilities;
-    async fn evaluate(&self, state: &Value, questions: &QuestionSet) -> Result<Answers, JudgeError>;
-    async fn health_check(&self) -> Result<(), JudgeError>;
+    // Boxed futures keep the trait object-safe: the provider is chosen at runtime.
+    fn evaluate<'a>(&'a self, state: &'a Value, questions: &'a QuestionSet)
+        -> BoxFuture<'a, Result<Answers, JudgeError>>;
+    fn health_check(&self) -> BoxFuture<'_, Result<(), JudgeError>>;
 }
 ```
 
@@ -304,7 +306,14 @@ pub trait Judge: Send + Sync {
 - Serbero derives everything it needs from probabilities: the winning option,
   the score value, and confidence (computed by Serbero with one formula for
   every provider). Policy never depends on a vendor's own definition of
-  confidence.
+  confidence. For a choice or score with `n` options or levels and highest
+  probability `peak`, confidence is `(n · peak − 1) / (n − 1)`, clamped to
+  [0, 1]: 0 for a flat distribution, 1 for a certain answer. A noul has no
+  confidence; its probability is the answer. A tie between options goes to
+  the first option by name.
+- Every answer is checked against its question before use (same type, exactly
+  the asked options or levels, probabilities in [0, 1] summing to 1); a
+  mismatch is `Malformed`.
 - `JudgeError` is provider-neutral: `Unavailable` (retryable: overload, rate
   limit, network, timeout), `Unauthorized`, `InvalidRequest`, `Malformed`. Each
   adapter maps its status codes onto these.
