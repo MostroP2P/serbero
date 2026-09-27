@@ -13,7 +13,8 @@ pub struct DisputeEvent {
     pub dispute_id: String,
     pub status: DisputeStatus,
     pub initiator: Initiator,
-    /// When the dispute was opened (`created_at` tag). Older daemons omit it.
+    /// When the dispute was opened (`published_at` tag, `mostrod` #1001).
+    /// `None` if a node breaks the protocol by omitting it.
     pub opened_at: Option<i64>,
     /// The event's own `created_at`; later revisions have larger values.
     pub revision_at: i64,
@@ -46,9 +47,9 @@ pub fn parse(event: &Event, mostro: &PublicKey) -> Result<DisputeEvent> {
     let initiator: Initiator = initiator
         .parse()
         .map_err(|_| Error::InvalidEvent(format!("unknown initiator {initiator:?}")))?;
-    let opened_at = match tag_value(event, "created_at") {
+    let opened_at = match tag_value(event, "published_at") {
         Some(v) => Some(v.parse().map_err(|_| {
-            Error::InvalidEvent(format!("created_at tag {v:?} is not a timestamp"))
+            Error::InvalidEvent(format!("published_at tag {v:?} is not a timestamp"))
         })?),
         None => None,
     };
@@ -113,7 +114,7 @@ mod tests {
                 &["d", "dispute-1"],
                 &["s", status],
                 &["initiator", "seller"],
-                &["created_at", "1600"],
+                &["published_at", "1600"],
                 &["y", "mostro", "My Mostro"],
                 &["z", "dispute"],
             ],
@@ -159,7 +160,7 @@ mod tests {
     }
 
     #[test]
-    fn missing_created_at_tag_is_allowed() {
+    fn missing_published_at_leaves_the_open_time_unknown() {
         let mostro = Keys::generate();
         let event = event_with(
             &mostro,
@@ -173,6 +174,30 @@ mod tests {
         );
 
         assert_eq!(parse(&event, &mostro.public_key()).unwrap().opened_at, None);
+    }
+
+    #[test]
+    fn legacy_created_at_tag_is_ignored() {
+        let mostro = Keys::generate();
+        let event = event_with(
+            &mostro,
+            38386,
+            &[
+                &["d", "x"],
+                &["s", "initiated"],
+                &["initiator", "buyer"],
+                &["created_at", "1600"],
+                &["z", "dispute"],
+            ],
+        );
+
+        let parsed = parse(&event, &mostro.public_key()).unwrap();
+
+        assert_eq!(parsed.opened_at, None);
+        assert_eq!(
+            parsed.revision_at, 1_700,
+            "revisions still order by the event's created_at"
+        );
     }
 
     #[test]
@@ -240,7 +265,7 @@ mod tests {
                     &["d", "x"],
                     &["s", "initiated"],
                     &["initiator", "buyer"],
-                    &["created_at", "soon"],
+                    &["published_at", "soon"],
                     &["z", "dispute"],
                 ],
             ),
