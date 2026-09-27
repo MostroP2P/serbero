@@ -72,10 +72,12 @@ SERBERO_CONFIG=/etc/serbero/config.toml ./target/release/serbero
 SERBERO_LOG=serbero=debug ./target/release/serbero  # more verbose logs
 ```
 
-Stop it with Ctrl-C; relay connections are closed cleanly. On restart Serbero
-resumes from its database: disputes it already knows are never notified twice.
-A dispute that was opened and taken while Serbero was offline is recorded
-without notifying anyone.
+Stop it with Ctrl-C or SIGTERM (as systemd and Docker do); relay connections
+are closed cleanly. On start, Serbero fetches the disputes your relays already
+store, applies only the newest revision of each, and then listens for new
+ones. Disputes it already knows are never notified twice, and a dispute that
+was opened and taken or resolved while Serbero was offline is recorded without
+notifying anyone.
 
 ## Inspect
 
