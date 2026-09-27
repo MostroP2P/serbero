@@ -33,6 +33,9 @@ impl Store {
         // WAL keeps readers from blocking the writer; in-memory databases
         // silently stay in "memory" mode, which is fine.
         conn.pragma_update(None, "journal_mode", "WAL")?;
+        // With WAL, NORMAL never corrupts the database; a power loss can only
+        // roll back the last commits, which relays replay on reconnect.
+        conn.pragma_update(None, "synchronous", "NORMAL")?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
         conn.busy_timeout(BUSY_TIMEOUT)?;
         migrations::apply(&mut conn, migrations::MIGRATIONS)?;
@@ -68,8 +71,13 @@ mod tests {
             .conn()
             .query_row("PRAGMA foreign_keys", [], |row| row.get(0))
             .unwrap();
+        let synchronous: i64 = store
+            .conn()
+            .query_row("PRAGMA synchronous", [], |row| row.get(0))
+            .unwrap();
         assert_eq!(mode, "wal");
         assert_eq!(fk, 1);
+        assert_eq!(synchronous, 1, "1 = NORMAL");
         drop(store);
         std::fs::remove_dir_all(&dir).unwrap();
     }
