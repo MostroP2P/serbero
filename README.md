@@ -73,10 +73,12 @@ SERBERO_LOG=serbero=debug ./target/release/serbero  # more verbose logs
 ```
 
 Stop it with Ctrl-C or SIGTERM (as systemd and Docker do); relay connections
-are closed cleanly. On start, Serbero fetches the disputes your relays already
-store, applies only the newest revision of each, and then listens for new
-ones. Disputes it already knows are never notified twice, and a dispute that
-was opened and taken or resolved while Serbero was offline is recorded without
+are closed cleanly. On start, Serbero listens for new disputes at once and, in
+the background, fetches the disputes your relays already store, applying only
+the newest revision of each. A slow relay never delays a new dispute. The
+backlog is re-synced every 10 minutes and whenever a relay reconnects.
+Disputes it already knows are never notified twice, and a dispute that was
+opened and taken or resolved while Serbero was offline is recorded without
 notifying anyone.
 
 ## Inspect
