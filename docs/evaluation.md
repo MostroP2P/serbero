@@ -97,9 +97,11 @@ without a human: the two self-resolution paths (`PaymentArrived` and
 `PaymentNotSent`).
 Recall targets protect the two paths toward a human that must not be missed.
 
-With a release-gate set of about 150 conversations the estimates are coarse:
-a 0.98 precision target over 15–25 positive cases effectively means no errors
-among them. Targets are re-checked as the set grows.
+With a validation set of about 150 conversations the estimates are coarse. A
+0.98 precision target over the 15–25 cases the judge marks positive effectively
+allows no false positives among them; it says nothing about positives the
+judge misses, which the coverage and recall targets measure. Targets are
+re-checked as the set grows.
 
 A language is added to `[mediation].languages` only when it meets every
 target. English and Spanish are the release gate for v1; Portuguese follows.

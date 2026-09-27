@@ -188,7 +188,10 @@ dispute events.
 
 **Dispute events.** `kind 38386`, authored by the Mostro node, addressable by
 `d` = dispute id. Tags: `s` (status), `initiator` (`buyer` | `seller`),
-`created_at` (dispute open time), `y` (platform name), `z = dispute`. There is
+`created_at` (dispute open time, identical in every revision; emitted by
+`mostrod`'s `create_dispute_event_tags` although the protocol's example omits
+it), `y` (platform name), `z = dispute`. Revisions are ordered by the event's
+own `created_at`, which Mostro bumps on every status change. There is
 no tag naming the solver, so Serbero filters by **author** (the configured
 Mostro pubkey) and learns who took a dispute only from its own actions.
 
@@ -317,7 +320,9 @@ new ──notify──▶ notified ──(s=in-progress)──▶ taken ──(t
 1. **Detect.** Subscribe to `kind 38386` authored by the configured Mostro
    pubkey with `z = dispute` ([§5.1](#51-mostro-protocol)). Insert by
    `dispute_id` with `ON CONFLICT DO NOTHING`; a duplicate is a no-op. Only the
-   newest revision of each dispute (by `created_at`) is applied.
+   newest revision of each dispute is applied, ordered by the event's own
+   `created_at` (the `created_at` tag is the dispute's open time and stays the
+   same across revisions).
 2. **Notify.** Send the "new dispute" DM to every configured solver. Record each
    attempt as an event. Move to `notified` if at least one send succeeded.
 3. **Remind.** A timer re-sends to all solvers for disputes still `notified`
