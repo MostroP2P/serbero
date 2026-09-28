@@ -5,7 +5,7 @@
 use serde_json::json;
 
 use super::Mediator;
-use super::handoff::{BRIEF_PENDING, TurnReading, recipients};
+use super::handoff::{TurnReading, pending_brief, recipients};
 use crate::chat::{Outbound, send_after_close};
 use crate::error::Result;
 use crate::nostr::dm::DmSender;
@@ -71,9 +71,10 @@ impl<S: DmSender> Mediator<S> {
         reading: TurnReading<'_>,
         now: i64,
     ) -> Result<()> {
-        {
+        let pending = {
             let store = self.lock_store()?;
-            // One transaction: a `guiding` session always has its path.
+            // One transaction: a `guiding` session always has its path and
+            // a pending brief, even if the process stops right after.
             let tx = store.conn().unchecked_transaction()?;
             if !sessions::start_guiding(&tx, &session.session_id, now)? {
                 return Ok(());
@@ -88,23 +89,15 @@ impl<S: DmSender> Mediator<S> {
                     now,
                 },
             )?;
+            let pending = pending_brief(&tx, session, json!({ "path": path.as_str() }), now)?;
             tx.commit()?;
-        }
+            pending
+        };
         let delivered = self
             .brief_solvers(session, Subject::Guide(path), Some(reading), now)
             .await?;
-        if delivered == 0 {
-            let store = self.lock_store()?;
-            events::append(
-                store.conn(),
-                &events::NewEvent {
-                    dispute_id: &session.dispute_id,
-                    session_id: Some(&session.session_id),
-                    kind: BRIEF_PENDING,
-                    payload: json!({ "path": path.as_str() }),
-                    now,
-                },
-            )?;
+        if delivered > 0 {
+            self.brief_delivered(session, pending, now)?;
         }
         self.send_guides(session, path).await?;
         Ok(())
@@ -228,7 +221,8 @@ impl<S: DmSender> Mediator<S> {
                 now,
             )
             .await?;
-            complete &= delivered > 0 || to.is_empty();
+            // With no solver configured the report stays pending until one is.
+            complete &= delivered > 0;
         }
         if complete {
             let store = self.lock_store()?;

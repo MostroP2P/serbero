@@ -104,6 +104,21 @@ async fn send_when(
     message: &Outbound<'_>,
     allowed: impl Fn(SessionState) -> bool,
 ) -> Result<EventId> {
+    let keys = channel(serbero, session, message.party)?;
+    let event = wrap_chat_message(serbero, keys.conv(), keys.sign(), message.text)
+        .await
+        .map_err(|e| Error::Nostr(format!("cannot wrap chat message: {e}")))?;
+    // Read our own envelope back to learn the inner id we store for dedup.
+    let inner = unwrap_chat_message(
+        keys.conv(),
+        &keys.author_pubkey(),
+        &[serbero.public_key()],
+        &event,
+        Timestamp::now(),
+    )
+    .map_err(|e| Error::Nostr(format!("cannot read own chat message: {e}")))?;
+    // Checked last, right before the relay send, so a revision that ended
+    // the session while the message was prepared stops it.
     {
         let _checking = gate.read().await;
         // A human may have taken over since the caller read the session:
@@ -120,19 +135,6 @@ async fn send_when(
             _ => return Err(Error::SessionEnded(session.session_id.clone())),
         }
     }
-    let keys = channel(serbero, session, message.party)?;
-    let event = wrap_chat_message(serbero, keys.conv(), keys.sign(), message.text)
-        .await
-        .map_err(|e| Error::Nostr(format!("cannot wrap chat message: {e}")))?;
-    // Read our own envelope back to learn the inner id we store for dedup.
-    let inner = unwrap_chat_message(
-        keys.conv(),
-        &keys.author_pubkey(),
-        &[serbero.public_key()],
-        &event,
-        Timestamp::now(),
-    )
-    .map_err(|e| Error::Nostr(format!("cannot read own chat message: {e}")))?;
     let output = client
         .send_event(&event)
         .await

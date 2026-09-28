@@ -46,10 +46,14 @@ struct Outbox {
     failing: Arc<AtomicBool>,
     /// Sends of texts containing this fail.
     fail_on: Arc<Mutex<Option<&'static str>>>,
+    /// Every send hangs this long first, as on a relay that never answers.
+    stall: Arc<Mutex<Duration>>,
 }
 
 impl DmSender for Outbox {
     async fn send_dm(&self, _to: PublicKey, text: &str) -> SerberoResult<()> {
+        let stall = *self.stall.lock().unwrap();
+        tokio::time::sleep(stall).await;
         let matches = self
             .fail_on
             .lock()
@@ -194,6 +198,7 @@ struct Script {
     mostro: Keys,
     notifier: Arc<serbero::notifier::Notifier<Outbox>>,
     mediator: Arc<Mediator<Outbox>>,
+    second_buyer: Option<Keys>,
     url: String,
     judge: Arc<ScriptedJudge>,
     outbox: Outbox,
@@ -225,26 +230,16 @@ struct Options {
     /// The session was handed off before the pending message, and a notice
     /// was stored after it, as when the process stopped mid-handoff.
     handed_off: bool,
+    /// A second live session, `s2` of dispute `d2`.
+    second_session: bool,
 }
 
-async fn script_with(picks: &[(&'static str, (&'static str, f64))], options: Options) -> Script {
-    let relay = if options.silent_relay {
-        MockRelay::run_with_opts(LocalRelayTestOptions {
-            unresponsive_connection: Some(Duration::from_secs(60)),
-            ..Default::default()
-        })
-        .await
-        .unwrap()
-    } else {
-        MockRelay::run().await.unwrap()
-    };
-    let url = relay.url().await.to_string();
-    let (serbero, buyer, seller) = (Keys::generate(), Keys::generate(), Keys::generate());
-    let store = Store::open_in_memory().unwrap();
+/// An active session with both openers sent and unanswered.
+fn seed_session(store: &Store, session_id: &str, dispute_id: &str, buyer: &Keys, seller: &Keys) {
     disputes::insert_if_new(
         store.conn(),
         &NewDispute {
-            dispute_id: "d1",
+            dispute_id,
             initiator: Initiator::Buyer,
             status: "in-progress",
             status_at: 1,
@@ -256,8 +251,8 @@ async fn script_with(picks: &[(&'static str, (&'static str, f64))], options: Opt
     sessions::insert(
         store.conn(),
         &NewSession {
-            session_id: "s1",
-            dispute_id: "d1",
+            session_id,
+            dispute_id,
             buyer_trade_pubkey: &b,
             seller_trade_pubkey: &s,
             fiat_amount: Some("50000"),
@@ -268,7 +263,7 @@ async fn script_with(picks: &[(&'static str, (&'static str, f64))], options: Opt
         },
     )
     .unwrap();
-    sessions::set_state(store.conn(), "s1", SessionState::Active, 1).unwrap();
+    sessions::set_state(store.conn(), session_id, SessionState::Active, 1).unwrap();
     // Both openers, as `Mediator::open` sends them.
     for (party, template, id) in [
         (
@@ -285,19 +280,41 @@ async fn script_with(picks: &[(&'static str, (&'static str, f64))], options: Opt
         messages::insert_if_new(
             store.conn(),
             &NewMessage {
-                session_id: "s1",
+                session_id,
                 direction: Direction::Out,
                 party,
                 template_id: Some(template),
                 lang: Some("en"),
                 content: "…",
                 attachments: 0,
-                inner_event_id: id,
+                inner_event_id: &format!("{id}-{session_id}"),
                 created_at: 1,
             },
         )
         .unwrap();
     }
+}
+
+async fn script_with(picks: &[(&'static str, (&'static str, f64))], options: Options) -> Script {
+    let relay = if options.silent_relay {
+        MockRelay::run_with_opts(LocalRelayTestOptions {
+            unresponsive_connection: Some(Duration::from_secs(60)),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+    } else {
+        MockRelay::run().await.unwrap()
+    };
+    let url = relay.url().await.to_string();
+    let (serbero, buyer, seller) = (Keys::generate(), Keys::generate(), Keys::generate());
+    let store = Store::open_in_memory().unwrap();
+    seed_session(&store, "s1", "d1", &buyer, &seller);
+    let second_buyer = options.second_session.then(|| {
+        let (buyer, seller) = (Keys::generate(), Keys::generate());
+        seed_session(&store, "s2", "d2", &buyer, &seller);
+        buyer
+    });
     let store = Arc::new(Mutex::new(store));
     let client = serbero::nostr::connect(std::slice::from_ref(&url), WAIT)
         .await
@@ -451,6 +468,12 @@ async fn script_with(picks: &[(&'static str, (&'static str, f64))], options: Opt
         .unwrap()
         .unwrap();
     chats.open(&session).await.unwrap();
+    if second_buyer.is_some() {
+        let second = sessions::get(store.lock().unwrap().conn(), "s2")
+            .unwrap()
+            .unwrap();
+        chats.open(&second).await.unwrap();
+    }
     let (forward, received) = tokio::sync::mpsc::unbounded_channel();
     chats.forward_to(forward);
     let chat_task = Arc::clone(&chats);
@@ -466,6 +489,7 @@ async fn script_with(picks: &[(&'static str, (&'static str, f64))], options: Opt
         mostro,
         notifier,
         mediator,
+        second_buyer,
         url,
         judge,
         outbox,
@@ -671,6 +695,7 @@ async fn a_request_for_a_person_hands_off_and_later_messages_are_forwarded() {
         texts[0]
     );
     assert!(texts[0].contains("human requested: yes"), "{}", texts[0]);
+    assert_eq!(open_briefs(&script), 0, "the brief was delivered");
     assert!(
         texts[1].starts_with("Dispute d1 · transcript (3 messages, times UTC)\n"),
         "{}",
@@ -960,11 +985,15 @@ async fn flooding_twice_hands_off_without_judging_again() {
         buyer.say(text).await;
     }
 
-    wait_for_text(&script.outbox, "Dispute d1 · handed off: flood\n").await;
+    let brief = wait_for_text(&script.outbox, "Dispute d1 · handed off: flood\n").await;
     assert_eq!(
         script.judge.calls.load(Ordering::SeqCst),
-        1,
-        "the flooding turn is not judged"
+        2,
+        "the first turn and the brief; the flooding turn is not judged"
+    );
+    assert!(
+        !brief.contains("Automated reading unavailable"),
+        "the last judged turn's reading: {brief}"
     );
 }
 
@@ -1082,6 +1111,35 @@ async fn guidance_with_no_solver_configured_records_the_brief_as_pending() {
 }
 
 #[tokio::test]
+async fn a_closing_with_no_solver_configured_stays_unfinished() {
+    let script = script_with(
+        &[("seller_receipt", ("says_received", 0.97))],
+        Options {
+            no_solvers: true,
+            ..Options::default()
+        },
+    )
+    .await;
+    let mut seller = seller_side(&script).await;
+    seller.say("sí, me llegó el pago").await;
+    seller.next_from_serbero().await;
+
+    script
+        .notifier
+        .handle_event(&dispute_event(&script.mostro, "released"), 9_001)
+        .await
+        .unwrap();
+    assert_eq!(seller.next_from_serbero().await, en("resolved_thanks"));
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    assert!(
+        !event_kinds(&script).contains(&"finished".to_owned()),
+        "the final report still has to reach a solver"
+    );
+    assert_eq!(script.mediator.finish_pending(0, 9_100).await, 1);
+}
+
+#[tokio::test]
 async fn guidance_a_party_missed_is_sent_again() {
     let script = script(&[("seller_receipt", ("says_received", 0.97))]).await;
     let mut buyer = buyer_side(&script).await;
@@ -1111,6 +1169,20 @@ async fn guidance_a_party_missed_is_sent_again() {
     assert_eq!(seller.next_within(QUIET).await, None, "not resent");
 }
 
+/// Briefs recorded as pending and not yet delivered.
+fn open_briefs(script: &Script) -> usize {
+    let history = events::list_for_dispute(script.store.lock().unwrap().conn(), "d1").unwrap();
+    history
+        .iter()
+        .filter(|e| e.kind == "brief_pending")
+        .filter(|e| {
+            !history
+                .iter()
+                .any(|s| s.kind == "brief_sent" && s.payload["pending"] == e.id)
+        })
+        .count()
+}
+
 fn event_kinds(script: &Script) -> Vec<String> {
     events::list_for_dispute(script.store.lock().unwrap().conn(), "d1")
         .unwrap()
@@ -1129,11 +1201,7 @@ async fn a_brief_no_solver_received_is_recorded_and_the_session_is_handed_off_on
 
     assert_eq!(buyer.next_from_serbero().await, en("handoff_notice"));
     assert!(script.outbox.texts().is_empty());
-    assert!(
-        event_kinds(&script).contains(&"brief_pending".to_owned()),
-        "{:?}",
-        event_kinds(&script)
-    );
+    assert!(open_briefs(&script) == 1, "{:?}", event_kinds(&script));
     let session = sessions::get(script.store.lock().unwrap().conn(), "s1")
         .unwrap()
         .unwrap();
@@ -1198,7 +1266,7 @@ async fn a_brief_whose_transcript_failed_is_still_pending() {
 
     assert_eq!(buyer.next_from_serbero().await, en("handoff_notice"));
     assert!(
-        event_kinds(&script).contains(&"brief_pending".to_owned()),
+        open_briefs(&script) == 1,
         "the solver got the brief but not the conversation"
     );
 }
@@ -1218,7 +1286,7 @@ async fn a_handoff_with_no_solver_configured_is_pending() {
     buyer.say("quiero hablar con una persona").await;
 
     assert_eq!(buyer.next_from_serbero().await, en("handoff_notice"));
-    assert!(event_kinds(&script).contains(&"brief_pending".to_owned()));
+    assert!(open_briefs(&script) == 1);
 }
 
 #[tokio::test]
@@ -1281,6 +1349,41 @@ async fn the_brief_evaluation_covers_only_the_judged_state() {
         .max()
         .unwrap();
     assert!(newest > turn_cutoff);
+}
+
+/// AGENTS.md relays rule 7: a handoff whose solver DMs hang on a silent
+/// relay never holds back another session's turn.
+#[tokio::test]
+async fn a_handoff_stuck_on_a_silent_relay_never_delays_another_session() {
+    let script = script_with(
+        &[
+            // Only asked about the party who wrote: s1's seller, s2's buyer.
+            ("seller_wants_human", ("yes", 0.95)),
+            ("buyer_message_kind", ("greeting", 1.0)),
+        ],
+        Options {
+            second_session: true,
+            ..Options::default()
+        },
+    )
+    .await;
+    *script.outbox.stall.lock().unwrap() = Duration::from_secs(30);
+    let seller = party_side(&script, &script.seller).await;
+    let second = script.second_buyer.clone().unwrap();
+    let mut other = party_side(&script, &second).await;
+
+    seller.say("quiero hablar con una persona").await;
+    tokio::time::sleep(QUIET * 3).await;
+    let started = std::time::Instant::now();
+    other.say("hola").await;
+    let reply = other.next_within(Duration::from_secs(5)).await;
+
+    assert!(reply.is_some(), "the other session was held back");
+    assert!(
+        started.elapsed() < Duration::from_secs(3),
+        "{:?}",
+        started.elapsed()
+    );
 }
 
 #[tokio::test]
@@ -1419,17 +1522,25 @@ async fn the_timer_retries_a_brief_and_a_notice_that_did_not_go_out() {
     script.outbox.fail(false);
 
     let now = serbero::daemon::now();
+    let judged = script.judge.calls.load(Ordering::SeqCst);
     script.mediator.tick(now).await.unwrap();
-
-    let brief = wait_for_text(&script.outbox, "Dispute d1 · handed off: human_requested\n").await;
-    assert!(brief.contains("human requested: yes"), "{brief}");
     assert_eq!(
         buyer.next_within(QUIET).await,
         None,
-        "no notice while the handoff may still be sending it"
+        "nothing while the handoff may still be sending"
     );
+    assert!(script.outbox.texts().is_empty());
+
     script.mediator.tick(now + 121).await.unwrap();
+
+    let brief = wait_for_text(&script.outbox, "Dispute d1 · handed off: human_requested\n").await;
+    assert!(brief.contains("human requested: yes"), "{brief}");
     assert_eq!(buyer.next_from_serbero().await, en("handoff_notice"));
+    assert_eq!(
+        script.judge.calls.load(Ordering::SeqCst),
+        judged,
+        "the retry reuses the brief judged at the handoff"
+    );
     let sent = script.outbox.texts().len();
     script.mediator.tick(now + 151).await.unwrap();
     assert_eq!(script.outbox.texts().len(), sent, "the brief went out once");
@@ -1539,6 +1650,95 @@ async fn a_handoff_does_not_resend_a_notice_the_timer_already_sent() {
     assert!(claimed);
     assert_eq!(seller.next_from_serbero().await, en("handoff_notice"));
     assert_eq!(buyer.next_within(QUIET).await, None);
+}
+
+#[tokio::test]
+async fn a_session_whose_chat_cannot_open_is_handed_to_a_person_not_timed() {
+    let script = script(&[]).await;
+    {
+        let store = script.store.lock().unwrap();
+        disputes::insert_if_new(
+            store.conn(),
+            &NewDispute {
+                dispute_id: "d9",
+                initiator: Initiator::Buyer,
+                status: "in-progress",
+                status_at: 1,
+                now: 1,
+            },
+        )
+        .unwrap();
+        sessions::insert(
+            store.conn(),
+            &NewSession {
+                session_id: "s9",
+                dispute_id: "d9",
+                buyer_trade_pubkey: "not-a-key",
+                seller_trade_pubkey: "not-a-key",
+                fiat_amount: None,
+                fiat_code: None,
+                payment_method: None,
+                order_published_at: None,
+                now: 1,
+            },
+        )
+        .unwrap();
+        sessions::set_state(store.conn(), "s9", SessionState::Active, 1).unwrap();
+    }
+
+    script.mediator.tick(2).await.unwrap();
+
+    wait_for_text(&script.outbox, "Dispute d9 · handed off: opening_failed\n").await;
+    assert_eq!(
+        sessions::get(script.store.lock().unwrap().conn(), "s9")
+            .unwrap()
+            .unwrap()
+            .state,
+        SessionState::HandedOff
+    );
+}
+
+#[tokio::test]
+async fn an_unreachable_party_does_not_keep_the_other_from_its_notice() {
+    let script = script(&[]).await;
+    let seller = Keys::generate();
+    {
+        let store = script.store.lock().unwrap();
+        disputes::insert_if_new(
+            store.conn(),
+            &NewDispute {
+                dispute_id: "d8",
+                initiator: Initiator::Buyer,
+                status: "in-progress",
+                status_at: 1,
+                now: 1,
+            },
+        )
+        .unwrap();
+        let seller_hex = seller.public_key().to_hex();
+        sessions::insert(
+            store.conn(),
+            &NewSession {
+                session_id: "s8",
+                dispute_id: "d8",
+                // The buyer's channel cannot be derived: every send fails.
+                buyer_trade_pubkey: "not-a-key",
+                seller_trade_pubkey: &seller_hex,
+                fiat_amount: None,
+                fiat_code: None,
+                payment_method: None,
+                order_published_at: None,
+                now: 1,
+            },
+        )
+        .unwrap();
+        sessions::hand_off(store.conn(), "s8", "unresponsive", 1).unwrap();
+    }
+    let mut seller_side = party_side(&script, &seller).await;
+
+    script.mediator.tick(1_000).await.unwrap();
+
+    assert_eq!(seller_side.next_from_serbero().await, en("handoff_notice"));
 }
 
 /// AGENTS.md relays rule 7: timer sends to a silent relay never hold back
