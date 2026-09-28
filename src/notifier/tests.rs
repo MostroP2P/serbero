@@ -326,6 +326,7 @@ async fn every_final_status_resolves_the_dispute() {
             .find(|e| e.kind == "resolved")
             .unwrap();
         assert_eq!(resolved.payload["resolved_by"], by, "{status}");
+        assert_eq!(resolved.payload["resolved_at"], 300, "{status}");
     }
 }
 
