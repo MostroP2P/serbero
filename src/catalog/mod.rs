@@ -11,6 +11,8 @@ use serde::Deserialize;
 
 use crate::error::{Error, Result};
 
+pub mod rules;
+
 include!(concat!(env!("OUT_DIR"), "/catalogs.rs"));
 
 /// The only placeholder a template may use.
