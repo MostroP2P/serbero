@@ -457,6 +457,8 @@ decided and sent its response.
    text at `max_message_chars`; count attachments without storing them.
 2. **Settle.** Wait `quiet_period` (default 20 s) after the latest inbound
    message so that bursts such as "hola" + "help" + "?" become one turn.
+   Each session's turn runs on its own, one at a time per session, so a
+   turn waiting on a slow judge or relay never holds back another session.
 3. **Judge.** Build the state (see [judgments.md §1](judgments.md#1-state)) and
    send the full question set to the judge in one request.
 4. **Decide.** Run `policy` over the answers, the session's history of questions

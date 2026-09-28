@@ -1,10 +1,12 @@
 //! The turn loop (`docs/spec.md` §7.3): settle a burst, judge the session,
 //! decide, act, and record the evaluation.
 
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 use serde_json::json;
 use tokio::sync::mpsc::UnboundedReceiver;
+use tokio::task::JoinSet;
 use tokio::time::Instant;
 
 use super::handoff::{TurnReading, last_seen};
@@ -48,6 +50,13 @@ impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
         for session_id in self.pending_sessions() {
             settle.touch(&session_id, Instant::now());
         }
+        // Each session's turn runs in its own task, so a turn stuck on a
+        // slow relay or judge never holds back another session. A session
+        // has at most one turn running; one that falls due meanwhile runs
+        // right after it.
+        let mut running = JoinSet::new();
+        let mut sessions_of = HashMap::new();
+        let mut due_again = HashSet::new();
         loop {
             let deadline = settle.next_deadline();
             tokio::select! {
@@ -57,11 +66,33 @@ impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
                 },
                 () = sleep_until(deadline), if deadline.is_some() => {
                     for session_id in settle.take_due(Instant::now()) {
-                        if self.turn_logged(&session_id, crate::daemon::now()).await {
-                            // Not judged yet (judge not ready, or newer
-                            // messages came in while judging): keep it due.
-                            settle.touch(&session_id, Instant::now());
+                        if sessions_of.values().any(|running| running == &session_id) {
+                            due_again.insert(session_id);
+                            continue;
                         }
+                        let mediator = std::sync::Arc::clone(&self);
+                        let id = session_id.clone();
+                        let task = running.spawn(async move {
+                            mediator.turn_logged(&id, crate::daemon::now()).await
+                        });
+                        sessions_of.insert(task.id(), session_id);
+                    }
+                }
+                Some(done) = running.join_next_with_id(), if !running.is_empty() => {
+                    let (task, again) = match done {
+                        Ok((task, again)) => (task, again),
+                        Err(e) => {
+                            tracing::error!(error = %e, "turn task failed");
+                            (e.id(), true)
+                        }
+                    };
+                    if let Some(session_id) = sessions_of.remove(&task)
+                        && (again | due_again.remove(&session_id))
+                    {
+                        // Not judged yet (judge not ready, or newer
+                        // messages came in while judging), or due again
+                        // while it ran: keep it due.
+                        settle.touch(&session_id, Instant::now());
                     }
                 }
             }
