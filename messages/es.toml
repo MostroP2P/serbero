@@ -1,0 +1,57 @@
+# Spanish party templates (docs/messages.md §2).
+#
+# `{amount}` is the only placeholder. Every template that uses it has a
+# `<id>_noamount` form, the same sentence without it, used when the amount
+# or currency is unknown.
+
+name = "Spanish"
+
+[format]
+thousands_separator = "."
+decimal_separator = ","
+
+[words]
+# Allowed only in guide_* templates (docs/messages.md §4). Words match at the
+# start of a word, so stems cover every form ("liber": liberar, liberándola).
+fund_action = ["liber", "cancel"]
+# Allowed in no template.
+verdict = ["ganador", "perdedor", "culpable", "mentiroso", "estafador"]
+
+[templates]
+intro = "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático."
+
+ask_buyer_sent = "¿Enviaste el pago de {amount} de esta orden? Si lo hiciste, dime cuándo y desde qué cuenta o aplicación."
+ask_buyer_sent_noamount = "¿Enviaste el pago de esta orden? Si lo hiciste, dime cuándo y desde qué cuenta o aplicación."
+
+ask_buyer_sent_simple = "Solo para confirmar: ¿ya enviaste el pago de {amount}? Basta con sí o no."
+ask_buyer_sent_simple_noamount = "Solo para confirmar: ¿ya enviaste el pago? Basta con sí o no."
+
+ask_buyer_details = "Gracias. Para que se pueda verificar, comparte algún dato del pago: la hora, la referencia de la operación, la cuenta o aplicación que usaste, o una captura del comprobante con tus datos personales tapados."
+
+ask_seller_received = "¿Te llegó a tu cuenta el pago de {amount} de esta orden?"
+ask_seller_received_noamount = "¿Te llegó a tu cuenta el pago de esta orden?"
+
+ask_seller_received_simple = "Solo para confirmar: ¿recibiste el pago de {amount}? Basta con sí o no."
+ask_seller_received_simple_noamount = "Solo para confirmar: ¿recibiste el pago? Basta con sí o no."
+
+ask_seller_check_account = "Gracias. ¿Puedes revisar la cuenta o aplicación donde esperabas el pago, incluidos los movimientos pendientes, y decirme si ves algo por {amount}?"
+ask_seller_check_account_noamount = "Gracias. ¿Puedes revisar la cuenta o aplicación donde esperabas el pago, incluidos los movimientos pendientes, y decirme si lo ves?"
+
+what_happens_next = "Estoy reuniendo lo que dice cada uno para que la persona asignada pueda revisar el caso rápido. Responder mi pregunta es la mejor forma de ayudar ahora."
+
+thanks_waiting = "Gracias, es todo lo que necesito de ti por ahora. Te aviso si hace falta algo más."
+
+reminder = "Sigo esperando tu respuesta a mi pregunta anterior. Si no tengo noticias pronto, el caso pasará a la persona asignada tal como está."
+
+guide_arrived_seller = "Gracias por confirmarlo. Si ya verificaste que los {amount} están en tu cuenta, puedes completar la operación tú mismo liberándola desde tu app de Mostro; eso también cierra esta disputa. Si algo no cuadra, dímelo aquí y una persona lo revisará."
+guide_arrived_seller_noamount = "Gracias por confirmarlo. Si ya verificaste que el pago está en tu cuenta, puedes completar la operación tú mismo liberándola desde tu app de Mostro; eso también cierra esta disputa. Si algo no cuadra, dímelo aquí y una persona lo revisará."
+
+guide_arrived_buyer = "El vendedor informa que tu pago llegó, así que ahora puede completar la operación desde su app de Mostro. Te aviso cuando la disputa se cierre; si algo sale mal, dímelo aquí."
+
+guide_not_sent_buyer = "Gracias por aclararlo. Como el pago no se envió, tú y el vendedor pueden acordar cómo seguir: ambos pueden solicitar una cancelación cooperativa desde la app de Mostro o, si el vendedor está de acuerdo, todavía puedes completar el pago. Si no se ponen de acuerdo, dímelo aquí y una persona lo revisará."
+
+guide_not_sent_seller = "El comprador informa que el pago no se envió. Pueden acordar juntos cómo seguir: ambos pueden solicitar una cancelación cooperativa desde la app de Mostro, o esperar el pago si los dos están de acuerdo. Si no se ponen de acuerdo, dímelo aquí y una persona lo revisará."
+
+resolved_thanks = "La disputa ya está cerrada. Gracias a los dos por resolverla."
+
+handoff_notice = "Gracias a los dos. Le pasé todo lo que dijeron a la persona asignada, que continuará con el caso. Puede que te escriba por aquí."
