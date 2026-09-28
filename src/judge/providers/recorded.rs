@@ -3,8 +3,10 @@
 //!
 //! A recording holds the source judge's id, the question set version, and
 //! one entry per case: its id, the exact state sent, and the answers. A
-//! request is answered by looking up its state; a state or question set
-//! that was not recorded is an `InvalidRequest`, never a guess.
+//! request is answered by looking up its state together with the ids of the
+//! questions asked, so the turn and brief questions over one state are
+//! recorded separately. A request that was not recorded is an
+//! `InvalidRequest`, never a guess.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -38,23 +40,20 @@ pub struct RecordedCase {
 pub struct RecordedJudge {
     id: String,
     question_set: String,
-    /// Keyed by the state's JSON text (object keys are sorted, so equal
-    /// states give equal keys).
-    by_state: HashMap<String, Answers>,
+    /// Keyed by `request_key`.
+    by_request: HashMap<String, Answers>,
 }
 
 impl RecordedJudge {
     /// Its id is `recorded/<source judge id>`, so replayed evaluations are
     /// never mistaken for live ones.
     pub fn new(recording: Recording) -> Result<Self, JudgeError> {
-        let mut by_state = HashMap::with_capacity(recording.cases.len());
+        let mut by_request = HashMap::with_capacity(recording.cases.len());
         for case in recording.cases {
-            if by_state
-                .insert(case.state.to_string(), case.answers)
-                .is_some()
-            {
+            let key = request_key(&case.state, case.answers.keys());
+            if by_request.insert(key, case.answers).is_some() {
                 return Err(JudgeError::InvalidRequest(format!(
-                    "case {} repeats the state of an earlier case",
+                    "case {} repeats the request of an earlier case",
                     case.case_id
                 )));
             }
@@ -62,7 +61,7 @@ impl RecordedJudge {
         Ok(Self {
             id: format!("recorded/{}", recording.judge),
             question_set: recording.question_set,
-            by_state,
+            by_request,
         })
     }
 
@@ -85,15 +84,22 @@ impl RecordedJudge {
             )));
         }
         let answers = self
-            .by_state
-            .get(&state.to_string())
+            .by_request
+            .get(&request_key(state, questions.questions.keys()))
             .cloned()
             .ok_or_else(|| {
-                JudgeError::InvalidRequest("no recorded answers for this state".into())
+                JudgeError::InvalidRequest("no recorded answers for this request".into())
             })?;
         check_answers(questions, &answers)?;
         Ok(answers)
     }
+}
+
+/// The sorted question ids and the state's JSON text (object keys are
+/// sorted, so equal states give equal text).
+fn request_key<'a>(state: &Value, question_ids: impl Iterator<Item = &'a String>) -> String {
+    let ids: Vec<&str> = question_ids.map(String::as_str).collect();
+    format!("{}\n{}", ids.join(","), state)
 }
 
 impl Judge for RecordedJudge {
@@ -193,7 +199,7 @@ mod tests {
 
         assert_eq!(
             err,
-            JudgeError::InvalidRequest("no recorded answers for this state".into())
+            JudgeError::InvalidRequest("no recorded answers for this request".into())
         );
     }
 
@@ -227,8 +233,42 @@ mod tests {
         assert!(matches!(err, JudgeError::Malformed(_)));
     }
 
+    #[tokio::test]
+    async fn one_state_can_be_recorded_for_two_question_sets() {
+        let mut both = recording();
+        let mut brief = both.cases[0].clone();
+        brief.case_id = "en-001-brief".into();
+        brief.answers = [(
+            "evidence".to_owned(),
+            Answer::Score {
+                probabilities: vec![0.2, 0.8],
+            },
+        )]
+        .into();
+        both.cases.push(brief);
+        let judge = RecordedJudge::new(both).unwrap();
+        let state = recording().cases[0].state.clone();
+        let brief_questions = QuestionSet {
+            version: "qs-1".into(),
+            questions: [(
+                "evidence".to_owned(),
+                Question::Score {
+                    instructions: json!("How strong is the evidence?"),
+                    levels: vec![json!("Weak"), json!("Strong")],
+                },
+            )]
+            .into(),
+        };
+
+        let turn = judge.evaluate(&state, &questions("qs-1")).await.unwrap();
+        let brief = judge.evaluate(&state, &brief_questions).await.unwrap();
+
+        assert_eq!(turn["buyer_payment"].winner(), Some("says_sent"));
+        assert!(brief.contains_key("evidence"));
+    }
+
     #[test]
-    fn a_repeated_state_is_rejected() {
+    fn a_repeated_request_is_rejected() {
         let mut twice = recording();
         let mut copy = twice.cases[0].clone();
         copy.case_id = "en-002".into();

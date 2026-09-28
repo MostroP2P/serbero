@@ -123,19 +123,23 @@ impl Answer {
     }
 
     /// The probability-weighted level of a score, from 0 to 1 (level `i` of
-    /// `n` counts as `i / (n - 1)`).
+    /// `n` counts as `i / (n - 1)`). The weights are normalized by their sum,
+    /// so a distribution within the accepted tolerance of 1 stays in range.
     pub fn score_value(&self) -> Option<f64> {
         let Self::Score { probabilities } = self else {
             return None;
         };
         let top = probabilities.len().checked_sub(1).filter(|&t| t > 0)? as f64;
-        Some(
-            probabilities
-                .iter()
-                .enumerate()
-                .map(|(i, p)| p * i as f64 / top)
-                .sum(),
-        )
+        let total: f64 = probabilities.iter().sum();
+        if total <= 0.0 {
+            return None;
+        }
+        let weighted: f64 = probabilities
+            .iter()
+            .enumerate()
+            .map(|(i, p)| p * i as f64 / top)
+            .sum();
+        Some((weighted / total).clamp(0.0, 1.0))
     }
 
     /// How concentrated a choice or score distribution is, from 0 (flat) to
