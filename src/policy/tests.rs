@@ -455,6 +455,7 @@ fn handoff_reasons_use_the_spec_names() {
         HandoffReason::Uncertain,
         HandoffReason::JudgeUnavailable,
         HandoffReason::Flood,
+        HandoffReason::OpeningFailed,
     ] {
         assert!(
             spec.contains(&format!("| `{}` |", reason.as_str())),

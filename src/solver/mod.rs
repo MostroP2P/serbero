@@ -396,6 +396,15 @@ fn chunk(lines: &[String], budget: usize) -> Vec<String> {
     chunks
 }
 
+/// Sent when Serbero took a dispute but could not reach the parties, so a
+/// human must take it over.
+pub fn opening_failed(dispute_id: &str) -> String {
+    format!(
+        "Serbero took dispute {dispute_id} but could not start mediation.\n\
+         Please take it over; Serbero will not write to the parties."
+    )
+}
+
 /// How a mediated (or not mediated) dispute ended for Serbero.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Outcome {

@@ -144,6 +144,22 @@ pub fn mark_notified(conn: &Connection, dispute_id: &str, now: i64) -> Result<bo
 
 /// Disputes waiting for a solver whose last notification attempt is at or
 /// before `cutoff`: `new` ones (never delivered) and `notified` ones.
+/// Disputes first seen at or after `since` that are notified and never had
+/// a session: the ones mediation may still consider.
+pub fn list_notified_without_session(conn: &Connection, since: i64) -> Result<Vec<Dispute>> {
+    let mut stmt = conn.prepare(
+        "SELECT dispute_id, initiator, status, status_at, lifecycle, assigned_solver,
+                first_seen_at, last_notified_at, updated_at
+         FROM disputes d
+         WHERE lifecycle = 'notified'
+           AND first_seen_at >= ?1
+           AND NOT EXISTS (SELECT 1 FROM sessions s WHERE s.dispute_id = d.dispute_id)
+         ORDER BY first_seen_at",
+    )?;
+    let rows = stmt.query_map([since], from_row)?;
+    rows.map(|row| row?).collect()
+}
+
 pub fn list_awaiting_solver(conn: &Connection, cutoff: i64) -> Result<Vec<Dispute>> {
     let mut stmt = conn.prepare(
         "SELECT dispute_id, initiator, status, status_at, lifecycle, assigned_solver,

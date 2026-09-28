@@ -45,7 +45,12 @@ pub async fn run(settings: &Settings) -> Result<()> {
         })
         .collect::<Result<Vec<_>>>()?;
     let sender = RelayDmSender::new(client.clone(), keys.clone());
-    let notifier = Arc::new(Notifier::new(Arc::clone(&store), sender, solvers, mostro));
+    let notifier = Arc::new(Notifier::new(
+        Arc::clone(&store),
+        sender,
+        solvers.clone(),
+        mostro,
+    ));
     tracing::info!(
         version = env!("CARGO_PKG_VERSION"),
         pubkey = %keys.public_key(),
@@ -76,11 +81,115 @@ pub async fn run(settings: &Settings) -> Result<()> {
         }
         chat_task.run(chat_notifications).await;
     }));
+    if config.mediation.enabled {
+        start_mediation(
+            settings,
+            &client,
+            &keys,
+            mostro,
+            &store,
+            &notifier,
+            &chats,
+            &solvers,
+            &mut background,
+        )?;
+    }
     let result = event_loop(notifications, &notifier, crate::signal::shutdown()).await;
     drop(background);
     tracing::info!("shutting down");
     crate::nostr::shutdown(&client).await;
     result
+}
+
+/// Builds the mediator, hooks it to new disputes, and checks the judge in
+/// the background: until the checks pass, no dispute is taken, and a
+/// failed check leaves notification as it is (`docs/spec.md` §7.1).
+#[allow(clippy::too_many_arguments)]
+fn start_mediation(
+    settings: &Settings,
+    client: &Client,
+    keys: &Keys,
+    mostro: PublicKey,
+    store: &Arc<Mutex<Store>>,
+    notifier: &Arc<Notifier<RelayDmSender>>,
+    chats: &Arc<crate::chat::channels::Chats>,
+    solvers: &[Solver],
+    background: &mut Background,
+) -> Result<()> {
+    let config = &settings.config;
+    let catalogs = crate::catalog::Catalogs::embedded()?;
+    let mediator = Arc::new(crate::mediation::Mediator {
+        client: client.clone(),
+        keys: keys.clone(),
+        mostro,
+        store: Arc::clone(store),
+        gate: notifier.outbound_gate(),
+        chats: Arc::clone(chats),
+        catalogs: catalogs.clone(),
+        enabled: true,
+        default_language: config.mediation.default_language.clone(),
+        sender: RelayDmSender::new(client.clone(), keys.clone()),
+        solvers: solvers.to_vec(),
+        own_takes: notifier.own_takes(),
+        ready: false.into(),
+    });
+    let hook = Arc::clone(&mediator);
+    notifier.on_new_dispute(Box::new(move |dispute_id| {
+        let mediator = Arc::clone(&hook);
+        let dispute_id = dispute_id.to_owned();
+        tokio::spawn(async move {
+            mediator.consider(&dispute_id, now()).await;
+        });
+    }));
+
+    let languages: Vec<(String, String)> = config
+        .mediation
+        .languages
+        .iter()
+        .filter_map(|code| catalogs.get(code).map(|c| (code.clone(), c.name.clone())))
+        .collect();
+    let judge = crate::mediation::judge_from_config(
+        &config.judge,
+        settings.secrets.judge_api_key.as_ref().map(|k| k.expose()),
+    );
+    let thresholds = config.judge.active_thresholds().cloned();
+    let started = now();
+    background.push(tokio::spawn(async move {
+        let judge = match judge {
+            Ok(judge) => judge,
+            Err(reason) => {
+                tracing::warn!(reason, "mediation off");
+                return;
+            }
+        };
+        let languages: Vec<crate::judge::questions::Language<'_>> = languages
+            .iter()
+            .map(|(code, name)| crate::judge::questions::Language { code, name })
+            .collect();
+        let turn = crate::judge::questions::TurnQuestions::new(&languages);
+        match crate::mediation::check_judge(judge.as_ref(), thresholds.as_ref(), &turn).await {
+            crate::mediation::eligibility::Readiness::Ready => {
+                mediator.set_ready(true);
+                // Disputes that arrived while the checks ran were skipped.
+                let opened = mediator.reconsider(started, now()).await;
+                if opened > 0 {
+                    tracing::info!(
+                        opened,
+                        "mediated disputes that arrived before the judge was ready"
+                    );
+                }
+                tracing::info!(
+                    judge = judge.id(),
+                    question_set = turn.id(),
+                    "mediation ready"
+                );
+            }
+            crate::mediation::eligibility::Readiness::Off(reason) => {
+                tracing::warn!(reason, "mediation off");
+            }
+        }
+    }));
+    Ok(())
 }
 
 /// Background tasks started by `start`; dropping it stops them.

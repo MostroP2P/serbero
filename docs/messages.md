@@ -255,6 +255,13 @@ Serbero is mediating dispute <dispute_id>.
 You can take it over at any time; Serbero stops as soon as you do.
 ```
 
+### Mediation could not start
+
+```text
+Serbero took dispute <dispute_id> but could not start mediation.
+Please take it over; Serbero will not write to the parties.
+```
+
 ### Brief (on handoff or guidance)
 
 Rendered from the last turn's facts and the brief request

@@ -134,8 +134,6 @@ pub struct MediationConfig {
     pub max_rounds: u32,
     pub max_message_chars: usize,
     pub max_messages_per_turn: u32,
-    /// Largest fiat amount Serbero will mediate; 0 means no limit.
-    pub max_fiat_amount: u64,
     #[serde(deserialize_with = "duration::deserialize")]
     pub self_resolution_timeout: Duration,
 }
@@ -155,7 +153,6 @@ impl Default for MediationConfig {
             max_rounds: 3,
             max_message_chars: 2_000,
             max_messages_per_turn: 10,
-            max_fiat_amount: 0,
             self_resolution_timeout: Duration::from_secs(2 * 3_600),
         }
     }
