@@ -73,11 +73,13 @@ impl<S: DmSender> Mediator<S> {
     ) -> Result<()> {
         {
             let store = self.lock_store()?;
-            if !sessions::start_guiding(store.conn(), &session.session_id, now)? {
+            // One transaction: a `guiding` session always has its path.
+            let tx = store.conn().unchecked_transaction()?;
+            if !sessions::start_guiding(&tx, &session.session_id, now)? {
                 return Ok(());
             }
             events::append(
-                store.conn(),
+                &tx,
                 &events::NewEvent {
                     dispute_id: &session.dispute_id,
                     session_id: Some(&session.session_id),
@@ -86,11 +88,12 @@ impl<S: DmSender> Mediator<S> {
                     now,
                 },
             )?;
+            tx.commit()?;
         }
         let delivered = self
             .brief_solvers(session, Subject::Guide(path), Some(reading), now)
             .await?;
-        if delivered == 0 && !self.solvers.is_empty() {
+        if delivered == 0 {
             let store = self.lock_store()?;
             events::append(
                 store.conn(),
@@ -143,7 +146,7 @@ impl<S: DmSender> Mediator<S> {
     }
 
     /// Whether the party already received this template in this session.
-    fn received(&self, session: &Session, party: Party, template: &str) -> Result<bool> {
+    pub(super) fn received(&self, session: &Session, party: Party, template: &str) -> Result<bool> {
         let store = self.lock_store()?;
         Ok(
             messages::list_for_session(store.conn(), &session.session_id)?

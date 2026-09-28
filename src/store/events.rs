@@ -47,11 +47,13 @@ pub fn append(conn: &Connection, event: &NewEvent<'_>) -> Result<i64> {
 }
 
 /// The newest `notification_sent` event of one kind to one solver (hex
-/// pubkey), across disputes: what a solver's reply most likely answers.
+/// pubkey), across disputes, sent no later than `until`: what a solver's
+/// reply written at `until` most likely answers.
 pub fn last_notification_to(
     conn: &Connection,
     solver: &str,
     notification: &str,
+    until: i64,
 ) -> Result<Option<Event>> {
     let id: Option<(i64, String)> = conn
         .query_row(
@@ -59,8 +61,9 @@ pub fn last_notification_to(
              WHERE kind = 'notification_sent'
                AND json_extract(payload_json, '$.solver') = ?1
                AND json_extract(payload_json, '$.notification') = ?2
+               AND created_at <= ?3
              ORDER BY id DESC LIMIT 1",
-            [solver, notification],
+            rusqlite::params![solver, notification, until],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .optional()?;
@@ -189,13 +192,21 @@ mod tests {
         sent("d3", "update", "aa", 30);
         sent("d4", "brief", "bb", 40);
 
-        let last = last_notification_to(store.conn(), "aa", "brief")
+        let last = last_notification_to(store.conn(), "aa", "brief", 100)
             .unwrap()
             .unwrap();
 
         assert_eq!(last.dispute_id, "d2");
+        assert_eq!(
+            last_notification_to(store.conn(), "aa", "brief", 15)
+                .unwrap()
+                .unwrap()
+                .dispute_id,
+            "d1",
+            "a reply written before the second brief"
+        );
         assert!(
-            last_notification_to(store.conn(), "cc", "brief")
+            last_notification_to(store.conn(), "cc", "brief", 100)
                 .unwrap()
                 .is_none()
         );

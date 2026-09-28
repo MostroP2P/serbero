@@ -56,50 +56,69 @@ fn known_question(id: &str) -> bool {
     TurnQuestions::new(&[]).all().questions.contains_key(id)
 }
 
-/// Links a feedback to the evaluation it is about and records it. Without
-/// a named dispute, the solver is answering the last brief they got. The
+/// The solver's DM a feedback came in.
+#[derive(Debug, Clone, Copy)]
+pub struct Source<'a> {
+    /// Its event id: the same DM, delivered by several relays or replayed,
+    /// is recorded once.
+    pub id: &'a str,
+    /// When the solver wrote it.
+    pub written_at: i64,
+}
+
+/// Slack for the solver's clock when matching a reply to the brief before it.
+const CLOCK_SKEW_SECS: i64 = 120;
+
+/// Links a feedback to the evaluation it is about and records it. The reply
+/// answers the newest brief that solver got before writing it (for the named
+/// dispute, if any), and without such a brief it is not recorded. The
 /// evaluation is the session's newest turn evaluation that asked the
 /// question and existed when that brief was sent, so a later turn the
-/// solver never saw is not blamed. `source` identifies the solver's DM: the
-/// same DM, delivered by several relays or replayed, is recorded once.
-/// `None` when nothing matches or it was already recorded.
+/// solver never saw is not blamed. `None` when nothing matches or the DM
+/// was already recorded.
 pub fn record(
     store: &Mutex<Store>,
     solver: &str,
     feedback: &Feedback,
-    source: &str,
+    source: Source<'_>,
     now: i64,
 ) -> Result<Option<Recorded>> {
     let store = store
         .lock()
         .map_err(|_| Error::Schema("store lock poisoned".into()))?;
     let conn = store.conn();
-    if events::feedback_recorded(conn, source)? {
+    if events::feedback_recorded(conn, source.id)? {
         return Ok(None);
     }
+    let until = source.written_at.saturating_add(CLOCK_SKEW_SECS);
     let dispute_id = match &feedback.dispute_id {
         Some(id) => id.clone(),
-        None => match events::last_notification_to(conn, solver, BRIEF)? {
+        None => match events::last_notification_to(conn, solver, BRIEF, until)? {
             Some(event) => event.dispute_id,
             None => return Ok(None),
         },
     };
-    let briefed_at = events::list_for_dispute(conn, &dispute_id)?
+    let Some(briefed_at) = events::list_for_dispute(conn, &dispute_id)?
         .into_iter()
         .rev()
         .find(|e| {
             e.kind == "notification_sent"
                 && e.payload["notification"] == BRIEF
                 && e.payload["solver"] == solver
+                && e.created_at <= until
         })
-        .map(|e| e.created_at);
+        .map(|e| e.created_at)
+    else {
+        // The solver never got a brief for it: a typo or a guess.
+        return Ok(None);
+    };
     let Some(session) = sessions::latest_for_dispute(conn, &dispute_id)? else {
         return Ok(None);
     };
     let Some(evaluation) = evaluations::list_for_session(conn, &session.session_id)?
         .into_iter()
         .rev()
-        .filter(|e| briefed_at.is_none_or(|at| e.created_at <= at))
+        .filter(|e| e.created_at <= briefed_at)
         .find(|e| e.answers.get(&feedback.question).is_some())
     else {
         return Ok(None);
@@ -114,7 +133,7 @@ pub fn record(
                 "solver": solver,
                 "question": feedback.question,
                 "evaluation_id": evaluation.id,
-                "source": source,
+                "source": source.id,
             }),
             now,
         },
@@ -152,7 +171,10 @@ pub fn handle(
         store,
         &opened.identity.to_hex(),
         &feedback,
-        &event.id.to_hex(),
+        Source {
+            id: &event.id.to_hex(),
+            written_at: i64::try_from(event.created_at.as_secs()).unwrap_or(i64::MAX),
+        },
         now,
     )
 }
@@ -254,8 +276,12 @@ mod tests {
             dispute_id: None,
         };
 
-        let on_receipt = record(&store, "aa", &receipt, "e1", 50).unwrap().unwrap();
-        let on_payment = record(&store, "aa", &payment, "e2", 51).unwrap().unwrap();
+        let on_receipt = record(&store, "aa", &receipt, dm("e1"), 50)
+            .unwrap()
+            .unwrap();
+        let on_payment = record(&store, "aa", &payment, dm("e2"), 51)
+            .unwrap()
+            .unwrap();
 
         assert_eq!(
             on_receipt,
@@ -304,8 +330,8 @@ mod tests {
             dispute_id: None,
         };
 
-        let recorded = record(&store, "aa", &receipt, "e1", 50).unwrap();
-        let replayed = record(&store, "aa", &receipt, "e1", 55).unwrap();
+        let recorded = record(&store, "aa", &receipt, dm("e1"), 50).unwrap();
+        let replayed = record(&store, "aa", &receipt, dm("e1"), 55).unwrap();
 
         assert_eq!(recorded.map(|r| r.evaluation_id), Some(first));
         assert_eq!(replayed, None);
@@ -317,6 +343,58 @@ mod tests {
         assert_eq!(feedback, 1);
     }
 
+    /// A solver DM written at 45, after the brief at 40.
+    fn dm(id: &str) -> Source<'_> {
+        Source { id, written_at: 45 }
+    }
+
+    #[test]
+    fn a_late_delivered_reply_answers_the_brief_before_it() {
+        let (store, first, _) = judged_store("aa");
+        events::append(
+            store.lock().unwrap().conn(),
+            &events::NewEvent {
+                dispute_id: "d2",
+                session_id: None,
+                kind: "notification_sent",
+                payload: json!({ "notification": "brief", "solver": "aa" }),
+                now: 900,
+            },
+        )
+        .unwrap();
+        let receipt = Feedback {
+            question: "seller_receipt".into(),
+            dispute_id: None,
+        };
+
+        let recorded = record(&store, "aa", &receipt, dm("e1"), 1_000).unwrap();
+
+        assert_eq!(
+            recorded,
+            Some(Recorded {
+                dispute_id: "d1".into(),
+                evaluation_id: first
+            }),
+            "written at 45, before the brief for d2"
+        );
+    }
+
+    #[test]
+    fn a_named_dispute_the_solver_was_not_briefed_on_is_not_recorded() {
+        let (store, _, _) = judged_store("aa");
+        let named = Feedback {
+            question: "seller_receipt".into(),
+            dispute_id: Some("d1".into()),
+        };
+
+        assert_eq!(record(&store, "zz", &named, dm("e1"), 50).unwrap(), None);
+        assert!(
+            record(&store, "aa", &named, dm("e2"), 50)
+                .unwrap()
+                .is_some()
+        );
+    }
+
     #[test]
     fn feedback_with_nothing_to_link_is_not_recorded() {
         let (store, _, _) = judged_store("aa");
@@ -326,7 +404,7 @@ mod tests {
         };
 
         assert_eq!(
-            record(&store, "zz", &receipt, "e3", 50).unwrap(),
+            record(&store, "zz", &receipt, dm("e3"), 50).unwrap(),
             None,
             "no brief went to this solver"
         );
@@ -335,7 +413,7 @@ mod tests {
             ..receipt
         };
         assert_eq!(
-            record(&store, "aa", &other, "e4", 50).unwrap(),
+            record(&store, "aa", &other, dm("e4"), 50).unwrap(),
             None,
             "no session for the dispute"
         );

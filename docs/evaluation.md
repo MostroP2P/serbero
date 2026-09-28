@@ -182,7 +182,9 @@ subset and is not part of the default CI run.
   with the eval binary.
 - **Solver feedback.** A solver may reply to a brief with `wrong <question>`
   (for example `wrong seller_receipt`), optionally followed by the dispute id.
-  Without one, the reply is about the last brief that solver got. Serbero
+  Without one, the reply is about the last brief that solver got before
+  writing it; a reply about a dispute the solver got no brief for is not
+  recorded. Serbero
   records a `solver_feedback` event linked to the session's newest turn
   evaluation that asked the question and existed when that solver's brief
   was sent, and the turn becomes a candidate golden case. Only DMs from
