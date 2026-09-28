@@ -211,7 +211,9 @@ With the configured caps, the largest possible request stays far below the
 ## 3. From answers to facts
 
 Code converts raw answers into a `Facts` struct. For a `choice`, Serbero uses
-the probability of the specific option it cares about, not just the winner.
+the probability of the specific option it cares about, not just the winner,
+as a share of the choice's total (an accepted distribution may sum to up to
+1.01).
 
 | Fact | Known when | Otherwise |
 |---|---|---|

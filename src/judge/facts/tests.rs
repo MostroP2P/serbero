@@ -357,6 +357,34 @@ fn each_topic_counts_toward_outside_scope_on_its_own() {
 }
 
 #[test]
+fn two_options_of_one_choice_are_never_both_known() {
+    // A distribution may sum to up to 1.01 and still pass `check_answers`;
+    // with raw probabilities, two options at 0.504 would both reach a
+    // threshold of 0.502.
+    let thresholds = Thresholds {
+        guide: 0.502,
+        fact: 0.502,
+        ..THRESHOLDS
+    };
+    let mut turn = Turn::full();
+    let Some(Answer::Choice { probabilities }) = turn.answers.get_mut("seller_receipt") else {
+        panic!("seller_receipt is a choice");
+    };
+    probabilities.values_mut().for_each(|p| *p = 0.0);
+    probabilities.insert("says_received".into(), 0.504);
+    probabilities.insert("says_not_received".into(), 0.504);
+    check_answers(&turn.questions, &turn.answers).unwrap();
+
+    let facts = from_answers(&turn.answers, &thresholds, &enabled());
+
+    assert!(
+        !(facts.seller_received && facts.seller_not_received),
+        "received and not received are both known"
+    );
+    assert!(!facts.seller_received_for_guide);
+}
+
+#[test]
 fn party_facts_exist_only_for_parties_who_wrote() {
     let facts = Turn::new(&[Party::Seller], false).facts();
 
