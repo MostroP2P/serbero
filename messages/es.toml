@@ -12,10 +12,11 @@ decimal_separator = ","
 
 [words]
 # Allowed only in guide_* templates (docs/messages.md §4). Words match at the
-# start of a word, so stems cover every form ("liber": liberar, liberándola).
+# start of a word, so stems cover every form ("liber": liberar, liberándola;
+# "mentiros": mentiroso, mentirosa; "ganador" also matches ganadora).
 fund_action = ["liber", "cancel"]
 # Allowed in no template.
-verdict = ["ganador", "perdedor", "culpable", "mentiroso", "estafador"]
+verdict = ["ganador", "perdedor", "culpable", "mentiros", "estafador"]
 
 [templates]
 intro = "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático."

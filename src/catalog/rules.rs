@@ -13,9 +13,11 @@ pub const GUIDE_PREFIX: &str = "guide_";
 /// scrolling.
 pub const MAX_CHARS: usize = 450;
 
-/// The longest amount a template may be rendered with.
+/// The longest amount a template may be rendered with: `max_fiat_amount`
+/// is a `u64` and 0 means no limit, so the bound is `u64::MAX`, with
+/// decimals and a three-letter currency.
 const LONGEST_AMOUNT: Amount<'static> = Amount {
-    value: "100000000.00",
+    value: "18446744073709551615.99",
     currency: "XXX",
 };
 
@@ -39,11 +41,23 @@ fn check_one(catalog: &Catalog, reference: &Catalog, violations: &mut Vec<String
             violations.push(format!("{code}: missing template {id}"));
         }
     }
-    if catalog.words.fund_action.is_empty() {
+    // A blank entry matches nothing, so it does not count.
+    let has_words = |words: &[String]| words.iter().any(|w| !w.trim().is_empty());
+    if !has_words(&catalog.words.fund_action) {
         violations.push(format!("{code}: no fund-action words"));
     }
-    if catalog.words.verdict.is_empty() {
+    if !has_words(&catalog.words.verdict) {
         violations.push(format!("{code}: no verdict words"));
+    }
+    for word in catalog
+        .words
+        .fund_action
+        .iter()
+        .chain(&catalog.words.verdict)
+    {
+        if word.trim().is_empty() {
+            violations.push(format!("{code}: blank entry in a word list"));
+        }
     }
     for id in catalog.template_ids() {
         let Some(text) = catalog.template(id) else {
@@ -167,7 +181,7 @@ intro = "Hi"
                 if line.starts_with("fund_action =") {
                     "fund_action = []\n".to_owned()
                 } else if line.starts_with("verdict =") {
-                    "verdict = []\n".to_owned()
+                    "verdict = [\"\", \"  \"]\n".to_owned()
                 } else {
                     format!("{line}\n")
                 }
@@ -179,7 +193,20 @@ intro = "Hi"
 
         assert_eq!(
             check(&catalogs),
-            ["xx: no fund-action words", "xx: no verdict words"]
+            [
+                "xx: no fund-action words",
+                "xx: no verdict words",
+                "xx: blank entry in a word list",
+                "xx: blank entry in a word list",
+            ]
+        );
+    }
+
+    #[test]
+    fn the_length_probe_is_the_largest_configurable_amount() {
+        assert_eq!(
+            LONGEST_AMOUNT.value.split('.').next(),
+            Some(u64::MAX.to_string().as_str())
         );
     }
 
