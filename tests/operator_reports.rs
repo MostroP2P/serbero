@@ -3,8 +3,8 @@
 
 #![allow(clippy::unwrap_used)] // test helpers outside #[test] functions
 
-use rusqlite::types::ValueRef;
 use rusqlite::fallible_iterator::FallibleIterator;
+use rusqlite::types::ValueRef;
 use rusqlite::{Batch, Connection};
 use serbero::store::disputes::{self, Initiator, NewDispute};
 use serbero::store::sessions::{self, NewSession};
