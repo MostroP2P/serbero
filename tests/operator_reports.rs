@@ -206,6 +206,34 @@ fn an_old_handoff_resolved_this_week_is_not_counted_again() {
 }
 
 #[test]
+fn an_opening_that_failed_before_a_session_counts_as_a_handoff() {
+    let store = staged();
+    events::append(
+        store.conn(),
+        &events::NewEvent {
+            dispute_id: "d9",
+            session_id: None,
+            kind: "mediation_failed",
+            payload: json!({ "reason": "no trade keys" }),
+            now: now(),
+        },
+    )
+    .unwrap();
+
+    let sets = run(
+        store.conn(),
+        include_str!("../scripts/weekly-report.sql"),
+        0.0,
+    );
+
+    assert_eq!(sets[0][0][2], "2");
+    assert_eq!(
+        sets[1],
+        [["opening_failed", "1", "50"], ["uncertain", "1", "50"]]
+    );
+}
+
+#[test]
 fn the_median_of_an_even_count_is_the_mean_of_the_middle_two() {
     let store = staged();
     let (answers, action) = (json!({}), json!("wait"));

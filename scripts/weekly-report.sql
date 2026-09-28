@@ -5,6 +5,22 @@
 -- Read-only. Every section is one query, so each can be run on its own.
 
 -- Sessions opened, resolved by the parties themselves, and handed off.
+WITH handoffs AS (
+    -- A handoff counts in the week it happened (its `handoff` event, or
+    -- `mediation_failed` for `opening_failed`), not when the session last
+    -- changed. An opening that failed before a session existed is an
+    -- `opening_failed` handoff too.
+    SELECT s.handoff_reason AS reason,
+           (SELECT min(e.created_at) FROM events e
+             WHERE e.session_id = s.session_id
+               AND e.kind IN ('handoff', 'mediation_failed')) AS handed_off_at
+      FROM sessions s
+     WHERE s.handoff_reason IS NOT NULL
+    UNION ALL
+    SELECT 'opening_failed', created_at
+      FROM events
+     WHERE kind = 'mediation_failed' AND session_id IS NULL
+)
 SELECT
     (SELECT count(*) FROM sessions
       WHERE opened_at >= strftime('%s', 'now', '-7 days')) AS sessions_opened,
@@ -14,25 +30,26 @@ SELECT
         AND json_extract(e.payload_json, '$.resolved_by') = 'parties'
         AND s.handoff_reason IS NULL
         AND e.created_at >= strftime('%s', 'now', '-7 days')) AS resolved_by_parties,
-    (SELECT count(*) FROM sessions s
-      WHERE s.handoff_reason IS NOT NULL
-        AND (SELECT min(e.created_at) FROM events e
-              WHERE e.session_id = s.session_id
-                AND e.kind IN ('handoff', 'mediation_failed'))
-            >= CAST(strftime('%s', 'now', '-7 days') AS INTEGER)) AS handed_off;
+    (SELECT count(*) FROM handoffs
+      WHERE handed_off_at >= CAST(strftime('%s', 'now', '-7 days') AS INTEGER)) AS handed_off;
 
 -- Handoffs by reason, with each reason's share. A rising share of
--- `uncertain` or `round_limit` means a question needs golden cases. A
--- handoff counts in the week it happened (its `handoff` event, or
--- `mediation_failed` for `opening_failed`), not when the session last
--- changed.
+-- `uncertain` or `round_limit` means a question needs golden cases.
 WITH handoffs AS (
+    -- A handoff counts in the week it happened (its `handoff` event, or
+    -- `mediation_failed` for `opening_failed`), not when the session last
+    -- changed. An opening that failed before a session existed is an
+    -- `opening_failed` handoff too.
     SELECT s.handoff_reason AS reason,
            (SELECT min(e.created_at) FROM events e
              WHERE e.session_id = s.session_id
                AND e.kind IN ('handoff', 'mediation_failed')) AS handed_off_at
       FROM sessions s
      WHERE s.handoff_reason IS NOT NULL
+    UNION ALL
+    SELECT 'opening_failed', created_at
+      FROM events
+     WHERE kind = 'mediation_failed' AND session_id IS NULL
 )
 SELECT reason,
        count(*) AS handoffs,
