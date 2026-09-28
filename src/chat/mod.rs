@@ -59,6 +59,25 @@ pub async fn send_to_party(
     .await
 }
 
+/// Sends a mediation message (a question, reminder or guidance): only while
+/// Serbero mediates the session, never once it was handed to a person.
+pub async fn send_while_mediating(
+    client: &Client,
+    gate: &OutboundGate,
+    store: &Mutex<Store>,
+    serbero: &Keys,
+    session: &Session,
+    message: &Outbound<'_>,
+) -> Result<EventId> {
+    send_when(client, gate, store, serbero, session, message, |state| {
+        matches!(
+            state,
+            SessionState::Opening | SessionState::Active | SessionState::Guiding
+        )
+    })
+    .await
+}
+
 /// Sends the closing message of a session the parties resolved
 /// themselves (`resolved_thanks`, `docs/spec.md` §7.4): the session is
 /// already `closed`, and nothing is ever sent to a `superseded` one.
