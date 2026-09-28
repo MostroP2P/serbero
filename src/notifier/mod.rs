@@ -378,7 +378,13 @@ fn transition(
                 conn,
                 dispute,
                 "resolved",
-                json!({ "status": status.to_string(), "resolved_by": by }),
+                // `resolved_at` is Mostro's revision time: after downtime,
+                // it is when the dispute resolved, not when Serbero saw it.
+                json!({
+                    "status": status.to_string(),
+                    "resolved_by": by,
+                    "resolved_at": dispute.revision_at,
+                }),
                 now,
             )?;
             Change::Resolved(status.clone())

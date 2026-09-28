@@ -29,7 +29,12 @@ SELECT
       WHERE e.kind = 'resolved'
         AND json_extract(e.payload_json, '$.resolved_by') = 'parties'
         AND s.handoff_reason IS NULL
-        AND e.created_at >= strftime('%s', 'now', '-7 days')) AS resolved_by_parties,
+        -- A solver took it over first: not a self-resolution.
+        AND s.state != 'superseded'
+        -- Mostro's resolution time; the audit row may be written later,
+        -- after downtime.
+        AND coalesce(json_extract(e.payload_json, '$.resolved_at'), e.created_at)
+            >= CAST(strftime('%s', 'now', '-7 days') AS INTEGER)) AS resolved_by_parties,
     (SELECT count(*) FROM handoffs
       WHERE handed_off_at >= CAST(strftime('%s', 'now', '-7 days') AS INTEGER)) AS handed_off;
 

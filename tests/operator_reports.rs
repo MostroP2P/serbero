@@ -234,6 +234,65 @@ fn an_opening_that_failed_before_a_session_counts_as_a_handoff() {
 }
 
 #[test]
+fn self_resolutions_count_by_resolution_time_and_exclude_takeovers() {
+    let store = staged();
+    let conn = store.conn();
+    let eight_days_ago = now() - 8 * 24 * 3600;
+    for (dispute, session) in [("d3", "s3"), ("d4", "s4")] {
+        disputes::insert_if_new(
+            conn,
+            &NewDispute {
+                dispute_id: dispute,
+                initiator: Initiator::Buyer,
+                status: "in-progress",
+                status_at: now(),
+                now: now(),
+            },
+        )
+        .unwrap();
+        sessions::insert(
+            conn,
+            &NewSession {
+                session_id: session,
+                dispute_id: dispute,
+                buyer_trade_pubkey: "b",
+                seller_trade_pubkey: "s",
+                fiat_amount: None,
+                fiat_code: None,
+                payment_method: None,
+                order_published_at: None,
+                now: now(),
+            },
+        )
+        .unwrap();
+    }
+    // d3 resolved eight days ago; Serbero only saw it now.
+    // d4 was taken over by a solver before the parties resolved it.
+    sessions::set_state(conn, "s4", sessions::SessionState::Superseded, now()).unwrap();
+    for (dispute, resolved_at) in [("d3", eight_days_ago), ("d4", now())] {
+        events::append(
+            conn,
+            &events::NewEvent {
+                dispute_id: dispute,
+                session_id: None,
+                kind: "resolved",
+                payload: json!({
+                    "status": "released",
+                    "resolved_by": "parties",
+                    "resolved_at": resolved_at,
+                }),
+                now: now(),
+            },
+        )
+        .unwrap();
+    }
+
+    let sets = run(conn, include_str!("../scripts/weekly-report.sql"), 0.0);
+
+    assert_eq!(sets[0][0][1], "1", "only d2");
+}
+
+#[test]
 fn the_median_of_an_even_count_is_the_mean_of_the_middle_two() {
     let store = staged();
     let (answers, action) = (json!({}), json!("wait"));
