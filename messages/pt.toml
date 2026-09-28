@@ -11,12 +11,12 @@ thousands_separator = "."
 decimal_separator = ","
 
 [words]
-# Allowed only in guide_* templates (docs/messages.md §4). Words match at the
-# start of a word, so stems cover every form ("liber": liberar, liberando-a;
-# "culpad": culpado, culpada; "mentiros": mentiroso, mentirosa).
-fund_action = ["liber", "cancel"]
-# Allowed in no template.
-verdict = ["vencedor", "perdedor", "culpad", "mentiros", "golpista"]
+# Allowed only in guide_* templates (docs/messages.md §4). An entry also
+# matches longer words it starts ("libera" covers liberar and liberando-a,
+# "cancela" covers cancelar and cancelamento).
+fund_action = ["libera", "cancela"]
+# Allowed in no template; both genders listed.
+verdict = ["vencedor", "vencedora", "perdedor", "perdedora", "culpado", "culpada", "mentiroso", "mentirosa", "golpista"]
 
 [templates]
 intro = "Olá, sou o Serbero, um assistente automático que ajuda nesta disputa. Vou fazer algumas perguntas rápidas a você e à outra parte. Não posso mover fundos nem decidir a disputa, e uma pessoa pode assumir quando você pedir. As mensagens deste chat podem ser monitoradas e processadas por um serviço automático."
