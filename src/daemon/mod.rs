@@ -264,6 +264,9 @@ const SOLVER_DMS: &str = "serbero-solver-dms";
 /// replies (`docs/evaluation.md` §5). The notification stream is opened
 /// before the REQ, and the subscription is registered so the relay watcher
 /// re-sends it when a relay reconnects.
+/// How far back solver replies are read at startup.
+const FEEDBACK_BACKLOG: Duration = Duration::from_secs(7 * 24 * 3600);
+
 pub async fn solver_replies(
     client: Client,
     keys: Keys,
@@ -275,7 +278,9 @@ pub async fn solver_replies(
     let filter = Filter::new()
         .kind(Kind::PrivateDirectMessage)
         .pubkey(keys.public_key())
-        .since(Timestamp::now());
+        // Replies sent while Serbero was offline are still read; the same
+        // DM delivered again is recorded once (`feedback::record`).
+        .since(Timestamp::now() - FEEDBACK_BACKLOG);
     relays::register(&registry, SOLVER_DMS, filter.clone());
     if let Err(e) = client
         .subscribe(filter)
@@ -299,7 +304,7 @@ pub async fn solver_replies(
             ),
             Ok(None) => {}
             Err(e) => {
-                tracing::error!(event_id = %event.id, error = %e, "cannot record solver feedback")
+                tracing::error!(error = %e, "cannot record solver feedback")
             }
         }
     }

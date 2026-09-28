@@ -105,6 +105,20 @@ pub fn unfinished_resolutions(conn: &Connection, since: i64) -> Result<Vec<Resol
     rows.map(|r| r.map_err(Into::into)).collect()
 }
 
+/// Whether a `solver_feedback` from this source DM was already recorded.
+pub fn feedback_recorded(conn: &Connection, source: &str) -> Result<bool> {
+    Ok(conn
+        .query_row(
+            "SELECT 1 FROM events
+             WHERE kind = 'solver_feedback' AND json_extract(payload_json, '$.source') = ?1
+             LIMIT 1",
+            [source],
+            |_| Ok(()),
+        )
+        .optional()?
+        .is_some())
+}
+
 /// Events for one dispute, oldest first.
 pub fn list_for_dispute(conn: &Connection, dispute_id: &str) -> Result<Vec<Event>> {
     let mut stmt = conn.prepare(

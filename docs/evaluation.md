@@ -184,8 +184,11 @@ subset and is not part of the default CI run.
   (for example `wrong seller_receipt`), optionally followed by the dispute id.
   Without one, the reply is about the last brief that solver got. Serbero
   records a `solver_feedback` event linked to the session's newest turn
-  evaluation that asked the question, and the turn becomes a candidate golden
-  case. Only DMs from configured solvers naming a turn question are read.
+  evaluation that asked the question and existed when that solver's brief
+  was sent, and the turn becomes a candidate golden case. Only DMs from
+  configured solvers naming a turn question are read. Replies from the last
+  7 days are read at startup, and each DM is recorded once, however many
+  relays deliver it.
 - **Outcome signal.** When a dispute resolves, its final status (for example
   `settled` or `seller-refunded`) is stored next to the last
   `evidence_balance`. Over time this measures how well the advisory reading
