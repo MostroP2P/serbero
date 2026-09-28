@@ -55,6 +55,9 @@ from the order facts below.
   wrote to them. Per-message questions look only at these.
 - Message text is truncated at `max_message_chars`. Attachments are counted,
   never sent.
+- Identifiers Serbero knows (the parties' trade pubkeys and the session's
+  message event ids, as hex, `npub` or `note`) are replaced with
+  `[redacted]` even inside party text, in case a party pastes one.
 - Order facts Serbero does not know (the order event could not be fetched, or
   Mostro published the initiator as `unknown`) are left out, never guessed.
 - Message ids are the only link between answers and text. Party text never

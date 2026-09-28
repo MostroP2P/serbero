@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used)] // test helpers
+
 use serde_json::json;
 
 use super::*;
@@ -174,4 +176,25 @@ fn no_pubkey_or_event_id_can_appear_in_the_state() {
     ] {
         assert!(!text.contains(field), "state has field {field}");
     }
+}
+
+#[test]
+fn identifiers_pasted_by_a_party_are_redacted() {
+    let event_id = format!("{:064x}", 11);
+    let npub = PublicKey::parse(SELLER_KEY).unwrap().to_bech32().unwrap();
+    let note = EventId::parse(&event_id).unwrap().to_bech32().unwrap();
+    let pasted = format!(
+        "my key {} or {npub}, see {} and {note}",
+        BUYER_KEY.to_uppercase(),
+        event_id
+    );
+    let mut messages = conversation();
+    messages.push(message(15, Direction::In, Party::Buyer, &pasted));
+
+    let state = build(&session(), Initiator::Seller, &messages, 2_000);
+
+    assert_eq!(
+        state.value["transcript"][4]["text"],
+        json!("my key [redacted] or [redacted], see [redacted] and [redacted]")
+    );
 }

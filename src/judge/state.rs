@@ -2,10 +2,13 @@
 //! session and its messages.
 //!
 //! It never contains pubkeys, event ids, or anything a party did not write,
-//! apart from the order facts. Messages get short ids (`m1`, `m2`, …) in
+//! apart from the order facts. Identifiers Serbero knows (the parties' trade
+//! pubkeys and the messages' event ids, as hex, `npub` or `note`) are
+//! redacted even from party text, in case a party pastes one. Messages get short ids (`m1`, `m2`, …) in
 //! transcript order; they are the only link between answers and text, and
 //! `State::message_id` maps them back to stored rows.
 
+use nostr_sdk::prelude::{EventId, PublicKey, ToBech32};
 use serde_json::{Map, Value, json};
 
 use crate::store::disputes::Initiator;
@@ -44,6 +47,7 @@ pub fn build(
     messages: &[Message],
     max_chars: usize,
 ) -> State {
+    let known_ids = known_identifiers(session, messages);
     let mut transcript = Vec::with_capacity(messages.len());
     let mut latest_buyer = Vec::new();
     let mut latest_seller = Vec::new();
@@ -60,7 +64,8 @@ pub fn build(
                 entry.insert("from".into(), json!(message.party.to_string()));
             }
         }
-        entry.insert("text".into(), json!(truncate(&message.content, max_chars)));
+        let text = redact(&message.content, &known_ids);
+        entry.insert("text".into(), json!(truncate(&text, max_chars)));
         if message.attachments > 0 {
             entry.insert("attachments".into(), json!(message.attachments));
         }
@@ -110,6 +115,40 @@ fn order(session: &Session, opened_by: Initiator) -> Value {
         order.insert("dispute_opened_by".into(), json!(opened_by.to_string()));
     }
     Value::Object(order)
+}
+
+/// Placeholder for a redacted identifier.
+const REDACTED: &str = "[redacted]";
+
+/// Every form of the identifiers this session knows, lowercase.
+fn known_identifiers(session: &Session, messages: &[Message]) -> Vec<String> {
+    let mut ids = Vec::new();
+    for key in [&session.buyer_trade_pubkey, &session.seller_trade_pubkey] {
+        ids.push(key.to_ascii_lowercase());
+        ids.extend(PublicKey::parse(key).ok().and_then(|k| k.to_bech32().ok()));
+    }
+    for message in messages {
+        ids.push(message.inner_event_id.to_ascii_lowercase());
+        ids.extend(
+            EventId::parse(&message.inner_event_id)
+                .ok()
+                .and_then(|id| id.to_bech32().ok()),
+        );
+    }
+    ids.retain(|id| !id.is_empty());
+    ids
+}
+
+/// Replaces every occurrence of a known identifier, ignoring ASCII case.
+fn redact(text: &str, identifiers: &[String]) -> String {
+    let mut text = text.to_owned();
+    for id in identifiers {
+        // Identifiers are ASCII, so lowercasing keeps byte offsets.
+        while let Some(start) = text.to_ascii_lowercase().find(id.as_str()) {
+            text.replace_range(start..start + id.len(), REDACTED);
+        }
+    }
+    text
 }
 
 fn truncate(text: &str, max: usize) -> &str {
