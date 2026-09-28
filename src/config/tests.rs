@@ -66,9 +66,11 @@ fn sample_thresholds_parse_once_uncommented() {
 
     let settings = Settings::parse(&uncommented, base_env()).unwrap();
 
-    assert_eq!(
-        settings.config.judge.active_thresholds().unwrap().guide,
-        0.90
+    let thresholds = settings.config.judge.active_thresholds().unwrap();
+    assert_eq!(thresholds.guide, 0.90);
+    assert!(
+        thresholds.validated_languages.is_empty(),
+        "no language is validated before T3.10"
     );
 }
 
@@ -264,6 +266,43 @@ fn choice_thresholds_at_or_below_one_half_are_rejected() {
     let err = error_of(&text, base_env());
 
     assert!(err.contains("fact = 0.5 must be above 0.5"), "{err}");
+}
+
+#[test]
+fn validated_languages_are_read_from_the_thresholds() {
+    let text = minimal(
+        "[judge.thresholds.\"typesafe/jev-1.13.0\"]\n\
+         guide = 0.9\nfact = 0.8\nhuman_request = 0.8\nfraud = 0.6\nconflict = 0.75\noutside_scope = 0.8\n\
+         validated_languages = [\"en\", \"es\"]\n",
+    );
+
+    let settings = Settings::parse(&text, base_env()).unwrap();
+
+    assert_eq!(
+        settings
+            .config
+            .judge
+            .active_thresholds()
+            .unwrap()
+            .validated_languages,
+        ["en", "es"]
+    );
+}
+
+#[test]
+fn a_validated_language_without_a_catalog_is_rejected() {
+    let text = minimal(
+        "[judge.thresholds.\"typesafe/jev-1.13.0\"]\n\
+         guide = 0.9\nfact = 0.8\nhuman_request = 0.8\nfraud = 0.6\nconflict = 0.75\noutside_scope = 0.8\n\
+         validated_languages = [\"en\", \"xx\"]\n",
+    );
+
+    let err = error_of(&text, base_env());
+
+    assert!(
+        err.contains("validated_languages: \"xx\" has no template catalog"),
+        "{err}"
+    );
 }
 
 #[test]

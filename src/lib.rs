@@ -11,5 +11,6 @@ pub mod logging;
 pub mod mostro;
 pub mod nostr;
 pub mod notifier;
+pub mod policy;
 pub mod signal;
 pub mod store;

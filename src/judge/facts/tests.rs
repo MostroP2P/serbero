@@ -14,6 +14,7 @@ const THRESHOLDS: Thresholds = Thresholds {
     fraud: 0.6,
     conflict: 0.75,
     outside_scope: 0.7,
+    validated_languages: Vec::new(),
 };
 
 const LANGUAGES: [Language<'static>; 3] = [

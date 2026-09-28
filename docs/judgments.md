@@ -268,10 +268,17 @@ checked in order and the first match wins.
 | 7 | `buyer_not_sent_for_guide` | `Guide(PaymentNotSent)` if both parties' languages are validated, otherwise `Handoff(facts_gathered)` |
 | 8 | `buyer_sent` and `seller_not_received` and `conflict` and details and check already asked (or known) | `Handoff(conflicting_claims)` |
 | 9 | `rounds ≥ max_rounds` | `Handoff(round_limit)` |
-| 10 | Next questions (§4.1) produce at least one template | `Ask { … }` |
+| 10 | Next questions (§4.1) produce at least one question template (`ask_*`) | `Ask { … }` with every template §4.1 picked |
 | 11 | A needed fact is still unknown after both of its variants were sent | `Handoff(uncertain)` |
 | 12 | Both payment facts are known | `Handoff(facts_gathered)` |
 | 13 | Otherwise | `Wait` (the response timeout covers silence) |
+
+Row 10 needs a question, not only `thanks_waiting` or `what_happens_next`:
+those ask nothing, so no response timer would run, and a session whose facts
+are all known would wait for a message instead of handing off (row 12).
+
+The policy is `policy::decide` in `src/policy/mod.rs`; it takes the §4.1
+templates as input, so each row is tested on its own.
 
 ### 4.1 Next question for each party
 
