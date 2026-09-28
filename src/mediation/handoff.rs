@@ -20,7 +20,7 @@ use crate::store::sessions::{self, Party, Session};
 use crate::store::{disputes, evaluations, events};
 
 /// The party notice sent on every handoff (`docs/messages.md` §2).
-const HANDOFF_NOTICE: &str = "handoff_notice";
+pub(super) const HANDOFF_NOTICE: &str = "handoff_notice";
 
 /// Event kinds that record the last party message the solvers have seen.
 const HANDOFF_EVENT: &str = "handoff";

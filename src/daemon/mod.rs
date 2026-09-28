@@ -75,10 +75,12 @@ pub async fn run(settings: &Settings) -> Result<()> {
     ));
     let chat_notifications = client.notifications();
     let chat_task = Arc::clone(&chats);
+    let (resumed_tx, resumed) = watch::channel(false);
     background.push(tokio::spawn(async move {
         if let Err(e) = chat_task.resume().await {
             tracing::error!(error = %e, "cannot resume chat channels");
         }
+        let _ = resumed_tx.send(true);
         chat_task.run(chat_notifications).await;
     }));
     if config.mediation.enabled {
@@ -90,6 +92,7 @@ pub async fn run(settings: &Settings) -> Result<()> {
             &store,
             &notifier,
             &chats,
+            resumed,
             &solvers,
             &mut background,
         )?;
@@ -113,6 +116,7 @@ fn start_mediation(
     store: &Arc<Mutex<Store>>,
     notifier: &Arc<Notifier<RelayDmSender>>,
     chats: &Arc<crate::chat::channels::Chats>,
+    mut chats_resumed: watch::Receiver<bool>,
     solvers: &[Solver],
     background: &mut Background,
 ) -> Result<()> {
@@ -148,7 +152,9 @@ fn start_mediation(
     background.push(tokio::spawn(
         Arc::clone(&mediator).run_turns(received, config.mediation.quiet_period),
     ));
-    background.push(tokio::spawn(Arc::clone(&mediator).run_timers()));
+    background.push(tokio::spawn(Arc::clone(&mediator).run_timers(async move {
+        let _ = chats_resumed.wait_for(|done| *done).await;
+    })));
     let closing = Arc::clone(&mediator);
     notifier.on_resolved(Box::new(move |dispute_id, status, by_parties| {
         let mediator = Arc::clone(&closing);

@@ -153,7 +153,7 @@ impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
         if wrote.is_empty() {
             return Ok(TurnOutcome::Skipped("no new party messages"));
         }
-        if self.flooded(&session, &built.value, now)? {
+        if self.flooded(&session, &messages, now)? {
             self.hand_off(&session, HandoffReason::Flood, None, now)
                 .await?;
             return Ok(TurnOutcome::Decided(Action::Handoff(HandoffReason::Flood)));
@@ -232,13 +232,36 @@ impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
     /// Records a flood strike for each party over `max_messages_per_turn`
     /// in this turn; a party with `FLOOD_STRIKES` strikes floods the session
     /// (`docs/judgments.md` §4.2). Checked before the judge is called.
-    fn flooded(&self, session: &Session, state: &serde_json::Value, now: i64) -> Result<bool> {
+    ///
+    /// A turn's messages are those after the last judged turn or strike, in
+    /// arrival order: messages already counted never count again, even when
+    /// Serbero sent nothing in between (a guiding `Wait`).
+    fn flooded(&self, session: &Session, messages: &[Message], now: i64) -> Result<bool> {
         let store = self.lock_store()?;
+        let history = events::list_for_dispute(store.conn(), &session.dispute_id)?;
+        let strikes: Vec<_> = history
+            .iter()
+            .filter(|e| e.session_id.as_deref() == Some(&session.session_id))
+            .filter(|e| e.kind == FLOOD_STRIKE)
+            .collect();
+        let judged = evaluations::list_for_session(store.conn(), &session.session_id)?
+            .iter()
+            .map(|e| e.last_message_id)
+            .max()
+            .unwrap_or(0);
+        let counted = strikes
+            .iter()
+            .filter_map(|e| e.payload["last_message_id"].as_i64())
+            .max()
+            .unwrap_or(0)
+            .max(judged);
+        let last_message_id = messages.iter().map(|m| m.id).max().unwrap_or(0);
         let mut flooded = false;
         for party in [Party::Buyer, Party::Seller] {
-            let count = state["latest"][party.to_string()]
-                .as_array()
-                .map_or(0, Vec::len);
+            let count = messages
+                .iter()
+                .filter(|m| m.direction == Direction::In && m.party == party && m.id > counted)
+                .count();
             let count = u32::try_from(count).unwrap_or(u32::MAX);
             if !timers::over_limit(count, self.settings.max_messages_per_turn) {
                 continue;
@@ -249,16 +272,19 @@ impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
                     dispute_id: &session.dispute_id,
                     session_id: Some(&session.session_id),
                     kind: FLOOD_STRIKE,
-                    payload: json!({ "party": party.to_string(), "messages": count }),
+                    payload: json!({
+                        "party": party.to_string(),
+                        "messages": count,
+                        "last_message_id": last_message_id,
+                    }),
                     now,
                 },
             )?;
-            let strikes = events::list_for_dispute(store.conn(), &session.dispute_id)?
+            let earlier = strikes
                 .iter()
-                .filter(|e| e.session_id.as_deref() == Some(&session.session_id))
-                .filter(|e| e.kind == FLOOD_STRIKE && e.payload["party"] == party.to_string())
+                .filter(|e| e.payload["party"] == party.to_string())
                 .count();
-            flooded |= timers::is_flood(u32::try_from(strikes).unwrap_or(u32::MAX));
+            flooded |= timers::is_flood(u32::try_from(earlier + 1).unwrap_or(u32::MAX));
         }
         Ok(flooded)
     }

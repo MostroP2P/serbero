@@ -202,10 +202,21 @@ struct Options {
     /// A buyer message stored before the turn task starts, as after a
     /// restart.
     pending: Option<&'static str>,
+    /// The relay accepts connections and never answers.
+    silent_relay: bool,
 }
 
 async fn script_with(picks: &[(&'static str, (&'static str, f64))], options: Options) -> Script {
-    let relay = MockRelay::run().await.unwrap();
+    let relay = if options.silent_relay {
+        MockRelay::run_with_opts(LocalRelayTestOptions {
+            unresponsive_connection: Some(Duration::from_secs(60)),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+    } else {
+        MockRelay::run().await.unwrap()
+    };
     let url = relay.url().await.to_string();
     let (serbero, buyer, seller) = (Keys::generate(), Keys::generate(), Keys::generate());
     let store = Store::open_in_memory().unwrap();
@@ -299,12 +310,18 @@ async fn script_with(picks: &[(&'static str, (&'static str, f64))], options: Opt
             name: "Portuguese",
         },
     ];
+    let notifier = Arc::new(serbero::notifier::Notifier::new(
+        Arc::clone(&store),
+        outbox.clone(),
+        vec![],
+        mostro.public_key(),
+    ));
     let mediator = Arc::new(Mediator {
         client: client.clone(),
         keys: serbero.clone(),
         mostro: mostro.public_key(),
         store: Arc::clone(&store),
-        gate: Arc::default(),
+        gate: notifier.outbound_gate(),
         chats: Arc::clone(&chats),
         catalogs,
         settings: MediationSettings {
@@ -351,12 +368,6 @@ async fn script_with(picks: &[(&'static str, (&'static str, f64))], options: Opt
         .unwrap();
     }
 
-    let notifier = Arc::new(serbero::notifier::Notifier::new(
-        Arc::clone(&store),
-        outbox.clone(),
-        vec![],
-        mostro.public_key(),
-    ));
     let closing = Arc::clone(&mediator);
     notifier.on_resolved(Box::new(move |dispute_id, status, by_parties| {
         let (mediator, dispute_id, status) = (
@@ -1132,4 +1143,129 @@ async fn a_turn_waits_for_the_judge_to_be_ready() {
     });
 
     assert_eq!(buyer.next_from_serbero().await, en("ask_buyer_sent_simple"));
+}
+
+#[tokio::test]
+async fn a_flood_strike_is_not_counted_again_while_guiding() {
+    let script = script(&[("seller_receipt", ("says_received", 0.97))]).await;
+    let mut seller = seller_side(&script).await;
+    seller.say("sí, me llegó el pago").await;
+    assert_eq!(seller.next_from_serbero().await, en("guide_arrived_seller"));
+    let mut buyer = buyer_side(&script).await;
+    assert_eq!(buyer.next_from_serbero().await, en("guide_arrived_buyer"));
+
+    for text in ["1", "2", "3", "4"] {
+        buyer.say(text).await;
+    }
+    tokio::time::sleep(QUIET * 3).await;
+    let judged = script.judge.calls.load(Ordering::SeqCst);
+    buyer.say("5").await;
+    tokio::time::timeout(WAIT, async {
+        while script.judge.calls.load(Ordering::SeqCst) == judged {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("the next turn is judged");
+
+    let strikes = event_kinds(&script)
+        .iter()
+        .filter(|k| *k == "flood_strike")
+        .count();
+    assert_eq!(strikes, 1);
+    assert_eq!(
+        sessions::get(script.store.lock().unwrap().conn(), "s1")
+            .unwrap()
+            .unwrap()
+            .state,
+        SessionState::Guiding
+    );
+}
+
+#[tokio::test]
+async fn the_timer_retries_a_brief_and_a_notice_that_did_not_go_out() {
+    let script = script(&[("buyer_wants_human", ("yes", 0.95))]).await;
+    let mut buyer = buyer_side(&script).await;
+    script.outbox.fail(true);
+    buyer.say("quiero hablar con una persona").await;
+    assert_eq!(buyer.next_from_serbero().await, en("handoff_notice"));
+    // As if the buyer's notice had not reached any relay.
+    script
+        .store
+        .lock()
+        .unwrap()
+        .conn()
+        .execute(
+            "DELETE FROM messages WHERE template_id = 'handoff_notice' AND party = 'buyer'",
+            [],
+        )
+        .unwrap();
+    script.outbox.fail(false);
+
+    let now = serbero::daemon::now();
+    script.mediator.tick(now).await.unwrap();
+
+    let brief = wait_for_text(&script.outbox, "Dispute d1 · handed off: human_requested\n").await;
+    assert!(brief.contains("human requested: yes"), "{brief}");
+    assert_eq!(buyer.next_from_serbero().await, en("handoff_notice"));
+    let sent = script.outbox.texts().len();
+    script.mediator.tick(now + 30).await.unwrap();
+    assert_eq!(script.outbox.texts().len(), sent, "the brief went out once");
+    assert!(event_kinds(&script).contains(&"brief_sent".to_owned()));
+}
+
+#[tokio::test]
+async fn the_timer_resends_guidance_a_party_missed() {
+    let script = script(&[("seller_receipt", ("says_received", 0.97))]).await;
+    let mut buyer = buyer_side(&script).await;
+    let seller = seller_side(&script).await;
+    seller.say("sí, me llegó el pago").await;
+    assert_eq!(buyer.next_from_serbero().await, en("guide_arrived_buyer"));
+    script
+        .store
+        .lock()
+        .unwrap()
+        .conn()
+        .execute(
+            "DELETE FROM messages WHERE template_id = 'guide_arrived_buyer'",
+            [],
+        )
+        .unwrap();
+
+    script.mediator.tick(serbero::daemon::now()).await.unwrap();
+
+    assert_eq!(buyer.next_from_serbero().await, en("guide_arrived_buyer"));
+}
+
+/// AGENTS.md relays rule 7: timer sends to a silent relay never hold back
+/// dispute events.
+#[tokio::test]
+async fn a_silent_relay_never_delays_dispute_events_while_the_timer_sends() {
+    let script = script_with(
+        &[],
+        Options {
+            silent_relay: true,
+            ..Options::default()
+        },
+    )
+    .await;
+    // Both openers are overdue: the tick reminds both parties.
+    let mediator = Arc::clone(&script.mediator);
+    let timer = tokio::spawn(async move { mediator.tick(1 + 1800).await });
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(!timer.is_finished(), "the reminder is stuck on the relay");
+
+    let started = std::time::Instant::now();
+    script
+        .notifier
+        .handle_event(&dispute_event(&script.mostro, "released"), 9_001)
+        .await
+        .unwrap();
+
+    assert!(
+        started.elapsed() < Duration::from_secs(1),
+        "{:?}",
+        started.elapsed()
+    );
+    timer.abort();
 }
