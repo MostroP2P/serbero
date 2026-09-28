@@ -15,7 +15,7 @@ use crate::judge::state;
 use crate::nostr::dm::DmSender;
 use crate::policy::next::{History, next_questions};
 use crate::policy::{Action, NextQuestions, Phase, Turn, decide};
-use crate::store::messages::{self, Message};
+use crate::store::messages::{self, Direction, Message};
 use crate::store::sessions::{self, Party, Session, SessionState};
 use crate::store::{disputes, evaluations};
 
@@ -25,6 +25,8 @@ pub enum TurnOutcome {
     /// Nothing to judge: the session is not live, no party wrote, or the
     /// judge is not ready.
     Skipped(&'static str),
+    /// Not judged yet; the turn runs again after the quiet period.
+    Deferred(&'static str),
     /// The judge failed; the evaluation was not made.
     JudgeFailed(String),
     Decided(Action),
@@ -41,6 +43,11 @@ impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
         quiet_period: Duration,
     ) {
         let mut settle = Settle::new(quiet_period);
+        // Party messages stored before a restart, and not answered, are not
+        // forwarded again by the relays (they are duplicates): schedule them.
+        for session_id in self.pending_sessions() {
+            settle.touch(&session_id, Instant::now());
+        }
         loop {
             let deadline = settle.next_deadline();
             tokio::select! {
@@ -50,15 +57,42 @@ impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
                 },
                 () = sleep_until(deadline), if deadline.is_some() => {
                     for session_id in settle.take_due(Instant::now()) {
-                        self.turn_logged(&session_id, crate::daemon::now()).await;
+                        if self.turn_logged(&session_id, crate::daemon::now()).await {
+                            // Not judged yet (judge not ready, or newer
+                            // messages came in while judging): keep it due.
+                            settle.touch(&session_id, Instant::now());
+                        }
                     }
                 }
             }
         }
     }
 
-    async fn turn_logged(&self, session_id: &str, now: i64) {
-        match self.run_turn(session_id, now).await {
+    /// Live sessions whose newest message, by arrival, is a party's.
+    fn pending_sessions(&self) -> Vec<String> {
+        let Ok(store) = self.lock_store() else {
+            return Vec::new();
+        };
+        let Ok(live) = sessions::list_live(store.conn()) else {
+            return Vec::new();
+        };
+        live.into_iter()
+            .filter(|session| {
+                messages::list_for_session(store.conn(), &session.session_id)
+                    .ok()
+                    .and_then(|m| m.into_iter().max_by_key(|m| m.id))
+                    .is_some_and(|m| m.direction == Direction::In)
+            })
+            .map(|session| session.session_id)
+            .collect()
+    }
+
+    /// Runs one turn and logs it. Returns whether the turn must run again.
+    async fn turn_logged(&self, session_id: &str, now: i64) -> bool {
+        let outcome = self.run_turn(session_id, now).await;
+        let again = matches!(outcome, Ok(TurnOutcome::Deferred(_)));
+        match outcome {
+            Ok(TurnOutcome::Deferred(why)) => tracing::debug!(session_id, why, "turn deferred"),
             Ok(TurnOutcome::Decided(action)) => {
                 tracing::info!(session_id, action = %json!(action), "turn decided")
             }
@@ -71,12 +105,13 @@ impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
             }
             Err(e) => tracing::error!(session_id, error = %e, "turn failed"),
         }
+        again
     }
 
     /// One turn over the session as stored now.
     pub async fn run_turn(&self, session_id: &str, now: i64) -> Result<TurnOutcome> {
         let Some(ready) = self.ready_judge() else {
-            return Ok(TurnOutcome::Skipped("judge not ready"));
+            return Ok(TurnOutcome::Deferred("judge not ready"));
         };
         let Some((session, messages, opened_by)) = self.load(session_id)? else {
             return Ok(TurnOutcome::Skipped("session not live"));
@@ -115,6 +150,11 @@ impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
             Err(e) => return Ok(TurnOutcome::JudgeFailed(e.to_string())),
         };
         let latency_ms = u32::try_from(started.elapsed().as_millis()).unwrap_or(u32::MAX);
+        if self.newer_than(&session, &messages)? {
+            // The party wrote again while the judge worked: acting now would
+            // answer an outdated state. The next turn judges everything.
+            return Ok(TurnOutcome::Deferred("newer party messages arrived"));
+        }
         let facts =
             facts::from_answers(&judged.answers, &ready.thresholds, &self.settings.languages);
         let changed = self.update_languages(&session, &facts, now)?;
@@ -165,6 +205,17 @@ impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
             Action::Guide(_) | Action::Wait => {}
         }
         Ok(TurnOutcome::Decided(action))
+    }
+
+    /// Whether a party message arrived after `messages` was read.
+    fn newer_than(&self, session: &Session, messages: &[Message]) -> Result<bool> {
+        let seen = messages.iter().map(|m| m.id).max().unwrap_or(0);
+        let store = self.lock_store()?;
+        Ok(
+            messages::list_for_session(store.conn(), &session.session_id)?
+                .iter()
+                .any(|m| m.direction == Direction::In && m.id > seen),
+        )
     }
 
     /// The live session, its messages in order, and who opened the dispute.
@@ -245,7 +296,9 @@ impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
                 session_id: &session.session_id,
                 question_set_version: ready.turn.id(),
                 judge_id: ready.judge.id(),
-                last_message_id: messages.last().map_or(0, |m| m.id),
+                // The state covers every stored row; rows are ordered by
+                // time, so the newest one is not always the last.
+                last_message_id: messages.iter().map(|m| m.id).max().unwrap_or(0),
                 answers: &answers,
                 action: &action,
                 input_tokens: judged.input_tokens,

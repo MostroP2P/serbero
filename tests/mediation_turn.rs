@@ -58,6 +58,8 @@ impl Outbox {
 struct ScriptedJudge {
     picks: BTreeMap<&'static str, (&'static str, f64)>,
     calls: AtomicUsize,
+    /// How long each request takes.
+    delay: Duration,
 }
 
 fn neutral(id: &str) -> &'static str {
@@ -131,7 +133,9 @@ impl Judge for ScriptedJudge {
             .iter()
             .map(|(id, q)| (id.clone(), self.answer(id, q)))
             .collect();
+        let delay = self.delay;
         Box::pin(async move {
+            tokio::time::sleep(delay).await;
             Ok(Judged {
                 answers,
                 input_tokens: Some(1000),
@@ -159,6 +163,8 @@ struct Script {
     url: String,
     judge: Arc<ScriptedJudge>,
     outbox: Outbox,
+    mediator: Arc<Mediator<Outbox>>,
+    languages: [Language<'static>; 3],
     _relay: MockRelay,
     _tasks: Vec<tokio::task::JoinHandle<()>>,
 }
@@ -167,6 +173,21 @@ struct Script {
 /// the turn task, and the scripted judge running. Both openers were sent in
 /// English and are unanswered.
 async fn script(picks: &[(&'static str, (&'static str, f64))]) -> Script {
+    script_with(picks, Options::default()).await
+}
+
+/// Variations of a script.
+#[derive(Default)]
+struct Options {
+    judge_delay: Duration,
+    /// The judge is not ready when the script starts.
+    not_ready: bool,
+    /// A buyer message stored before the turn task starts, as after a
+    /// restart.
+    pending: Option<&'static str>,
+}
+
+async fn script_with(picks: &[(&'static str, (&'static str, f64))], options: Options) -> Script {
     let relay = MockRelay::run().await.unwrap();
     let url = relay.url().await.to_string();
     let (serbero, buyer, seller) = (Keys::generate(), Keys::generate(), Keys::generate());
@@ -242,6 +263,7 @@ async fn script(picks: &[(&'static str, (&'static str, f64))]) -> Script {
     let judge = Arc::new(ScriptedJudge {
         picks: picks.iter().copied().collect(),
         calls: AtomicUsize::new(0),
+        delay: options.judge_delay,
     });
     let outbox = Outbox::default();
     let catalogs = Catalogs::embedded().unwrap();
@@ -282,11 +304,30 @@ async fn script(picks: &[(&'static str, (&'static str, f64))]) -> Script {
         own_takes: Arc::default(),
         judge: Default::default(),
     });
-    mediator.set_ready(ReadyJudge {
-        judge: Arc::clone(&judge) as Arc<dyn Judge>,
-        thresholds: thresholds(),
-        turn: TurnQuestions::new(&languages),
-    });
+    if !options.not_ready {
+        mediator.set_ready(ReadyJudge {
+            judge: Arc::clone(&judge) as Arc<dyn Judge>,
+            thresholds: thresholds(),
+            turn: TurnQuestions::new(&languages),
+        });
+    }
+    if let Some(text) = options.pending {
+        messages::insert_if_new(
+            store.lock().unwrap().conn(),
+            &NewMessage {
+                session_id: "s1",
+                direction: Direction::In,
+                party: serbero::store::sessions::Party::Buyer,
+                template_id: None,
+                lang: None,
+                content: text,
+                attachments: 0,
+                inner_event_id: "stored-before-restart",
+                created_at: 2,
+            },
+        )
+        .unwrap();
+    }
 
     let notifications = client.notifications();
     let session = sessions::get(store.lock().unwrap().conn(), "s1")
@@ -307,6 +348,8 @@ async fn script(picks: &[(&'static str, (&'static str, f64))]) -> Script {
         url,
         judge,
         outbox,
+        mediator,
+        languages,
         _relay: relay,
         _tasks: tasks,
     }
@@ -416,6 +459,17 @@ async fn a_burst_of_messages_is_judged_once_and_answered_once() {
     assert_eq!(evaluations.len(), 1);
     assert_eq!(evaluations[0].judge_id, "test/scripted");
     assert_eq!(evaluations[0].input_tokens, Some(1000));
+    let newest = messages::list_for_session(store.conn(), "s1")
+        .unwrap()
+        .iter()
+        .filter(|m| m.direction == Direction::In)
+        .map(|m| m.id)
+        .max()
+        .unwrap();
+    assert_eq!(
+        evaluations[0].last_message_id, newest,
+        "the cutoff covers every judged row"
+    );
     assert_eq!(
         evaluations[0].action,
         serde_json::json!({ "ask": { "buyer": ["ask_buyer_sent_simple"], "seller": [] } }),
@@ -544,4 +598,82 @@ async fn a_request_for_a_person_hands_off_and_later_messages_are_forwarded() {
         judged,
         "no judging after a handoff"
     );
+}
+
+#[tokio::test]
+async fn a_message_sent_while_judging_is_answered_together() {
+    let script = script_with(
+        &[("buyer_message_kind", ("greeting", 1.0))],
+        Options {
+            judge_delay: Duration::from_millis(800),
+            ..Options::default()
+        },
+    )
+    .await;
+    let mut buyer = buyer_side(&script).await;
+
+    buyer.say("hola").await;
+    tokio::time::sleep(QUIET + Duration::from_millis(300)).await;
+    buyer.say("ya pagué").await;
+    let reply = buyer.next_from_serbero().await;
+
+    assert_eq!(reply, en("ask_buyer_sent_simple"));
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(
+        script.judge.calls.load(Ordering::SeqCst),
+        2,
+        "the stale turn was not acted on"
+    );
+    let store = script.store.lock().unwrap();
+    assert_eq!(
+        evaluations::list_for_session(store.conn(), "s1")
+            .unwrap()
+            .len(),
+        1
+    );
+    let replies = messages::list_for_session(store.conn(), "s1")
+        .unwrap()
+        .into_iter()
+        .filter(|m| m.direction == Direction::Out && m.inner_event_id.len() == 64)
+        .count();
+    assert_eq!(replies, 1, "one answer for both messages");
+}
+
+#[tokio::test]
+async fn a_message_stored_before_a_restart_gets_its_turn() {
+    let script = script_with(
+        &[("buyer_message_kind", ("greeting", 1.0))],
+        Options {
+            pending: Some("hola?"),
+            ..Options::default()
+        },
+    )
+    .await;
+    let mut buyer = buyer_side(&script).await;
+
+    assert_eq!(buyer.next_from_serbero().await, en("ask_buyer_sent_simple"));
+}
+
+#[tokio::test]
+async fn a_turn_waits_for_the_judge_to_be_ready() {
+    let script = script_with(
+        &[("buyer_message_kind", ("greeting", 1.0))],
+        Options {
+            not_ready: true,
+            ..Options::default()
+        },
+    )
+    .await;
+    let mut buyer = buyer_side(&script).await;
+    buyer.say("hola").await;
+    tokio::time::sleep(QUIET * 2).await;
+    assert_eq!(script.judge.calls.load(Ordering::SeqCst), 0);
+
+    script.mediator.set_ready(ReadyJudge {
+        judge: Arc::clone(&script.judge) as Arc<dyn Judge>,
+        thresholds: thresholds(),
+        turn: TurnQuestions::new(&script.languages),
+    });
+
+    assert_eq!(buyer.next_from_serbero().await, en("ask_buyer_sent_simple"));
 }

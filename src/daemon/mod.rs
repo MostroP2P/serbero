@@ -164,6 +164,7 @@ fn start_mediation(
         settings.secrets.judge_api_key.as_ref().map(|k| k.expose()),
     );
     let thresholds = config.judge.active_thresholds().cloned();
+    let started = now();
     background.push(tokio::spawn(async move {
         let judge = match judge {
             Ok(judge) => judge,
@@ -191,6 +192,14 @@ fn start_mediation(
                     thresholds,
                     turn,
                 });
+                // Disputes that arrived while the checks ran were skipped.
+                let opened = mediator.reconsider(started, now()).await;
+                if opened > 0 {
+                    tracing::info!(
+                        opened,
+                        "mediated disputes that arrived before the judge was ready"
+                    );
+                }
             }
             (crate::mediation::eligibility::Readiness::Off(reason), _) => {
                 tracing::warn!(reason, "mediation off");

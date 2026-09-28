@@ -118,6 +118,8 @@ pub(crate) mod testing {
     pub struct FakeSender {
         pub sent: Mutex<Vec<(PublicKey, String)>>,
         pub failing: HashSet<PublicKey>,
+        /// The first this-many DMs fail, whoever they are for.
+        pub fail_first: std::sync::atomic::AtomicUsize,
     }
 
     impl FakeSender {
@@ -133,7 +135,12 @@ pub(crate) mod testing {
 
     impl DmSender for FakeSender {
         async fn send_dm(&self, to: PublicKey, text: &str) -> Result<()> {
-            if self.failing.contains(&to) {
+            use std::sync::atomic::Ordering;
+            let early = self
+                .fail_first
+                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
+                .is_ok();
+            if early || self.failing.contains(&to) {
                 return Err(Error::Nostr("relay rejected".into()));
             }
             self.sent.lock().unwrap().push((to, text.to_owned()));
