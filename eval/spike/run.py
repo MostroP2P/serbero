@@ -136,7 +136,8 @@ def call_judge(key, state, questions):
             data["latency_ms"] = round((time.monotonic() - started) * 1000)
             return data
         except urllib.error.HTTPError as e:
-            if e.code not in (429, 529) or attempt == 5:
+            # Same retryable set as the Rust adapter: timeout, rate limit, any 5xx.
+            if not (e.code in (408, 429) or 500 <= e.code <= 599) or attempt == 5:
                 raise RuntimeError(f"HTTP {e.code}: {e.read()[:300]!r}") from None
         except (urllib.error.URLError, TimeoutError):
             if attempt == 5:

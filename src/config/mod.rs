@@ -257,7 +257,12 @@ impl Config {
             return invalid("mediation.languages must list at least one language");
         }
         let available = crate::catalog::embedded_codes();
-        for lang in &m.languages {
+        for (i, lang) in m.languages.iter().enumerate() {
+            // A repeated code would become a duplicate `<party>_language`
+            // option, which the judge capability check refuses.
+            if m.languages[..i].contains(lang) {
+                return invalid(format!("mediation.languages: {lang:?} is listed twice"));
+            }
             if !available.contains(&lang.as_str()) {
                 return invalid(format!(
                     "mediation.languages: {lang:?} has no template catalog; available: {}",

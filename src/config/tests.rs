@@ -149,6 +149,16 @@ fn unknown_language_is_rejected() {
 }
 
 #[test]
+fn duplicate_language_is_rejected() {
+    let err = error_of(
+        &minimal("[mediation]\nlanguages = [\"en\", \"es\", \"en\"]\n"),
+        base_env(),
+    );
+
+    assert!(err.contains("\"en\" is listed twice"), "{err}");
+}
+
+#[test]
 fn default_language_must_be_enabled() {
     let text = minimal("[mediation]\nlanguages = [\"en\"]\ndefault_language = \"es\"\n");
 

@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 pub mod providers;
+pub mod questions;
 pub mod state;
 
 /// What a `yes` and a `no` mean for a noul question.
