@@ -933,7 +933,15 @@ async fn silence_gets_a_reminder_and_then_hands_off_as_unresponsive() {
 
     assert_eq!(buyer.next_from_serbero().await, en("reminder"));
     assert_eq!(seller.next_from_serbero().await, en("reminder"));
-    let reminded = serbero::daemon::now();
+    // The reminder's own stored time: the clock may already be a second
+    // past it.
+    let reminded = messages::list_for_session(script.store.lock().unwrap().conn(), "s1")
+        .unwrap()
+        .into_iter()
+        .filter(|m| m.template_id.as_deref() == Some("reminder"))
+        .map(|m| m.created_at)
+        .max()
+        .unwrap();
     script.mediator.tick(reminded + 1799).await.unwrap();
     assert!(script.outbox.texts().is_empty(), "not before the timeout");
 
