@@ -28,7 +28,20 @@ exactly the same with or without it.
 
 ## Install
 
-Serbero needs the latest stable Rust toolchain.
+Each release publishes prebuilt binaries for Linux (x86_64 and aarch64) and
+macOS (Apple silicon) on the
+[releases page](https://github.com/MostroP2P/serbero/releases), each with a
+SHA-256 checksum:
+
+```sh
+shasum -a 256 -c serbero-v1.0.0-x86_64-unknown-linux-gnu.tar.gz.sha256
+tar -xzf serbero-v1.0.0-x86_64-unknown-linux-gnu.tar.gz
+cd serbero-v1.0.0-x86_64-unknown-linux-gnu
+# the binary is ./serbero, next to config.sample.toml; run it as ./serbero
+# wherever the steps below say ./target/release/serbero
+```
+
+To build from source, Serbero needs the latest stable Rust toolchain.
 
 ```sh
 git clone https://github.com/MostroP2P/serbero.git
@@ -111,6 +124,21 @@ cargo fmt --check
 cargo clippy --all-targets -- -D warnings
 cargo test
 ```
+
+## Releasing
+
+1. Move the `[Unreleased]` notes in [`CHANGELOG.md`](CHANGELOG.md) under a
+   new `## [X.Y.Z] - YYYY-MM-DD` heading and set `version = "X.Y.Z"` in
+   `Cargo.toml`, in one PR.
+2. After it merges, tag the merge commit and push the tag:
+
+   ```sh
+   git tag -a vX.Y.Z -m "Serbero vX.Y.Z" && git push origin vX.Y.Z
+   ```
+
+The release workflow checks that the tag matches `Cargo.toml` and that the
+changelog has notes for it, runs the tests, builds every platform, and
+publishes the release with that section as its notes.
 
 ## License
 
