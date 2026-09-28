@@ -111,7 +111,13 @@ fn setup(options: &Options) -> Result<Setup, String> {
     if let Some(model) = &options.model {
         judge.model.clone_from(model);
     }
-    let (thresholds, thresholds_source) = match judge.active_thresholds() {
+    // A replay is scored with the thresholds of the judge that answered.
+    let source = match (&judge.provider[..], &options.recording) {
+        ("recorded", Some(path)) => Some(recording_judge(path)?),
+        _ => None,
+    };
+    let key = thresholds_key(&judge, source.as_deref());
+    let (thresholds, thresholds_source) = match judge.thresholds.get(&key) {
         Some(t) => (t.clone(), "config"),
         None => (DEFAULT_THRESHOLDS, "defaults (judgments.md §3)"),
     };
@@ -121,6 +127,21 @@ fn setup(options: &Options) -> Result<Setup, String> {
         thresholds,
         thresholds_source,
     })
+}
+
+/// The judge whose calibrated thresholds apply: the recording's source
+/// judge for a replay, otherwise the configured provider and model.
+fn thresholds_key(judge: &JudgeConfig, recording_judge: Option<&str>) -> String {
+    recording_judge.map_or_else(|| judge.judge_key(), str::to_owned)
+}
+
+/// The id of the judge a recording was made with.
+fn recording_judge(path: &Path) -> Result<String, String> {
+    let text = std::fs::read_to_string(path)
+        .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    let recording: serbero::judge::providers::recorded::Recording = serde_json::from_str(&text)
+        .map_err(|e| format!("{} is not a recording: {e}", path.display()))?;
+    Ok(recording.judge)
 }
 
 fn build_judge(setup: &Setup, options: &Options) -> Result<Box<dyn Judge>, String> {
@@ -265,6 +286,23 @@ mod tests {
         assert_eq!(options.model.as_deref(), Some("jev-2"));
         assert!(!options.record);
         assert_eq!(options.cases, PathBuf::from("eval/golden"));
+    }
+
+    #[test]
+    fn a_replay_uses_the_source_judges_thresholds() {
+        let judge = JudgeConfig {
+            provider: "recorded".into(),
+            ..JudgeConfig::default()
+        };
+
+        assert_eq!(
+            thresholds_key(&judge, Some("typesafe/jev-1.13.0")),
+            "typesafe/jev-1.13.0"
+        );
+        assert_eq!(
+            thresholds_key(&JudgeConfig::default(), None),
+            "typesafe/jev-1.13.0"
+        );
     }
 
     #[test]

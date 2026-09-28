@@ -362,22 +362,35 @@ fn transcript_line(line: &Line<'_>) -> String {
     )
 }
 
-/// Groups lines into bodies of at most `budget` characters. A single line
-/// longer than the budget is cut, which only a message far above
-/// `max_message_chars` could need.
+/// Groups lines into bodies of at most `budget` characters. A line longer
+/// than the budget is split across bodies, so nothing is cut.
 fn chunk(lines: &[String], budget: usize) -> Vec<String> {
     let mut chunks = Vec::new();
     let mut current = String::new();
+    let mut used = 0;
     for line in lines {
-        let line: String = line.chars().take(budget).collect();
-        let needed = line.chars().count() + usize::from(!current.is_empty());
-        if !current.is_empty() && current.chars().count() + needed > budget {
-            chunks.push(std::mem::take(&mut current));
+        let chars: Vec<char> = line.chars().collect();
+        let mut rest = chars.as_slice();
+        loop {
+            let separator = usize::from(used > 0);
+            let room = budget.saturating_sub(used + separator);
+            if room == 0 || (used > 0 && rest.len() > room && rest.len() <= budget) {
+                chunks.push(std::mem::take(&mut current));
+                used = 0;
+                continue;
+            }
+            if separator == 1 {
+                current.push('\n');
+                used += 1;
+            }
+            let take = rest.len().min(room);
+            current.extend(&rest[..take]);
+            used += take;
+            rest = &rest[take..];
+            if rest.is_empty() {
+                break;
+            }
         }
-        if !current.is_empty() {
-            current.push('\n');
-        }
-        current.push_str(&line);
     }
     chunks.push(current);
     chunks
