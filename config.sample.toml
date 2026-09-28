@@ -28,7 +28,7 @@ renotify_after = "15m"
 [mediation]
 enabled = false
 default_language = "en"                   # language of the opening message
-languages = ["en", "es"]                  # any language with a messages/<code>.toml catalog
+languages = ["en", "es", "pt"]            # any language with a messages/<code>.toml catalog
 quiet_period = "20s"
 response_timeout = "30m"
 max_rounds = 3
