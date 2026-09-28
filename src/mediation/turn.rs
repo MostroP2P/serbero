@@ -1,15 +1,16 @@
 //! The turn loop (`docs/spec.md` §7.3): settle a burst, judge the session,
 //! decide, act, and record the evaluation.
 
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 use serde_json::json;
 use tokio::sync::mpsc::UnboundedReceiver;
+use tokio::task::JoinSet;
 use tokio::time::Instant;
 
+use super::handoff::{TurnReading, last_seen};
 use super::{Mediator, ReadyJudge, history, settle::Settle};
-use crate::catalog::Amount;
-use crate::chat::{Outbound, send_to_party};
 use crate::error::{Error, Result};
 use crate::judge::facts::{self, Facts};
 use crate::judge::state;
@@ -18,7 +19,7 @@ use crate::policy::next::{History, next_questions};
 use crate::policy::{Action, NextQuestions, Phase, Turn, decide};
 use crate::store::messages::{self, Direction, Message};
 use crate::store::sessions::{self, Party, Session, SessionState};
-use crate::store::{disputes, evaluations};
+use crate::store::{disputes, evaluations, events};
 
 /// How a turn ended.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -31,6 +32,8 @@ pub enum TurnOutcome {
     /// The judge failed; the evaluation was not made.
     JudgeFailed(String),
     Decided(Action),
+    /// After a handoff: this many new party messages went to the solvers.
+    Forwarded(usize),
 }
 
 impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
@@ -47,6 +50,13 @@ impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
         for session_id in self.pending_sessions() {
             settle.touch(&session_id, Instant::now());
         }
+        // Each session's turn runs in its own task, so a turn stuck on a
+        // slow relay or judge never holds back another session. A session
+        // has at most one turn running; one that falls due meanwhile runs
+        // right after it.
+        let mut running = JoinSet::new();
+        let mut sessions_of = HashMap::new();
+        let mut due_again = HashSet::new();
         loop {
             let deadline = settle.next_deadline();
             tokio::select! {
@@ -56,11 +66,33 @@ impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
                 },
                 () = sleep_until(deadline), if deadline.is_some() => {
                     for session_id in settle.take_due(Instant::now()) {
-                        if self.turn_logged(&session_id, crate::daemon::now()).await {
-                            // Not judged yet (judge not ready, or newer
-                            // messages came in while judging): keep it due.
-                            settle.touch(&session_id, Instant::now());
+                        if sessions_of.values().any(|running| running == &session_id) {
+                            due_again.insert(session_id);
+                            continue;
                         }
+                        let mediator = std::sync::Arc::clone(&self);
+                        let id = session_id.clone();
+                        let task = running.spawn(async move {
+                            mediator.turn_logged(&id, crate::daemon::now()).await
+                        });
+                        sessions_of.insert(task.id(), session_id);
+                    }
+                }
+                Some(done) = running.join_next_with_id(), if !running.is_empty() => {
+                    let (task, again) = match done {
+                        Ok((task, again)) => (task, again),
+                        Err(e) => {
+                            tracing::error!(error = %e, "turn task failed");
+                            (e.id(), true)
+                        }
+                    };
+                    if let Some(session_id) = sessions_of.remove(&task)
+                        && (again | due_again.remove(&session_id))
+                    {
+                        // Not judged yet (judge not ready, or newer
+                        // messages came in while judging), or due again
+                        // while it ran: keep it due.
+                        settle.touch(&session_id, Instant::now());
                     }
                 }
             }
@@ -77,9 +109,24 @@ impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
         };
         live.into_iter()
             .filter(|session| {
-                messages::list_for_session(store.conn(), &session.session_id)
-                    .ok()
-                    .and_then(|m| m.into_iter().max_by_key(|m| m.id))
+                let Ok(messages) = messages::list_for_session(store.conn(), &session.session_id)
+                else {
+                    return false;
+                };
+                if session.state == SessionState::HandedOff {
+                    // Messages the solvers have not seen, even when a notice
+                    // was stored after them.
+                    let seen = events::list_for_dispute(store.conn(), &session.dispute_id)
+                        .map(|history| last_seen(&history, &session.session_id));
+                    return seen.is_ok_and(|seen| {
+                        messages
+                            .iter()
+                            .any(|m| m.direction == Direction::In && m.id > seen)
+                    });
+                }
+                messages
+                    .iter()
+                    .max_by_key(|m| m.id)
                     .is_some_and(|m| m.direction == Direction::In)
             })
             .map(|session| session.session_id)
@@ -96,6 +143,9 @@ impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
                 tracing::info!(session_id, action = %json!(action), "turn decided")
             }
             Ok(TurnOutcome::Skipped(why)) => tracing::debug!(session_id, why, "turn skipped"),
+            Ok(TurnOutcome::Forwarded(count)) => {
+                tracing::info!(session_id, count, "party messages forwarded to the solvers")
+            }
             Ok(TurnOutcome::JudgeFailed(error)) => {
                 tracing::warn!(session_id, error, "judge failed")
             }
@@ -106,11 +156,17 @@ impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
 
     /// One turn over the session as stored now.
     pub async fn run_turn(&self, session_id: &str, now: i64) -> Result<TurnOutcome> {
-        let Some(ready) = self.ready_judge() else {
-            return Ok(TurnOutcome::Deferred("judge not ready"));
-        };
         let Some((session, messages, opened_by)) = self.load(session_id)? else {
             return Ok(TurnOutcome::Skipped("session not live"));
+        };
+        // Forwarding after a handoff needs no judge.
+        if session.state == SessionState::HandedOff {
+            return Ok(TurnOutcome::Forwarded(
+                self.forward_updates(&session, now).await?,
+            ));
+        }
+        let Some(ready) = self.ready_judge() else {
+            return Ok(TurnOutcome::Deferred("judge not ready"));
         };
         let phase = match session.state {
             SessionState::Active => Phase::Gathering,
@@ -178,10 +234,23 @@ impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
         self.record_evaluation(
             &ready, &session, &messages, &judged, &action, latency_ms, now,
         )?;
-        if let Action::Ask { buyer, seller } = &action {
-            self.ask(&session, Party::Buyer, buyer).await?;
-            self.ask(&session, Party::Seller, seller).await?;
-            self.count_round(&session, &next, now)?;
+        match &action {
+            Action::Ask { buyer, seller } => {
+                self.ask(&session, Party::Buyer, buyer).await?;
+                self.ask(&session, Party::Seller, seller).await?;
+                self.count_round(&session, &next, now)?;
+            }
+            Action::Handoff(reason) => {
+                let reading = TurnReading {
+                    state: &built.value,
+                    answers: &judged.answers,
+                    facts: &facts,
+                    last_message_id: messages.iter().map(|m| m.id).max().unwrap_or(0),
+                };
+                self.hand_off(&session, *reason, Some(reading), now).await?;
+            }
+            // Guidance is carried out in T5.4; until then it is recorded.
+            Action::Guide(_) | Action::Wait => {}
         }
         Ok(TurnOutcome::Decided(action))
     }
@@ -239,31 +308,8 @@ impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
 
     /// Sends a party its templates, in its language, in order.
     async fn ask(&self, session: &Session, party: Party, templates: &[&str]) -> Result<()> {
-        let lang = session.language(party, &self.settings.default_language);
-        let catalog = self
-            .catalogs
-            .get(lang)
-            .ok_or_else(|| Error::Catalog(format!("no catalog for {lang}")))?;
-        let amount = match (&session.fiat_amount, &session.fiat_code) {
-            (Some(value), Some(currency)) => Some(Amount { value, currency }),
-            _ => None,
-        };
         for template in templates {
-            let text = catalog.render(template, amount)?;
-            send_to_party(
-                &self.client,
-                &self.gate,
-                &self.store,
-                &self.keys,
-                session,
-                &Outbound {
-                    party,
-                    text: &text,
-                    template_id: Some(template),
-                    lang: Some(lang),
-                },
-            )
-            .await?;
+            self.send_template(session, party, template).await?;
         }
         Ok(())
     }

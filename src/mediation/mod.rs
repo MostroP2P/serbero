@@ -7,6 +7,7 @@
 //! parties, and a human solver can take it over at any time.
 
 pub mod eligibility;
+pub mod handoff;
 pub mod history;
 pub mod settle;
 pub mod turn;

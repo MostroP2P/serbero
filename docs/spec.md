@@ -457,6 +457,8 @@ decided and sent its response.
    text at `max_message_chars`; count attachments without storing them.
 2. **Settle.** Wait `quiet_period` (default 20 s) after the latest inbound
    message so that bursts such as "hola" + "help" + "?" become one turn.
+   Each session's turn runs on its own, one at a time per session, so a
+   turn waiting on a slow judge or relay never holds back another session.
 3. **Judge.** Build the state (see [judgments.md §1](judgments.md#1-state)) and
    send the full question set to the judge in one request.
 4. **Decide.** Run `policy` over the answers, the session's history of questions
@@ -548,6 +550,14 @@ Every handoff sends the parties the `handoff_notice` template and the solver
 the brief ([messages.md §3](messages.md#3-solver-messages)). The recipient is
 the assigned human solver if there is one, otherwise every `write` solver,
 otherwise every solver.
+
+The session is marked `handed_off` before anything is sent, so a session is
+handed off once and never after it ended. A brief counts as delivered only
+when a solver got it and every transcript part; otherwise, including when no
+solver is configured, it is recorded as a `brief_pending` event. Messages
+from an update no solver received in full are sent again with the next
+update, and after a restart any message the solvers have not seen is
+forwarded.
 
 ### 7.7 Languages
 
@@ -659,7 +669,7 @@ messages (
   attachments     INTEGER NOT NULL DEFAULT 0,
   inner_event_id  TEXT NOT NULL,
   created_at      INTEGER NOT NULL,
-  UNIQUE (session_id, inner_event_id)
+  UNIQUE (session_id, direction, party, inner_event_id)   -- a chat inner event names no recipient
 );
 
 evaluations (

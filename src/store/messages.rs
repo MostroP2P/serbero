@@ -56,7 +56,7 @@ pub fn insert_if_new(conn: &Connection, message: &NewMessage<'_>) -> Result<bool
              (session_id, direction, party, template_id, lang, content, attachments,
               inner_event_id, created_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
-         ON CONFLICT (session_id, inner_event_id) DO NOTHING",
+         ON CONFLICT (session_id, direction, party, inner_event_id) DO NOTHING",
         params![
             message.session_id,
             message.direction.to_string(),
@@ -152,6 +152,27 @@ mod tests {
             inner_event_id: inner,
             created_at: at,
         }
+    }
+
+    #[test]
+    fn the_same_outbound_text_to_both_parties_is_stored_twice() {
+        // The inner event of a chat message names no recipient, so the same
+        // text sent to both parties in one second has one inner id.
+        let store = store_with_session();
+        let to = |party| NewMessage {
+            direction: Direction::Out,
+            party,
+            template_id: Some("handoff_notice"),
+            ..inbound("same-inner-id", "notice", 10)
+        };
+
+        assert!(insert_if_new(store.conn(), &to(Party::Buyer)).unwrap());
+        assert!(insert_if_new(store.conn(), &to(Party::Seller)).unwrap());
+        assert!(
+            !insert_if_new(store.conn(), &to(Party::Seller)).unwrap(),
+            "still deduplicated"
+        );
+        assert_eq!(list_for_session(store.conn(), "s1").unwrap().len(), 2);
     }
 
     #[test]
