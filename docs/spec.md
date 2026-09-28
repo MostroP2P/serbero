@@ -308,7 +308,8 @@ pub trait Judge: Send + Sync {
   every provider). Policy never depends on a vendor's own definition of
   confidence. For a choice or score with `n` options or levels and highest
   probability `peak`, confidence is `(n · peak − 1) / (n − 1)`, clamped to
-  [0, 1]: 0 for a flat distribution, 1 for a certain answer. A noul has no
+  [0, 1], with `peak` taken as a share of the probability sum: 0 for a flat
+  distribution, 1 for a certain answer. A noul has no
   confidence; its probability is the answer. A tie between options goes to
   the first option by name.
 - Every answer is checked against its question before use (same type, exactly
