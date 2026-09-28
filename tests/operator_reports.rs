@@ -54,7 +54,7 @@ fn staged() -> Store {
             conn,
             &events::NewEvent {
                 dispute_id: dispute,
-                session_id: None,
+                session_id: (kind == "handoff").then_some("s1"),
                 kind,
                 payload,
                 now: now(),
@@ -62,6 +62,7 @@ fn staged() -> Store {
         )
         .unwrap();
     };
+    event("d1", "handoff", json!({ "reason": "uncertain" }));
     event(
         "d2",
         "resolved",
@@ -150,6 +151,87 @@ fn the_weekly_report_counts_this_weeks_mediation() {
         [["3", "200", "6000000"]],
         "requests, median latency, tokens"
     );
+}
+
+#[test]
+fn an_old_handoff_resolved_this_week_is_not_counted_again() {
+    let store = staged();
+    let conn = store.conn();
+    let ten_days_ago = now() - 10 * 24 * 3600;
+    disputes::insert_if_new(
+        conn,
+        &NewDispute {
+            dispute_id: "d3",
+            initiator: Initiator::Seller,
+            status: "in-progress",
+            status_at: ten_days_ago,
+            now: ten_days_ago,
+        },
+    )
+    .unwrap();
+    sessions::insert(
+        conn,
+        &NewSession {
+            session_id: "s3",
+            dispute_id: "d3",
+            buyer_trade_pubkey: "b",
+            seller_trade_pubkey: "s",
+            fiat_amount: None,
+            fiat_code: None,
+            payment_method: None,
+            order_published_at: None,
+            now: ten_days_ago,
+        },
+    )
+    .unwrap();
+    sessions::hand_off(conn, "s3", "fraud_signal", ten_days_ago).unwrap();
+    events::append(
+        conn,
+        &events::NewEvent {
+            dispute_id: "d3",
+            session_id: Some("s3"),
+            kind: "handoff",
+            payload: json!({ "reason": "fraud_signal" }),
+            now: ten_days_ago,
+        },
+    )
+    .unwrap();
+    // Resolved this week: the session changes now.
+    sessions::set_state(conn, "s3", sessions::SessionState::Closed, now()).unwrap();
+
+    let sets = run(conn, include_str!("../scripts/weekly-report.sql"), 0.0);
+
+    assert_eq!(sets[0][0][2], "1", "only this week's handoff");
+    assert_eq!(sets[1], [["uncertain", "1", "100"]]);
+}
+
+#[test]
+fn the_median_of_an_even_count_is_the_mean_of_the_middle_two() {
+    let store = staged();
+    let (answers, action) = (json!({}), json!("wait"));
+    evaluations::insert(
+        store.conn(),
+        &evaluations::NewEvaluation {
+            session_id: "s2",
+            question_set_version: "qs-1-x",
+            judge_id: "typesafe/jev-1.13.0",
+            last_message_id: 0,
+            answers: &answers,
+            action: &action,
+            input_tokens: None,
+            latency_ms: Some(400),
+            now: now(),
+        },
+    )
+    .unwrap();
+
+    let sets = run(
+        store.conn(),
+        include_str!("../scripts/weekly-report.sql"),
+        0.0,
+    );
+
+    assert_eq!(sets[3][0][1], "250", "100, 200, 300, 400");
 }
 
 #[test]
