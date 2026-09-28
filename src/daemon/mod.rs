@@ -132,6 +132,9 @@ fn start_mediation(
             languages: config.mediation.languages.clone(),
             max_rounds: config.mediation.max_rounds,
             max_message_chars: config.mediation.max_message_chars,
+            max_messages_per_turn: config.mediation.max_messages_per_turn,
+            response_timeout: config.mediation.response_timeout,
+            self_resolution_timeout: config.mediation.self_resolution_timeout,
         },
         sender: RelayDmSender::new(client.clone(), keys.clone()),
         solvers: solvers.to_vec(),
@@ -144,6 +147,7 @@ fn start_mediation(
     background.push(tokio::spawn(
         Arc::clone(&mediator).run_turns(received, config.mediation.quiet_period),
     ));
+    background.push(tokio::spawn(Arc::clone(&mediator).run_timers()));
     let closing = Arc::clone(&mediator);
     notifier.on_resolved(Box::new(move |dispute_id, status, by_parties| {
         let mediator = Arc::clone(&closing);

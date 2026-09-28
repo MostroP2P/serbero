@@ -35,6 +35,7 @@ use serbero::store::{Store, evaluations};
 
 const WAIT: Duration = Duration::from_secs(10);
 const QUIET: Duration = Duration::from_millis(400);
+const MAX_PER_TURN: u32 = 3;
 
 /// Solver DMs, kept instead of sent.
 #[derive(Clone, Default)]
@@ -160,6 +161,7 @@ struct Script {
     seller: Keys,
     mostro: Keys,
     notifier: Arc<serbero::notifier::Notifier<Outbox>>,
+    mediator: Arc<Mediator<Outbox>>,
     url: String,
     judge: Arc<ScriptedJudge>,
     outbox: Outbox,
@@ -278,6 +280,9 @@ async fn script(picks: &[(&'static str, (&'static str, f64))]) -> Script {
             languages: vec!["en".into(), "es".into(), "pt".into()],
             max_rounds: 3,
             max_message_chars: 2000,
+            max_messages_per_turn: MAX_PER_TURN,
+            response_timeout: Duration::from_secs(1800),
+            self_resolution_timeout: Duration::from_secs(7200),
         },
         sender: outbox.clone(),
         solvers: vec![Solver {
@@ -332,6 +337,7 @@ async fn script(picks: &[(&'static str, (&'static str, f64))]) -> Script {
         seller,
         mostro,
         notifier,
+        mediator,
         url,
         judge,
         outbox,
@@ -744,4 +750,75 @@ async fn a_handed_off_dispute_resolved_later_gets_no_thanks() {
         .filter(|m| m.template_id.as_deref() == Some("resolved_thanks"))
         .count();
     assert_eq!(thanks, 0, "the parties already know a person took over");
+}
+
+#[tokio::test]
+async fn silence_gets_a_reminder_and_then_hands_off_as_unresponsive() {
+    let script = script(&[]).await;
+    let mut buyer = buyer_side(&script).await;
+    let mut seller = seller_side(&script).await;
+
+    // The openers were sent at t = 1; the response timeout is 30 min.
+    script.mediator.tick(1 + 1800).await.unwrap();
+
+    assert_eq!(buyer.next_from_serbero().await, en("reminder"));
+    assert_eq!(seller.next_from_serbero().await, en("reminder"));
+    let reminded = serbero::daemon::now();
+    script.mediator.tick(reminded + 1799).await.unwrap();
+    assert!(script.outbox.texts().is_empty(), "not before the timeout");
+
+    script.mediator.tick(reminded + 1801).await.unwrap();
+
+    let brief = wait_for_text(&script.outbox, "Dispute d1 · handed off: unresponsive\n").await;
+    assert!(
+        brief.contains("Automated reading unavailable"),
+        "no turn was judged: {brief}"
+    );
+    assert_eq!(buyer.next_from_serbero().await, en("handoff_notice"));
+}
+
+#[tokio::test]
+async fn guidance_that_does_not_resolve_hands_off_as_stalled() {
+    let script = script(&[("seller_receipt", ("says_received", 0.97))]).await;
+    let mut seller = seller_side(&script).await;
+    seller.say("sí, me llegó").await;
+    assert_eq!(seller.next_from_serbero().await, en("guide_arrived_seller"));
+    let guided = serbero::daemon::now();
+
+    script.mediator.tick(guided + 7201).await.unwrap();
+
+    let brief = wait_for_text(
+        &script.outbox,
+        "Dispute d1 · handed off: self_resolution_stalled\n",
+    )
+    .await;
+    assert!(
+        brief.contains("Seller — says received (0.97)"),
+        "the last turn's reading: {brief}"
+    );
+}
+
+#[tokio::test]
+async fn flooding_twice_hands_off_without_judging_again() {
+    let script = script(&[]).await;
+    let mut buyer = buyer_side(&script).await;
+    for text in ["1", "2", "3", "4"] {
+        buyer.say(text).await;
+    }
+    assert_eq!(
+        buyer.next_from_serbero().await,
+        en("ask_buyer_sent_simple"),
+        "the first strike is a warning only"
+    );
+
+    for text in ["5", "6", "7", "8"] {
+        buyer.say(text).await;
+    }
+
+    wait_for_text(&script.outbox, "Dispute d1 · handed off: flood\n").await;
+    assert_eq!(
+        script.judge.calls.load(Ordering::SeqCst),
+        1,
+        "the flooding turn is not judged"
+    );
 }

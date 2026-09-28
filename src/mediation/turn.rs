@@ -14,10 +14,13 @@ use crate::judge::facts::{self, Facts};
 use crate::judge::state;
 use crate::nostr::dm::DmSender;
 use crate::policy::next::{History, next_questions};
-use crate::policy::{Action, NextQuestions, Phase, Turn, decide};
+use crate::policy::{Action, HandoffReason, NextQuestions, Phase, Turn, decide, timers};
 use crate::store::messages::{self, Message};
 use crate::store::sessions::{self, Party, Session, SessionState};
-use crate::store::{disputes, evaluations};
+use crate::store::{disputes, evaluations, events};
+
+/// Event recording a turn in which a party sent too many messages.
+const FLOOD_STRIKE: &str = "flood_strike";
 
 /// How a turn ended.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -108,6 +111,11 @@ impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
         if wrote.is_empty() {
             return Ok(TurnOutcome::Skipped("no new party messages"));
         }
+        if self.flooded(&session, &built.value, now)? {
+            self.hand_off(&session, HandoffReason::Flood, None, now)
+                .await?;
+            return Ok(TurnOutcome::Decided(Action::Handoff(HandoffReason::Flood)));
+        }
         let questions = ready.turn.for_turn(&wrote, phase == Phase::Guiding);
         let started = std::time::Instant::now();
         let judged = match ready.judge.evaluate(&built.value, &questions).await {
@@ -172,6 +180,40 @@ impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
             Action::Wait => {}
         }
         Ok(TurnOutcome::Decided(action))
+    }
+
+    /// Records a flood strike for each party over `max_messages_per_turn`
+    /// in this turn; a party with `FLOOD_STRIKES` strikes floods the session
+    /// (`docs/judgments.md` §4.2). Checked before the judge is called.
+    fn flooded(&self, session: &Session, state: &serde_json::Value, now: i64) -> Result<bool> {
+        let store = self.lock_store()?;
+        let mut flooded = false;
+        for party in [Party::Buyer, Party::Seller] {
+            let count = state["latest"][party.to_string()]
+                .as_array()
+                .map_or(0, Vec::len);
+            let count = u32::try_from(count).unwrap_or(u32::MAX);
+            if !timers::over_limit(count, self.settings.max_messages_per_turn) {
+                continue;
+            }
+            events::append(
+                store.conn(),
+                &events::NewEvent {
+                    dispute_id: &session.dispute_id,
+                    session_id: Some(&session.session_id),
+                    kind: FLOOD_STRIKE,
+                    payload: json!({ "party": party.to_string(), "messages": count }),
+                    now,
+                },
+            )?;
+            let strikes = events::list_for_dispute(store.conn(), &session.dispute_id)?
+                .iter()
+                .filter(|e| e.session_id.as_deref() == Some(&session.session_id))
+                .filter(|e| e.kind == FLOOD_STRIKE && e.payload["party"] == party.to_string())
+                .count();
+            flooded |= timers::is_flood(u32::try_from(strikes).unwrap_or(u32::MAX));
+        }
+        Ok(flooded)
     }
 
     /// The live session, its messages in order, and who opened the dispute.

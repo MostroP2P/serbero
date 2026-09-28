@@ -11,6 +11,7 @@ pub mod guide;
 pub mod handoff;
 pub mod history;
 pub mod settle;
+pub mod timers;
 pub mod turn;
 
 use std::sync::{Arc, Mutex, RwLock};
@@ -85,6 +86,9 @@ pub struct MediationSettings {
     pub languages: Vec<String>,
     pub max_rounds: u32,
     pub max_message_chars: usize,
+    pub max_messages_per_turn: u32,
+    pub response_timeout: Duration,
+    pub self_resolution_timeout: Duration,
 }
 
 /// A judge that passed its startup checks, with what judging needs.
