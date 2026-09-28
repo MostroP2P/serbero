@@ -211,7 +211,9 @@ With the configured caps, the largest possible request stays far below the
 ## 3. From answers to facts
 
 Code converts raw answers into a `Facts` struct. For a `choice`, Serbero uses
-the probability of the specific option it cares about, not just the winner.
+the probability of the specific option it cares about, not just the winner,
+as a share of the choice's total (an accepted distribution may sum to up to
+1.01).
 
 | Fact | Known when | Otherwise |
 |---|---|---|
@@ -243,6 +245,9 @@ the probability of the specific option it cares about, not just the winner.
 | `fraud` | 0.60 | A human looks at an honest case | A scam continues in automated mediation |
 | `conflict` | 0.75 | A human sees a case a question could have clarified | One more round |
 | `outside_scope` | 0.80 | A human handles a simple case | Serbero asks payment questions that do not fit |
+
+`fact` and `guide` must be above 0.5 (config validation enforces it), so two
+options of the same choice can never both be known.
 
 Every false positive leads to a human, never to a fund action. Defaults are
 starting points and are calibrated separately for each provider and model; [evaluation.md](evaluation.md) describes how to calibrate them.
