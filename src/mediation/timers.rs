@@ -65,6 +65,10 @@ pub fn clocks(session: &Session, messages: &[Message], history: &[Event], now: i
     }
 }
 
+/// How long after a handoff or guidance started its notices are left to
+/// that call before a tick resends what is missing.
+const RETRY_GRACE_SECS: i64 = 120;
+
 /// Records that a `brief_pending` brief was delivered later.
 const BRIEF_SENT: &str = "brief_sent";
 
@@ -172,6 +176,16 @@ impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
                     now,
                 },
             )?;
+        }
+        // A handoff or guidance still sending its own notices is not retried.
+        let started = history
+            .iter()
+            .filter(|e| e.session_id.as_deref() == Some(&session.session_id))
+            .filter(|e| e.kind == "handoff" || e.kind == "guided")
+            .map(|e| e.created_at)
+            .max();
+        if started.is_some_and(|at| now - at < RETRY_GRACE_SECS) {
+            return Ok(());
         }
         match session.state {
             SessionState::HandedOff => {

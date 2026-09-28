@@ -146,7 +146,7 @@ impl<S: DmSender> Mediator<S> {
     }
 
     /// Whether the party already received this template in this session.
-    fn received(&self, session: &Session, party: Party, template: &str) -> Result<bool> {
+    pub(super) fn received(&self, session: &Session, party: Party, template: &str) -> Result<bool> {
         let store = self.lock_store()?;
         Ok(
             messages::list_for_session(store.conn(), &session.session_id)?

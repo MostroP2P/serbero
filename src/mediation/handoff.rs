@@ -5,7 +5,7 @@
 use serde_json::{Value, json};
 
 use super::{Mediator, ReadyJudge};
-use crate::chat::{Outbound, send_to_party};
+use crate::chat::{Outbound, send_to_party, send_while_mediating};
 use crate::config::Permission;
 use crate::error::{Error, Result};
 use crate::judge::Answers;
@@ -125,6 +125,10 @@ impl<S: DmSender> Mediator<S> {
             )?;
         }
         for party in [Party::Buyer, Party::Seller] {
+            // The timer may have sent it while the brief went out.
+            if self.received(session, party, HANDOFF_NOTICE)? {
+                continue;
+            }
             if let Err(e) = self.send_template(session, party, HANDOFF_NOTICE).await {
                 tracing::warn!(session_id = %session.session_id, %party, error = %e, "handoff notice not sent; the timer retries it");
             }
@@ -369,20 +373,35 @@ impl<S: DmSender> Mediator<S> {
         template: &str,
     ) -> Result<()> {
         let (text, lang) = self.render_for(session, party, template)?;
-        send_to_party(
-            &self.client,
-            &self.gate,
-            &self.store,
-            &self.keys,
-            session,
-            &Outbound {
-                party,
-                text: &text,
-                template_id: Some(template),
-                lang: Some(&lang),
-            },
-        )
-        .await?;
+        let message = Outbound {
+            party,
+            text: &text,
+            template_id: Some(template),
+            lang: Some(&lang),
+        };
+        // Only the notice may follow a handoff: a turn or timer that read
+        // the session earlier must not ask anything after it.
+        if template == HANDOFF_NOTICE {
+            send_to_party(
+                &self.client,
+                &self.gate,
+                &self.store,
+                &self.keys,
+                session,
+                &message,
+            )
+            .await?;
+        } else {
+            send_while_mediating(
+                &self.client,
+                &self.gate,
+                &self.store,
+                &self.keys,
+                session,
+                &message,
+            )
+            .await?;
+        }
         Ok(())
     }
 }

@@ -1383,9 +1383,15 @@ async fn the_timer_retries_a_brief_and_a_notice_that_did_not_go_out() {
 
     let brief = wait_for_text(&script.outbox, "Dispute d1 · handed off: human_requested\n").await;
     assert!(brief.contains("human requested: yes"), "{brief}");
+    assert_eq!(
+        buyer.next_within(QUIET).await,
+        None,
+        "no notice while the handoff may still be sending it"
+    );
+    script.mediator.tick(now + 121).await.unwrap();
     assert_eq!(buyer.next_from_serbero().await, en("handoff_notice"));
     let sent = script.outbox.texts().len();
-    script.mediator.tick(now + 30).await.unwrap();
+    script.mediator.tick(now + 151).await.unwrap();
     assert_eq!(script.outbox.texts().len(), sent, "the brief went out once");
     assert!(event_kinds(&script).contains(&"brief_sent".to_owned()));
 }
@@ -1408,9 +1414,91 @@ async fn the_timer_resends_guidance_a_party_missed() {
         )
         .unwrap();
 
-    script.mediator.tick(serbero::daemon::now()).await.unwrap();
+    let now = serbero::daemon::now();
+    script.mediator.tick(now).await.unwrap();
+    assert_eq!(
+        buyer.next_within(QUIET).await,
+        None,
+        "not right after guiding"
+    );
+
+    script.mediator.tick(now + 121).await.unwrap();
 
     assert_eq!(buyer.next_from_serbero().await, en("guide_arrived_buyer"));
+}
+
+#[tokio::test]
+async fn a_turn_judged_while_the_session_was_handed_off_sends_nothing() {
+    let script = script_with(
+        &[("buyer_message_kind", ("greeting", 1.0))],
+        Options {
+            judge_delay: Duration::from_millis(800),
+            ..Options::default()
+        },
+    )
+    .await;
+    let mut buyer = buyer_side(&script).await;
+    buyer.say("hola").await;
+    tokio::time::timeout(WAIT, async {
+        while script.judge.calls.load(Ordering::SeqCst) == 0 {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+
+    // A timer hands the session off while the judge works.
+    sessions::hand_off(
+        script.store.lock().unwrap().conn(),
+        "s1",
+        "unresponsive",
+        serbero::daemon::now(),
+    )
+    .unwrap();
+
+    assert_eq!(buyer.next_within(Duration::from_millis(1500)).await, None);
+    assert!(
+        evaluations::list_for_session(script.store.lock().unwrap().conn(), "s1")
+            .unwrap()
+            .is_empty(),
+        "the turn was dropped"
+    );
+}
+
+#[tokio::test]
+async fn a_handoff_does_not_resend_a_notice_the_timer_already_sent() {
+    let script = script(&[]).await;
+    let mut buyer = buyer_side(&script).await;
+    let mut seller = seller_side(&script).await;
+    // As if a tick had told the buyer while this handoff briefed.
+    messages::insert_if_new(
+        script.store.lock().unwrap().conn(),
+        &NewMessage {
+            session_id: "s1",
+            direction: Direction::Out,
+            party: serbero::store::sessions::Party::Buyer,
+            template_id: Some("handoff_notice"),
+            lang: Some("en"),
+            content: "…",
+            attachments: 0,
+            inner_event_id: "notice-from-the-timer",
+            created_at: 5,
+        },
+    )
+    .unwrap();
+    let session = sessions::get(script.store.lock().unwrap().conn(), "s1")
+        .unwrap()
+        .unwrap();
+
+    let claimed = script
+        .mediator
+        .hand_off(&session, HandoffReason::Unresponsive, None, 10)
+        .await
+        .unwrap();
+
+    assert!(claimed);
+    assert_eq!(seller.next_from_serbero().await, en("handoff_notice"));
+    assert_eq!(buyer.next_within(QUIET).await, None);
 }
 
 /// AGENTS.md relays rule 7: timer sends to a silent relay never hold back

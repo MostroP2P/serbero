@@ -10,6 +10,7 @@ use tokio::time::Instant;
 use super::handoff::{TurnReading, last_seen};
 use super::{Mediator, ReadyJudge, history, settle::Settle};
 use crate::error::{Error, Result};
+use crate::judge::brief::BriefQuestions;
 use crate::judge::facts::{self, Facts};
 use crate::judge::state;
 use crate::nostr::dm::DmSender;
@@ -185,6 +186,11 @@ impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
             // answer an outdated state. The next turn judges everything.
             return Ok(TurnOutcome::Deferred("newer party messages arrived"));
         }
+        if self.moved_on(&session)? {
+            // A timer or the notifier handed off or ended the session while
+            // the judge worked.
+            return Ok(TurnOutcome::Skipped("session changed while judging"));
+        }
         let facts =
             facts::from_answers(&judged.answers, &ready.thresholds, &self.settings.languages);
         let changed = self.update_languages(&session, &facts, now)?;
@@ -261,8 +267,11 @@ impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
             .filter(|e| e.session_id.as_deref() == Some(&session.session_id))
             .filter(|e| e.kind == FLOOD_STRIKE)
             .collect();
+        // Turn evaluations only: a brief is not a settled turn.
+        let brief_set = BriefQuestions::new();
         let judged = evaluations::list_for_session(store.conn(), &session.session_id)?
             .iter()
+            .filter(|e| e.question_set_version != brief_set.id())
             .map(|e| e.last_message_id)
             .max()
             .unwrap_or(0);
@@ -304,6 +313,13 @@ impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
             flooded |= timers::is_flood(u32::try_from(earlier + 1).unwrap_or(u32::MAX));
         }
         Ok(flooded)
+    }
+
+    /// Whether the session left the state this turn read it in.
+    fn moved_on(&self, session: &Session) -> Result<bool> {
+        let store = self.lock_store()?;
+        Ok(sessions::get(store.conn(), &session.session_id)?
+            .is_none_or(|current| current.state != session.state))
     }
 
     /// Whether a party message arrived after `messages` was read.

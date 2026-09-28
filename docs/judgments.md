@@ -346,9 +346,14 @@ Timers never call Jev. They are pure functions in `src/policy/timers.rs`:
   in between.
 - The timer task starts one tick after the chat subscriptions were resumed,
   so replies relays replay after a restart are stored before any reminder or
-  handoff. Each tick also resends what did not reach its recipient: a brief
-  (`brief_pending`), the handoff notice, guidance, and a resolved dispute's
-  closing.
+  handoff. A session whose channels cannot be reopened is logged and skipped;
+  the others still resume. Each tick also resends what did not reach its
+  recipient: a brief (`brief_pending`), the handoff notice, guidance (not
+  within 2 minutes of the handoff or guidance, which may still be sending
+  them), and a resolved dispute's closing.
+- A turn whose session was handed off or ended while the judge worked is
+  dropped. Questions, reminders and guidance are only ever sent while
+  Serbero mediates; after a handoff only the notice goes out.
 
 ## 5. Brief request
 
