@@ -330,7 +330,14 @@ except a language resend (`NextQuestions::counts_as_round`).
 | Party sends more than `max_messages_per_turn` twice | `Handoff(flood)` |
 | `self_resolution_timeout` after a `Guide` without the dispute resolving | `Handoff(self_resolution_stalled)` |
 
-Timers never call Jev.
+Timers never call Jev. They are pure functions in `src/policy/timers.rs`:
+
+- The reminder is sent once per party per session. A later question left
+  unanswered hands off with `unresponsive` at its own `response_timeout`.
+- While guiding, no question awaits an answer, so only
+  `self_resolution_timeout` applies.
+- A party message in the same second as the question counts as its answer.
+- "Twice" for `flood` is `FLOOD_STRIKES = 2` turns over the limit.
 
 ## 5. Brief request
 

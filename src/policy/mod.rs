@@ -272,6 +272,7 @@ fn unknown_after_both_variants(turn: &Turn<'_>) -> bool {
 }
 
 pub mod next;
+pub mod timers;
 
 #[cfg(test)]
 mod tests;
