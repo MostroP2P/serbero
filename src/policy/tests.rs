@@ -464,3 +464,37 @@ fn handoff_reasons_use_the_spec_names() {
         );
     }
 }
+
+#[test]
+fn actions_serialize_with_the_spec_names() {
+    let ask = Action::Ask {
+        buyer: vec![ASK_BUYER_SENT],
+        seller: vec![],
+    };
+
+    assert_eq!(
+        serde_json::to_value(&ask).unwrap(),
+        serde_json::json!({ "ask": { "buyer": ["ask_buyer_sent"], "seller": [] } })
+    );
+    assert_eq!(
+        serde_json::to_value(Action::Guide(Path::PaymentArrived)).unwrap(),
+        serde_json::json!({ "guide": "payment_arrived" })
+    );
+    assert_eq!(
+        serde_json::to_value(Action::Handoff(HandoffReason::FraudSignal)).unwrap(),
+        serde_json::json!({ "handoff": "fraud_signal" })
+    );
+    assert_eq!(
+        serde_json::to_value(Action::Wait).unwrap(),
+        serde_json::json!("wait")
+    );
+    for reason in [
+        HandoffReason::SelfResolutionStalled,
+        HandoffReason::OpeningFailed,
+    ] {
+        assert_eq!(
+            serde_json::to_value(reason).unwrap(),
+            serde_json::json!(reason.as_str())
+        );
+    }
+}

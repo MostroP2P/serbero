@@ -126,13 +126,24 @@ fn start_mediation(
         gate: notifier.outbound_gate(),
         chats: Arc::clone(chats),
         catalogs: catalogs.clone(),
-        enabled: true,
-        default_language: config.mediation.default_language.clone(),
+        settings: crate::mediation::MediationSettings {
+            enabled: true,
+            default_language: config.mediation.default_language.clone(),
+            languages: config.mediation.languages.clone(),
+            max_rounds: config.mediation.max_rounds,
+            max_message_chars: config.mediation.max_message_chars,
+        },
         sender: RelayDmSender::new(client.clone(), keys.clone()),
         solvers: solvers.to_vec(),
         own_takes: notifier.own_takes(),
-        ready: false.into(),
+        judge: Default::default(),
     });
+    // Party messages reach the turn task through the chat channels.
+    let (forward, received) = tokio::sync::mpsc::unbounded_channel();
+    chats.forward_to(forward);
+    background.push(tokio::spawn(
+        Arc::clone(&mediator).run_turns(received, config.mediation.quiet_period),
+    ));
     let hook = Arc::clone(&mediator);
     notifier.on_new_dispute(Box::new(move |dispute_id| {
         let mediator = Arc::clone(&hook);
@@ -167,9 +178,20 @@ fn start_mediation(
             .map(|(code, name)| crate::judge::questions::Language { code, name })
             .collect();
         let turn = crate::judge::questions::TurnQuestions::new(&languages);
-        match crate::mediation::check_judge(judge.as_ref(), thresholds.as_ref(), &turn).await {
-            crate::mediation::eligibility::Readiness::Ready => {
-                mediator.set_ready(true);
+        let readiness =
+            crate::mediation::check_judge(judge.as_ref(), thresholds.as_ref(), &turn).await;
+        match (readiness, thresholds) {
+            (crate::mediation::eligibility::Readiness::Ready, Some(thresholds)) => {
+                tracing::info!(
+                    judge = judge.id(),
+                    question_set = turn.id(),
+                    "mediation ready"
+                );
+                mediator.set_ready(crate::mediation::ReadyJudge {
+                    judge,
+                    thresholds,
+                    turn,
+                });
                 // Disputes that arrived while the checks ran were skipped.
                 let opened = mediator.reconsider(started, now()).await;
                 if opened > 0 {
@@ -178,14 +200,12 @@ fn start_mediation(
                         "mediated disputes that arrived before the judge was ready"
                     );
                 }
-                tracing::info!(
-                    judge = judge.id(),
-                    question_set = turn.id(),
-                    "mediation ready"
-                );
             }
-            crate::mediation::eligibility::Readiness::Off(reason) => {
+            (crate::mediation::eligibility::Readiness::Off(reason), _) => {
                 tracing::warn!(reason, "mediation off");
+            }
+            (crate::mediation::eligibility::Readiness::Ready, None) => {
+                tracing::warn!("mediation off: no thresholds for the configured judge");
             }
         }
     }));

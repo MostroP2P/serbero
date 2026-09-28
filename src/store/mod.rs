@@ -2,6 +2,7 @@
 //! plain SQL.
 
 pub mod disputes;
+pub mod evaluations;
 pub mod events;
 pub mod messages;
 pub mod migrations;
