@@ -43,11 +43,18 @@ const QUIET: Duration = Duration::from_millis(400);
 struct Outbox {
     sent: Arc<Mutex<Vec<String>>>,
     failing: Arc<AtomicBool>,
+    /// Sends of texts containing this fail.
+    fail_on: Arc<Mutex<Option<&'static str>>>,
 }
 
 impl DmSender for Outbox {
     async fn send_dm(&self, _to: PublicKey, text: &str) -> SerberoResult<()> {
-        if self.failing.load(Ordering::SeqCst) {
+        let matches = self
+            .fail_on
+            .lock()
+            .unwrap()
+            .is_some_and(|part| text.contains(part));
+        if self.failing.load(Ordering::SeqCst) || matches {
             return Err(serbero::error::Error::Nostr("relay rejected".into()));
         }
         self.sent.lock().unwrap().push(text.to_owned());
@@ -62,6 +69,10 @@ impl Outbox {
 
     fn fail(&self, failing: bool) {
         self.failing.store(failing, Ordering::SeqCst);
+    }
+
+    fn fail_on(&self, part: Option<&'static str>) {
+        *self.fail_on.lock().unwrap() = part;
     }
 }
 
@@ -201,6 +212,11 @@ struct Options {
     /// A buyer message stored before the turn task starts, as after a
     /// restart.
     pending: Option<&'static str>,
+    /// No solver is configured.
+    no_solvers: bool,
+    /// The session was handed off before the pending message, and a notice
+    /// was stored after it, as when the process stopped mid-handoff.
+    handed_off: bool,
 }
 
 async fn script_with(picks: &[(&'static str, (&'static str, f64))], options: Options) -> Script {
@@ -314,10 +330,14 @@ async fn script_with(picks: &[(&'static str, (&'static str, f64))], options: Opt
             max_message_chars: 2000,
         },
         sender: outbox.clone(),
-        solvers: vec![Solver {
-            pubkey: Keys::generate().public_key(),
-            permission: Permission::Write,
-        }],
+        solvers: if options.no_solvers {
+            vec![]
+        } else {
+            vec![Solver {
+                pubkey: Keys::generate().public_key(),
+                permission: Permission::Write,
+            }]
+        },
         own_takes: Arc::default(),
         judge: Default::default(),
         finishing: Default::default(),
@@ -328,6 +348,27 @@ async fn script_with(picks: &[(&'static str, (&'static str, f64))], options: Opt
             thresholds: thresholds(),
             turn: TurnQuestions::new(&languages),
         });
+    }
+    if options.handed_off {
+        let store = store.lock().unwrap();
+        sessions::hand_off(store.conn(), "s1", "human_requested", 1).unwrap();
+        let last = messages::list_for_session(store.conn(), "s1")
+            .unwrap()
+            .iter()
+            .map(|m| m.id)
+            .max()
+            .unwrap();
+        events::append(
+            store.conn(),
+            &events::NewEvent {
+                dispute_id: "d1",
+                session_id: Some("s1"),
+                kind: "handoff",
+                payload: serde_json::json!({ "reason": "human_requested", "last_message_id": last }),
+                now: 1,
+            },
+        )
+        .unwrap();
     }
     if let Some(text) = options.pending {
         messages::insert_if_new(
@@ -342,6 +383,23 @@ async fn script_with(picks: &[(&'static str, (&'static str, f64))], options: Opt
                 attachments: 0,
                 inner_event_id: "stored-before-restart",
                 created_at: 2,
+            },
+        )
+        .unwrap();
+    }
+    if options.handed_off {
+        messages::insert_if_new(
+            store.lock().unwrap().conn(),
+            &NewMessage {
+                session_id: "s1",
+                direction: Direction::Out,
+                party: serbero::store::sessions::Party::Buyer,
+                template_id: Some("handoff_notice"),
+                lang: Some("en"),
+                content: "…",
+                attachments: 0,
+                inner_event_id: "notice-after-it",
+                created_at: 3,
             },
         )
         .unwrap();
@@ -979,6 +1037,114 @@ async fn an_update_no_solver_received_is_sent_with_the_next_one() {
         "{update}"
     );
     assert!(update.contains("buyer: hola?"), "{update}");
+}
+
+async fn wait_for_text(outbox: &Outbox, prefix: &str) -> String {
+    tokio::time::timeout(WAIT, async {
+        loop {
+            if let Some(text) = outbox.texts().into_iter().find(|t| t.starts_with(prefix)) {
+                return text;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("no solver DM starting {prefix:?}"))
+}
+
+#[tokio::test]
+async fn a_brief_whose_transcript_failed_is_still_pending() {
+    let script = script(&[("buyer_wants_human", ("yes", 0.95))]).await;
+    let mut buyer = buyer_side(&script).await;
+    script.outbox.fail_on(Some("· transcript"));
+
+    buyer.say("quiero hablar con una persona").await;
+
+    assert_eq!(buyer.next_from_serbero().await, en("handoff_notice"));
+    assert!(
+        event_kinds(&script).contains(&"brief_pending".to_owned()),
+        "the solver got the brief but not the conversation"
+    );
+}
+
+#[tokio::test]
+async fn a_handoff_with_no_solver_configured_is_pending() {
+    let script = script_with(
+        &[("buyer_wants_human", ("yes", 0.95))],
+        Options {
+            no_solvers: true,
+            ..Options::default()
+        },
+    )
+    .await;
+    let mut buyer = buyer_side(&script).await;
+
+    buyer.say("quiero hablar con una persona").await;
+
+    assert_eq!(buyer.next_from_serbero().await, en("handoff_notice"));
+    assert!(event_kinds(&script).contains(&"brief_pending".to_owned()));
+}
+
+#[tokio::test]
+async fn an_unforwarded_message_is_forwarded_after_a_restart_even_behind_a_notice() {
+    let script = script_with(
+        &[],
+        Options {
+            pending: Some("hola? sigue alguien?"),
+            handed_off: true,
+            ..Options::default()
+        },
+    )
+    .await;
+
+    let update = wait_for_text(
+        &script.outbox,
+        "Dispute d1 · new messages since handoff (1)\n",
+    )
+    .await;
+
+    assert!(update.ends_with("buyer: hola? sigue alguien?"), "{update}");
+}
+
+#[tokio::test]
+async fn the_brief_evaluation_covers_only_the_judged_state() {
+    let script = script_with(
+        &[("buyer_wants_human", ("yes", 0.95))],
+        Options {
+            judge_delay: Duration::from_millis(800),
+            ..Options::default()
+        },
+    )
+    .await;
+    let buyer = buyer_side(&script).await;
+    buyer.say("quiero hablar con una persona").await;
+    // The turn is judged, then the brief request starts.
+    tokio::time::timeout(WAIT, async {
+        while script.judge.calls.load(Ordering::SeqCst) < 2 {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+
+    buyer.say("hola?").await;
+    wait_for_text(&script.outbox, "Dispute d1 · handed off").await;
+
+    let store = script.store.lock().unwrap();
+    let evaluations = evaluations::list_for_session(store.conn(), "s1").unwrap();
+    let turn_cutoff = evaluations[0].last_message_id;
+    assert_eq!(
+        evaluations[1].last_message_id, turn_cutoff,
+        "the brief was asked on the turn's state"
+    );
+    let newest = messages::list_for_session(store.conn(), "s1")
+        .unwrap()
+        .iter()
+        .filter(|m| m.content == "hola?")
+        .map(|m| m.id)
+        .max()
+        .unwrap();
+    assert!(newest > turn_cutoff);
 }
 
 #[tokio::test]
