@@ -126,6 +126,12 @@ impl Path {
             Self::PaymentNotSent => "payment_not_sent",
         }
     }
+
+    pub fn parse(name: &str) -> Option<Self> {
+        [Self::PaymentArrived, Self::PaymentNotSent]
+            .into_iter()
+            .find(|p| p.as_str() == name)
+    }
 }
 
 impl HandoffReason {

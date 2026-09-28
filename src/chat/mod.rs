@@ -19,10 +19,11 @@ use crate::store::Store;
 use crate::store::messages::{self, Direction, NewMessage};
 use crate::store::sessions::{self, Party, Session, SessionState};
 
-/// Serializes party messages with session-ending revisions: senders hold it
-/// shared from the state check until the message is recorded, and the
-/// notifier holds it exclusively while applying a revision. A session that
-/// ended can therefore never receive a message sent after the fact.
+/// Orders party messages with session-ending revisions: senders hold it
+/// shared while they check the session state, and the notifier holds it
+/// exclusively while applying a revision. No message starts after its
+/// session ended. The relay round trip happens outside it, so a slow or
+/// silent relay never holds back dispute events (AGENTS.md, relays rule 1).
 pub type OutboundGate = tokio::sync::RwLock<()>;
 
 /// The channel between Serbero and one party of a session.
@@ -84,18 +85,21 @@ async fn send_when(
     message: &Outbound<'_>,
     allowed: impl Fn(SessionState) -> bool,
 ) -> Result<EventId> {
-    let _sending = gate.read().await;
-    // A human may have taken over since the caller read the session: re-read
-    // it and send nothing once it ended (`docs/spec.md` §6, step 4).
-    let current = {
-        let store = store
-            .lock()
-            .map_err(|_| Error::Schema("store lock poisoned".into()))?;
-        sessions::get(store.conn(), &session.session_id)?
-    };
-    match current {
-        Some(current) if allowed(current.state) => {}
-        _ => return Err(Error::SessionEnded(session.session_id.clone())),
+    {
+        let _checking = gate.read().await;
+        // A human may have taken over since the caller read the session:
+        // re-read it and send nothing once it ended (`docs/spec.md` §6,
+        // step 4).
+        let current = {
+            let store = store
+                .lock()
+                .map_err(|_| Error::Schema("store lock poisoned".into()))?;
+            sessions::get(store.conn(), &session.session_id)?
+        };
+        match current {
+            Some(current) if allowed(current.state) => {}
+            _ => return Err(Error::SessionEnded(session.session_id.clone())),
+        }
     }
     let keys = channel(serbero, session, message.party)?;
     let event = wrap_chat_message(serbero, keys.conv(), keys.sign(), message.text)
