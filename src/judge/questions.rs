@@ -354,7 +354,7 @@ fn per_party(party: Party, languages: &[Language<'_>]) -> BTreeMap<String, Quest
                 &format!(
                     "In the messages listed in `latest.{party}`, does the {party} explicitly ask to talk to a human person, a solver, an administrator, or support staff instead of the automated assistant?"
                 ),
-                "A direct request for a person, such as 'I want a human' or 'quiero hablar con una persona'.",
+                "A direct request for a person, such as 'I want a human' or 'let me talk to someone from support'.",
                 "No such request. Impatience or frustration alone is not a request.",
             ),
         ),

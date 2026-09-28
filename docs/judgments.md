@@ -174,7 +174,7 @@ Asked once for each party with new messages, with `<party>` replaced by
     "type": "noul",
     "instructions": "In the messages listed in `latest.<party>`, does the <party> explicitly ask to talk to a human person, a solver, an administrator, or support staff instead of the automated assistant?",
     "criteria": {
-      "true": "A direct request for a person, such as 'I want a human' or 'quiero hablar con una persona'.",
+      "true": "A direct request for a person, such as 'I want a human' or 'let me talk to someone from support'.",
       "false": "No such request. Impatience or frustration alone is not a request."
     }
   }
@@ -368,15 +368,16 @@ verdict. It is never shown to the parties.
 - Every evaluation stores the question-set identifier:
   `QUESTION_SET_VERSION`, a dash, and the first 8 hex characters of the
   SHA-256 of the full set's canonical JSON (every question of §2.1 and §2.2,
-  for both parties), for example `qs-1-40e09af5` with the default languages.
+  for both parties), for example `qs-1-1e7ce156` with `en`, `es` and `pt`.
   Each turn sends a subset of the full set under the full set's identifier.
   The rendered questions include the options generated from
   `[mediation].languages`, so enabling a language changes the identifier even
   though the version is unchanged; the order of the languages does not, since
   options are rendered keyed by code. Recorded answers and evaluation reports
   are keyed by this identifier and are never reused across language sets.
-- A snapshot test lists every released version with its hash for the default
-  languages. Changing any instruction, option, or criterion fails the test
+- A snapshot test lists every released version with its hash for `en`, `es`
+  and `pt`, fixed in the test so that adding a catalog changes neither the
+  snapshot nor the comparison with this document. Changing any instruction, option, or criterion fails the test
   until the version is bumped, a line is added for it, and the golden set is
   re-run ([evaluation.md](evaluation.md)).
 - Thresholds live in config, per provider and model, and are not part of the

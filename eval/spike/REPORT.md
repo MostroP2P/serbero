@@ -189,10 +189,19 @@ chat". The highest `fraud_signal` on a case without fraud stays at 0.39.
   (cooperative cancel or finish the payment). That is a reasonable outcome
   for this case.
 - **`buyer_wants_human` on the fake-support case** ("contacta al soporte de
-  mostro en telegram"): 0.59–0.63 against a `false` label. The buyer points
+  mostro en telegram"): 0.59–0.69 against a `false` label. The buyer points
   the seller to a person rather than asking for one. It stays below
   `human_request` (0.80), and firing it would only hand the case to a human,
   which `fraud_signal` already does.
+
+### 4. English-only criteria (T3.5 review)
+
+The `<party>_wants_human` true criterion quoted a Spanish example
+("quiero hablar con una persona"). AGENTS.md requires every question and
+criterion sent to the judge to be in English, so the example now reads
+"let me talk to someone from support". A re-run of all 55 cases kept every
+labelled answer: the lowest positive stays at 0.96 and the highest negative
+is the fake-support case above, at 0.69, below `human_request`.
 
 ## Limits
 

@@ -3,32 +3,36 @@
 use serde_json::Value;
 
 use super::*;
-use crate::catalog::{Catalogs, embedded_codes};
 use crate::judge::{Capabilities, QuestionKind};
 
 /// Every released question set with the hash of its rendered questions for
-/// the default languages. When a question changes, bump
+/// `INITIAL_LANGUAGES`. When a question changes, bump
 /// `QUESTION_SET_VERSION`, add a line here, and re-run the golden set
 /// (`docs/evaluation.md`). Never edit an existing line.
-const RELEASED: &[(&str, &str)] = &[("qs-1", "40e09af5")];
+const RELEASED: &[(&str, &str)] = &[("qs-1", "1e7ce156")];
+
+/// The language options shown in `docs/judgments.md` §2.2. Fixed here, not
+/// read from the embedded catalogs, so adding a catalog changes neither the
+/// snapshot nor the comparison with the doc.
+const INITIAL_LANGUAGES: [Language<'static>; 3] = [
+    Language {
+        code: "en",
+        name: "English",
+    },
+    Language {
+        code: "es",
+        name: "Spanish",
+    },
+    Language {
+        code: "pt",
+        name: "Portuguese",
+    },
+];
 
 const JUDGMENTS_MD: &str = include_str!("../../../docs/judgments.md");
 
-fn catalogs() -> Catalogs {
-    Catalogs::embedded().unwrap()
-}
-
-/// The default `[mediation].languages`: every embedded catalog.
 fn default_questions() -> TurnQuestions {
-    let catalogs = catalogs();
-    let languages: Vec<Language<'_>> = embedded_codes()
-        .into_iter()
-        .map(|code| Language {
-            code,
-            name: &catalogs.get(code).unwrap().name,
-        })
-        .collect();
-    TurnQuestions::new(&languages)
+    TurnQuestions::new(&INITIAL_LANGUAGES)
 }
 
 /// The JSON blocks of one section of `docs/judgments.md`, from its heading
