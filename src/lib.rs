@@ -13,4 +13,5 @@ pub mod nostr;
 pub mod notifier;
 pub mod policy;
 pub mod signal;
+pub mod solver;
 pub mod store;

@@ -161,7 +161,7 @@ It is the judge Serbero v1 uses; the design keeps the provider replaceable
 | `mediation` | Session state machine, per-turn evaluation loop, timers. |
 | `judge` | Provider-neutral `Judge` trait, question set, typed answers; one adapter per provider (`typesafe` for Jev), retries. |
 | `policy` | Pure function: (session facts, answers, config) → next action. |
-| `messages` | Template catalog (one file per language), rendering, solver brief. |
+| `messages` | Template catalog (one file per language) and rendering (`catalog`); solver brief, transcript and reports (`solver`). |
 
 `policy` and `messages` are pure and hold most of the product logic, so most
 tests need neither relays nor a judge. `judge` sits behind a small trait with a

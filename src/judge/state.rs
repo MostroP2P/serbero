@@ -122,7 +122,7 @@ const REDACTED: &str = "[redacted]";
 
 /// Replaces every word that is a Nostr identifier. A word is a maximal run
 /// of ASCII letters and digits, so `nostr:npub1…` and `(note1…)` are found.
-fn redact(text: &str) -> String {
+pub(crate) fn redact(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut word_start = None;
     for (i, c) in text
