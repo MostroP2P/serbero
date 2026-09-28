@@ -98,6 +98,7 @@ struct LastReading {
     state: serde_json::Value,
     answers: Answers,
     facts: Facts,
+    last_message_id: i64,
 }
 
 impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
@@ -155,6 +156,7 @@ impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
                 state: &l.state,
                 answers: &l.answers,
                 facts: &l.facts,
+                last_message_id: l.last_message_id,
             });
             if self.brief_solvers(session, subject, reading, now).await? == 0 {
                 continue;
@@ -219,6 +221,7 @@ impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
                     state: &l.state,
                     answers: &l.answers,
                     facts: &l.facts,
+                    last_message_id: l.last_message_id,
                 });
                 self.hand_off(session, reason, reading, now).await?;
             }
@@ -271,6 +274,7 @@ impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
             state: built.value,
             answers,
             facts,
+            last_message_id: messages.iter().map(|m| m.id).max().unwrap_or(0),
         }
     }
 }

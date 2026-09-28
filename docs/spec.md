@@ -554,9 +554,12 @@ the assigned human solver if there is one, otherwise every `write` solver,
 otherwise every solver.
 
 The session is marked `handed_off` before anything is sent, so a session is
-handed off once and never after it ended. A brief no solver received is
-recorded as a `brief_pending` event, and messages from an update no solver
-received are sent again with the next update.
+handed off once and never after it ended. A brief counts as delivered only
+when a solver got it and every transcript part; otherwise, including when no
+solver is configured, it is recorded as a `brief_pending` event. Messages
+from an update no solver received in full are sent again with the next
+update, and after a restart any message the solvers have not seen is
+forwarded.
 
 ### 7.7 Languages
 

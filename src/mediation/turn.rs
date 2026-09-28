@@ -7,7 +7,7 @@ use serde_json::json;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::time::Instant;
 
-use super::handoff::TurnReading;
+use super::handoff::{TurnReading, last_seen};
 use super::{Mediator, ReadyJudge, history, settle::Settle};
 use crate::error::{Error, Result};
 use crate::judge::facts::{self, Facts};
@@ -81,9 +81,24 @@ impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
         };
         live.into_iter()
             .filter(|session| {
-                messages::list_for_session(store.conn(), &session.session_id)
-                    .ok()
-                    .and_then(|m| m.into_iter().max_by_key(|m| m.id))
+                let Ok(messages) = messages::list_for_session(store.conn(), &session.session_id)
+                else {
+                    return false;
+                };
+                if session.state == SessionState::HandedOff {
+                    // Messages the solvers have not seen, even when a notice
+                    // was stored after them.
+                    let seen = events::list_for_dispute(store.conn(), &session.dispute_id)
+                        .map(|history| last_seen(&history, &session.session_id));
+                    return seen.is_ok_and(|seen| {
+                        messages
+                            .iter()
+                            .any(|m| m.direction == Direction::In && m.id > seen)
+                    });
+                }
+                messages
+                    .iter()
+                    .max_by_key(|m| m.id)
                     .is_some_and(|m| m.direction == Direction::In)
             })
             .map(|session| session.session_id)
@@ -213,6 +228,7 @@ impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
                     state: &built.value,
                     answers: &judged.answers,
                     facts: &facts,
+                    last_message_id: messages.iter().map(|m| m.id).max().unwrap_or(0),
                 };
                 self.hand_off(&session, *reason, Some(reading), now).await?;
             }
@@ -221,6 +237,7 @@ impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
                     state: &built.value,
                     answers: &judged.answers,
                     facts: &facts,
+                    last_message_id: messages.iter().map(|m| m.id).max().unwrap_or(0),
                 };
                 self.guide(&session, *path, reading, now).await?;
             }

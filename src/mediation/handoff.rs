@@ -35,6 +35,14 @@ pub struct TurnReading<'a> {
     pub state: &'a Value,
     pub answers: &'a Answers,
     pub facts: &'a Facts,
+    /// The newest stored message id in `state`.
+    pub last_message_id: i64,
+}
+
+/// What a brief evaluation judged.
+struct JudgedState<'a> {
+    question_set: &'a str,
+    last_message_id: i64,
 }
 
 /// Who gets the brief: the solver assigned to the dispute if Serbero knows
@@ -101,7 +109,9 @@ impl<S: DmSender> Mediator<S> {
         let delivered = self
             .brief_solvers(session, Subject::Handoff(reason), reading, now)
             .await?;
-        if delivered == 0 && !self.solvers.is_empty() {
+        // Recorded even with no solver configured, so a brief is sent once
+        // one is added.
+        if delivered == 0 {
             let store = self.lock_store()?;
             events::append(
                 store.conn(),
@@ -142,8 +152,7 @@ impl<S: DmSender> Mediator<S> {
         let ready = self.ready_judge();
         let brief = match (reading, &ready) {
             (Some(reading), Some(ready)) => {
-                self.ask_brief(ready, session, reading.state, subject, now)
-                    .await
+                self.ask_brief(ready, session, reading, subject, now).await
             }
             _ => Brief::default(),
         };
@@ -177,29 +186,52 @@ impl<S: DmSender> Mediator<S> {
             dispute.as_ref().and_then(|d| d.assigned_solver.as_deref()),
         );
         let dispute_id = &session.dispute_id;
-        let delivered = notify_solvers(
-            &self.store,
-            &self.sender,
-            &to,
-            dispute_id,
-            "brief",
-            &text,
-            now,
-        )
-        .await?;
-        for part in solver::transcript(dispute_id, &lines(&messages)) {
-            notify_solvers(
-                &self.store,
-                &self.sender,
-                &to,
-                dispute_id,
-                "transcript",
-                &part,
-                now,
+        let parts: Vec<(&str, String)> = std::iter::once(("brief", text))
+            .chain(
+                solver::transcript(dispute_id, &lines(&messages))
+                    .into_iter()
+                    .map(|part| ("transcript", part)),
             )
-            .await?;
+            .collect();
+        self.deliver(&to, dispute_id, &parts, now).await
+    }
+
+    /// Sends every part, in order, to each solver. Returns how many solvers
+    /// received all of them: a solver who missed a part (a transcript or
+    /// update chunk) does not count, so the whole message is retried.
+    async fn deliver(
+        &self,
+        to: &[Solver],
+        dispute_id: &str,
+        parts: &[(&str, String)],
+        now: i64,
+    ) -> Result<usize> {
+        if to.is_empty() {
+            tracing::warn!(dispute_id, "no solvers configured; nothing sent");
+            return Ok(0);
         }
-        Ok(delivered)
+        let mut complete = 0;
+        for solver in to {
+            let mut all = true;
+            for (notification, text) in parts {
+                let sent = notify_solvers(
+                    &self.store,
+                    &self.sender,
+                    std::slice::from_ref(solver),
+                    dispute_id,
+                    notification,
+                    text,
+                    now,
+                )
+                .await?;
+                if sent == 0 {
+                    all = false;
+                    break;
+                }
+            }
+            complete += usize::from(all);
+        }
+        Ok(complete)
     }
 
     /// The brief request (`docs/judgments.md` §5). A failure costs the
@@ -208,10 +240,11 @@ impl<S: DmSender> Mediator<S> {
         &self,
         ready: &ReadyJudge,
         session: &Session,
-        state: &Value,
+        reading: TurnReading<'_>,
         subject: Subject,
         now: i64,
     ) -> Brief {
+        let state = reading.state;
         let questions = BriefQuestions::new().for_state(state);
         let judged = match ready.judge.evaluate(state, &questions).await {
             Ok(judged) => judged,
@@ -224,8 +257,11 @@ impl<S: DmSender> Mediator<S> {
             Subject::Handoff(reason) => Action::Handoff(reason),
             Subject::Guide(path) => Action::Guide(path),
         };
-        if let Err(e) = self.record_brief(ready, session, &questions.version, &judged, &action, now)
-        {
+        let judged_state = JudgedState {
+            question_set: &questions.version,
+            last_message_id: reading.last_message_id,
+        };
+        if let Err(e) = self.record_brief(ready, session, &judged_state, &judged, &action, now) {
             tracing::error!(session_id = %session.session_id, error = %e, "cannot record the brief evaluation");
         }
         brief::from_answers(state, &judged.answers, &ready.thresholds)
@@ -235,7 +271,7 @@ impl<S: DmSender> Mediator<S> {
         &self,
         ready: &ReadyJudge,
         session: &Session,
-        question_set: &str,
+        judged_state: &JudgedState<'_>,
         judged: &crate::judge::Judged,
         action: &Action,
         now: i64,
@@ -245,16 +281,14 @@ impl<S: DmSender> Mediator<S> {
         let action = serde_json::to_value(action)
             .map_err(|e| Error::Schema(format!("action does not serialize: {e}")))?;
         let store = self.lock_store()?;
-        let last = messages::list_for_session(store.conn(), &session.session_id)?
-            .last()
-            .map_or(0, |m| m.id);
         evaluations::insert(
             store.conn(),
             &evaluations::NewEvaluation {
                 session_id: &session.session_id,
-                question_set_version: question_set,
+                question_set_version: judged_state.question_set,
                 judge_id: ready.judge.id(),
-                last_message_id: last,
+                // The state the judge saw, not messages that arrived since.
+                last_message_id: judged_state.last_message_id,
                 answers: &answers,
                 action: &action,
                 input_tokens: judged.input_tokens,
@@ -286,20 +320,11 @@ impl<S: DmSender> Mediator<S> {
             &self.solvers,
             dispute.as_ref().and_then(|d| d.assigned_solver.as_deref()),
         );
-        let mut delivered = 0;
-        for part in solver::update(&session.dispute_id, &lines(&fresh)) {
-            delivered += notify_solvers(
-                &self.store,
-                &self.sender,
-                &to,
-                &session.dispute_id,
-                "update",
-                &part,
-                now,
-            )
-            .await?;
-        }
-        if delivered == 0 {
+        let parts: Vec<(&str, String)> = solver::update(&session.dispute_id, &lines(&fresh))
+            .into_iter()
+            .map(|part| ("update", part))
+            .collect();
+        if self.deliver(&to, &session.dispute_id, &parts, now).await? == 0 {
             // Nobody got it: keep the messages unseen for the next attempt.
             return Ok(0);
         }
@@ -363,7 +388,7 @@ impl<S: DmSender> Mediator<S> {
 }
 
 /// The newest message id the solvers have seen for this session.
-fn last_seen(events: &[events::Event], session_id: &str) -> i64 {
+pub(super) fn last_seen(events: &[events::Event], session_id: &str) -> i64 {
     events
         .iter()
         .filter(|e| e.session_id.as_deref() == Some(session_id))
