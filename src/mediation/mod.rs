@@ -169,6 +169,30 @@ impl<S: DmSender> Mediator<S> {
         outcome
     }
 
+    /// Considers every notified dispute first seen since `since` that never
+    /// had a session: the ones that arrived before the judge was ready.
+    /// Returns how many were opened.
+    pub async fn reconsider(&self, since: i64, now: i64) -> usize {
+        let waiting = match self.lock_store() {
+            Ok(store) => disputes::list_notified_without_session(store.conn(), since),
+            Err(e) => Err(e),
+        };
+        let waiting = match waiting {
+            Ok(waiting) => waiting,
+            Err(e) => {
+                tracing::error!(error = %e, "cannot list disputes to reconsider");
+                return 0;
+            }
+        };
+        let mut opened = 0;
+        for dispute in waiting {
+            if let Opening::Opened { .. } = self.consider(&dispute.dispute_id, now).await {
+                opened += 1;
+            }
+        }
+        opened
+    }
+
     /// Checks eligibility and, if eligible, marks the take as in flight in
     /// the same step, so two events for one dispute cannot both take it.
     fn claim(&self, dispute_id: &str) -> Result<std::result::Result<(), Ineligible>> {
@@ -309,7 +333,10 @@ impl<S: DmSender> Mediator<S> {
                     fiat_code: facts.fiat_code.as_deref(),
                     payment_method: method,
                     order_published_at: facts.published_at,
-                    now,
+                    // The take may have taken seconds: stamp the session when
+                    // it exists, so the take's own `in-progress` revision is
+                    // never newer than it (`notifier::transition`).
+                    now: crate::daemon::now().max(now),
                 },
             )
             .map_err(|e| e.to_string())?;

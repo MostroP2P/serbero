@@ -86,8 +86,9 @@ impl<S: DmSender> Notifier<S> {
         Arc::clone(&self.own_takes)
     }
 
-    /// Installs the hook called for each new dispute after solvers were
-    /// notified. Only the first hook is kept.
+    /// Installs the hook called for each new dispute once a solver was
+    /// notified of it, at the first DM or at a later retry. Only the first
+    /// hook is kept.
     pub fn on_new_dispute(&self, hook: NewDisputeHook) {
         if self.on_new_dispute.set(hook).is_err() {
             tracing::warn!("a new-dispute hook is already installed");
@@ -130,9 +131,8 @@ impl<S: DmSender> Notifier<S> {
         }
         match &change {
             Change::New => {
-                self.notify_new(&dispute, now).await?;
-                if let Some(hook) = self.on_new_dispute.get() {
-                    hook(&dispute.dispute_id);
+                if self.notify_new(&dispute, now).await? {
+                    self.new_dispute_notified(&dispute.dispute_id);
                 }
             }
             Change::Taken => {
@@ -198,8 +198,15 @@ impl<S: DmSender> Notifier<S> {
             )
             .await?;
             if delivered > 0 {
-                let store = lock(&self.store)?;
-                disputes::mark_notified(store.conn(), &dispute.dispute_id, now)?;
+                {
+                    let store = lock(&self.store)?;
+                    disputes::mark_notified(store.conn(), &dispute.dispute_id, now)?;
+                }
+                // Every first DM had failed: the dispute is notified only
+                // now, so it only now becomes a candidate for mediation.
+                if dispute.lifecycle == Lifecycle::New {
+                    self.new_dispute_notified(&dispute.dispute_id);
+                }
             }
         }
         if processed > 0 {
@@ -208,9 +215,16 @@ impl<S: DmSender> Notifier<S> {
         Ok(processed)
     }
 
+    fn new_dispute_notified(&self, dispute_id: &str) {
+        if let Some(hook) = self.on_new_dispute.get() {
+            hook(dispute_id);
+        }
+    }
+
     /// Tells every solver about a new dispute; the dispute becomes
-    /// `notified` once at least one DM was delivered.
-    async fn notify_new(&self, dispute: &DisputeEvent, now: i64) -> Result<()> {
+    /// `notified` once at least one DM was delivered. Returns whether one
+    /// was.
+    async fn notify_new(&self, dispute: &DisputeEvent, now: i64) -> Result<bool> {
         let text = text::new_dispute(&dispute.dispute_id, dispute.initiator);
         let delivered = notify_solvers(
             &self.store,
@@ -226,7 +240,7 @@ impl<S: DmSender> Notifier<S> {
             let store = lock(&self.store)?;
             disputes::mark_notified(store.conn(), &dispute.dispute_id, now)?;
         }
-        Ok(())
+        Ok(delivered > 0)
     }
 }
 

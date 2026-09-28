@@ -353,6 +353,7 @@ async fn an_eligible_dispute_is_taken_and_both_parties_are_greeted() {
     let buyer_inbox = listen_as(&node.buyer, &h.serbero.public_key(), &h.url).await;
     let seller_inbox = listen_as(&node.seller, &h.serbero.public_key(), &h.url).await;
 
+    let started = serbero::daemon::now();
     let opening = h.mediator.consider(&dispute_id, 1_000).await;
 
     let Opening::Opened { session_id } = opening else {
@@ -361,6 +362,10 @@ async fn an_eligible_dispute_is_taken_and_both_parties_are_greeted() {
     let session = sessions::get(store.lock().unwrap().conn(), &session_id)
         .unwrap()
         .unwrap();
+    assert!(
+        session.opened_at >= started,
+        "stamped when inserted, after the take, not when first considered"
+    );
     assert_eq!(session.state, SessionState::Active);
     assert_eq!(session.buyer_trade_pubkey, node.buyer.public_key().to_hex());
     assert_eq!(
@@ -503,4 +508,101 @@ async fn a_take_without_trade_keys_hands_the_dispute_to_the_solvers() {
         [serbero::solver::opening_failed(&dispute_id)]
     );
     assert!(event_kinds(&store, &dispute_id).contains(&"mediation_failed".to_owned()));
+}
+
+#[tokio::test]
+async fn a_dispute_that_arrived_before_the_judge_was_ready_is_reconsidered() {
+    let relay = MockRelay::run().await.unwrap();
+    let url = relay.url().await.to_string();
+    let node = start_node(&url, Mode::Accept).await;
+    let dispute_id = Uuid::new_v4().to_string();
+    let store = store_with_dispute(&dispute_id, Lifecycle::Notified);
+    let h = harness(&url, &node, &store, true, false).await;
+    assert_eq!(
+        h.mediator.consider(&dispute_id, 1_000).await,
+        Opening::Ineligible(Ineligible::JudgeNotReady)
+    );
+    h.mediator.set_ready(ReadyJudge {
+        judge: Arc::new(NeverJudge),
+        thresholds: serde_json::from_value(serde_json::json!({
+            "guide": 0.9, "fact": 0.8, "human_request": 0.8,
+            "fraud": 0.6, "conflict": 0.75, "outside_scope": 0.8
+        }))
+        .unwrap(),
+        turn: serbero::judge::questions::TurnQuestions::new(&[]),
+    });
+
+    let opened = h.mediator.reconsider(0, 1_100).await;
+
+    assert_eq!(opened, 1);
+    assert!(sessions::exists_for_dispute(store.lock().unwrap().conn(), &dispute_id).unwrap());
+}
+
+/// AGENTS.md relays rule 7: opening talks to the node, but a silent relay
+/// must never slow notification. The hook only spawns the opening.
+#[tokio::test]
+async fn a_silent_relay_never_delays_notification() {
+    let silent = MockRelay::run_with_opts(LocalRelayTestOptions {
+        unresponsive_connection: Some(Duration::from_secs(60)),
+        ..Default::default()
+    })
+    .await
+    .unwrap();
+    let url = silent.url().await.to_string();
+    let mostro = Keys::generate();
+    let dispute_id = Uuid::new_v4().to_string();
+    let store = Arc::new(Mutex::new(Store::open_in_memory().unwrap()));
+    let node = FakeNode {
+        keys: mostro.clone(),
+        buyer: Keys::generate(),
+        seller: Keys::generate(),
+        takes: Arc::default(),
+    };
+    let h = harness(&url, &node, &store, true, true).await;
+    let mediator = Arc::new(h.mediator);
+    let notifier = serbero::notifier::Notifier::new(
+        Arc::clone(&store),
+        Outbox::default(),
+        vec![Solver {
+            pubkey: Keys::generate().public_key(),
+            permission: Permission::Write,
+        }],
+        mostro.public_key(),
+    );
+    let hook = Arc::clone(&mediator);
+    notifier.on_new_dispute(Box::new(move |id| {
+        let (mediator, id) = (Arc::clone(&hook), id.to_owned());
+        tokio::spawn(async move { mediator.consider(&id, 1_000).await });
+    }));
+    let event = EventBuilder::new(Kind::Custom(38386), "")
+        .tags(
+            [
+                ["d", dispute_id.as_str()],
+                ["s", "initiated"],
+                ["initiator", "buyer"],
+                ["y", "mostro"],
+                ["z", "dispute"],
+            ]
+            .into_iter()
+            .map(|t| Tag::parse(t).unwrap()),
+        )
+        .finalize(&mostro)
+        .unwrap();
+
+    let started = std::time::Instant::now();
+    notifier.handle_event(&event, 1_000).await.unwrap();
+
+    assert!(
+        started.elapsed() < Duration::from_secs(1),
+        "{:?}",
+        started.elapsed()
+    );
+    let dispute = disputes::get(store.lock().unwrap().conn(), &dispute_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        dispute.lifecycle,
+        Lifecycle::Notified,
+        "solvers were told at once"
+    );
 }
