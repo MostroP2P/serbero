@@ -26,6 +26,9 @@ const HANDOFF_NOTICE: &str = "handoff_notice";
 const HANDOFF_EVENT: &str = "handoff";
 const UPDATE_EVENT: &str = "update_sent";
 
+/// A handoff brief no solver received yet; the timer task retries it.
+pub(super) const BRIEF_PENDING: &str = "brief_pending";
+
 /// The last turn's judge reading, when there is one.
 #[derive(Debug, Clone, Copy)]
 pub struct TurnReading<'a> {
@@ -61,23 +64,29 @@ pub fn recipients(solvers: &[Solver], assigned: Option<&str>) -> Vec<Solver> {
 }
 
 impl<S: DmSender> Mediator<S> {
-    /// Briefs the solvers, sends the parties `handoff_notice`, and marks the
-    /// session `handed_off`. Without a reading (the judge failed), the brief
-    /// says so and the transcript is still sent.
+    /// Hands the session to a human. The session is claimed first, so it is
+    /// handed off once and never after it ended; then the solvers are
+    /// briefed and the parties told. A brief no solver received is recorded
+    /// as `brief_pending`, and a notice that failed is retried by the timer
+    /// task (`mediation::timers`). Returns whether this call claimed it.
     pub async fn hand_off(
         &self,
         session: &Session,
         reason: HandoffReason,
         reading: Option<TurnReading<'_>>,
         now: i64,
-    ) -> Result<()> {
-        let messages = self
-            .brief_solvers(session, Subject::Handoff(reason), reading, now)
-            .await?;
+    ) -> Result<bool> {
         {
             let store = self.lock_store()?;
-            sessions::hand_off(store.conn(), &session.session_id, reason.as_str(), now)?;
-            let last = messages.iter().map(|m| m.id).max().unwrap_or(0);
+            if !sessions::hand_off(store.conn(), &session.session_id, reason.as_str(), now)? {
+                return Ok(false);
+            }
+            // Recorded with the claim: updates forward only later messages.
+            let last = messages::list_for_session(store.conn(), &session.session_id)?
+                .iter()
+                .map(|m| m.id)
+                .max()
+                .unwrap_or(0);
             events::append(
                 store.conn(),
                 &events::NewEvent {
@@ -89,24 +98,40 @@ impl<S: DmSender> Mediator<S> {
                 },
             )?;
         }
-        // The session is handed off before the parties hear it, so no reply
-        // can be judged as part of an active session.
-        for party in [Party::Buyer, Party::Seller] {
-            self.send_template(session, party, HANDOFF_NOTICE).await?;
+        let delivered = self
+            .brief_solvers(session, Subject::Handoff(reason), reading, now)
+            .await?;
+        if delivered == 0 && !self.solvers.is_empty() {
+            let store = self.lock_store()?;
+            events::append(
+                store.conn(),
+                &events::NewEvent {
+                    dispute_id: &session.dispute_id,
+                    session_id: Some(&session.session_id),
+                    kind: BRIEF_PENDING,
+                    payload: json!({ "reason": reason.as_str() }),
+                    now,
+                },
+            )?;
         }
-        Ok(())
+        for party in [Party::Buyer, Party::Seller] {
+            if let Err(e) = self.send_template(session, party, HANDOFF_NOTICE).await {
+                tracing::warn!(session_id = %session.session_id, %party, error = %e, "handoff notice not sent; the timer retries it");
+            }
+        }
+        Ok(true)
     }
 
     /// Asks the judge the brief questions (when a reading exists), then
-    /// sends the brief and the transcript to the recipients. Returns the
-    /// messages the transcript covered.
+    /// sends the brief and the transcript to the recipients. Returns how
+    /// many solvers received the brief.
     pub async fn brief_solvers(
         &self,
         session: &Session,
         subject: Subject,
         reading: Option<TurnReading<'_>>,
         now: i64,
-    ) -> Result<Vec<Message>> {
+    ) -> Result<usize> {
         let (messages, dispute) = {
             let store = self.lock_store()?;
             (
@@ -152,7 +177,7 @@ impl<S: DmSender> Mediator<S> {
             dispute.as_ref().and_then(|d| d.assigned_solver.as_deref()),
         );
         let dispute_id = &session.dispute_id;
-        notify_solvers(
+        let delivered = notify_solvers(
             &self.store,
             &self.sender,
             &to,
@@ -174,7 +199,7 @@ impl<S: DmSender> Mediator<S> {
             )
             .await?;
         }
-        Ok(messages)
+        Ok(delivered)
     }
 
     /// The brief request (`docs/judgments.md` §5). A failure costs the
@@ -261,8 +286,9 @@ impl<S: DmSender> Mediator<S> {
             &self.solvers,
             dispute.as_ref().and_then(|d| d.assigned_solver.as_deref()),
         );
+        let mut delivered = 0;
         for part in solver::update(&session.dispute_id, &lines(&fresh)) {
-            notify_solvers(
+            delivered += notify_solvers(
                 &self.store,
                 &self.sender,
                 &to,
@@ -272,6 +298,10 @@ impl<S: DmSender> Mediator<S> {
                 now,
             )
             .await?;
+        }
+        if delivered == 0 {
+            // Nobody got it: keep the messages unseen for the next attempt.
+            return Ok(0);
         }
         let store = self.lock_store()?;
         events::append(

@@ -110,20 +110,21 @@ impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
 
     /// One turn over the session as stored now.
     pub async fn run_turn(&self, session_id: &str, now: i64) -> Result<TurnOutcome> {
-        let Some(ready) = self.ready_judge() else {
-            return Ok(TurnOutcome::Deferred("judge not ready"));
-        };
         let Some((session, messages, opened_by)) = self.load(session_id)? else {
             return Ok(TurnOutcome::Skipped("session not live"));
+        };
+        // Forwarding after a handoff needs no judge.
+        if session.state == SessionState::HandedOff {
+            return Ok(TurnOutcome::Forwarded(
+                self.forward_updates(&session, now).await?,
+            ));
+        }
+        let Some(ready) = self.ready_judge() else {
+            return Ok(TurnOutcome::Deferred("judge not ready"));
         };
         let phase = match session.state {
             SessionState::Active => Phase::Gathering,
             SessionState::Guiding => Phase::Guiding,
-            SessionState::HandedOff => {
-                return Ok(TurnOutcome::Forwarded(
-                    self.forward_updates(&session, now).await?,
-                ));
-            }
             _ => return Ok(TurnOutcome::Skipped("session not live")),
         };
         let built = state::build(

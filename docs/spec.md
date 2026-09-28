@@ -549,6 +549,11 @@ the brief ([messages.md §3](messages.md#3-solver-messages)). The recipient is
 the assigned human solver if there is one, otherwise every `write` solver,
 otherwise every solver.
 
+The session is marked `handed_off` before anything is sent, so a session is
+handed off once and never after it ended. A brief no solver received is
+recorded as a `brief_pending` event, and messages from an update no solver
+received are sent again with the next update.
+
 ### 7.7 Languages
 
 Serbero is multilingual by design. English, Spanish and Portuguese are the

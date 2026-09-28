@@ -9,7 +9,7 @@
 #![allow(clippy::unwrap_used)] // test helpers outside #[test] functions
 
 use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -28,28 +28,40 @@ use serbero::mediation::{MediationSettings, Mediator, ReadyJudge};
 use serbero::mostro::chat::ChannelKeys;
 use serbero::nostr::dm::DmSender;
 use serbero::notifier::Solver;
+use serbero::policy::HandoffReason;
 use serbero::store::disputes::{self, Initiator, NewDispute};
 use serbero::store::messages::{self, Direction, NewMessage};
 use serbero::store::sessions::{self, NewSession, SessionState};
-use serbero::store::{Store, evaluations};
+use serbero::store::{Store, evaluations, events};
 
 const WAIT: Duration = Duration::from_secs(10);
 const QUIET: Duration = Duration::from_millis(400);
 
-/// Solver DMs, kept instead of sent.
+/// Solver DMs, kept instead of sent. While `failing` is set, every send
+/// fails, as when no relay accepts it.
 #[derive(Clone, Default)]
-struct Outbox(Arc<Mutex<Vec<String>>>);
+struct Outbox {
+    sent: Arc<Mutex<Vec<String>>>,
+    failing: Arc<AtomicBool>,
+}
 
 impl DmSender for Outbox {
     async fn send_dm(&self, _to: PublicKey, text: &str) -> SerberoResult<()> {
-        self.0.lock().unwrap().push(text.to_owned());
+        if self.failing.load(Ordering::SeqCst) {
+            return Err(serbero::error::Error::Nostr("relay rejected".into()));
+        }
+        self.sent.lock().unwrap().push(text.to_owned());
         Ok(())
     }
 }
 
 impl Outbox {
     fn texts(&self) -> Vec<String> {
-        self.0.lock().unwrap().clone()
+        self.sent.lock().unwrap().clone()
+    }
+
+    fn fail(&self, failing: bool) {
+        self.failing.store(failing, Ordering::SeqCst);
     }
 }
 
@@ -598,6 +610,83 @@ async fn a_request_for_a_person_hands_off_and_later_messages_are_forwarded() {
         judged,
         "no judging after a handoff"
     );
+}
+
+fn event_kinds(script: &Script) -> Vec<String> {
+    events::list_for_dispute(script.store.lock().unwrap().conn(), "d1")
+        .unwrap()
+        .into_iter()
+        .map(|e| e.kind)
+        .collect()
+}
+
+#[tokio::test]
+async fn a_brief_no_solver_received_is_recorded_and_the_session_is_handed_off_once() {
+    let script = script(&[("buyer_wants_human", ("yes", 0.95))]).await;
+    let mut buyer = buyer_side(&script).await;
+    script.outbox.fail(true);
+
+    buyer.say("quiero hablar con una persona").await;
+
+    assert_eq!(buyer.next_from_serbero().await, en("handoff_notice"));
+    assert!(script.outbox.texts().is_empty());
+    assert!(
+        event_kinds(&script).contains(&"brief_pending".to_owned()),
+        "{:?}",
+        event_kinds(&script)
+    );
+    let session = sessions::get(script.store.lock().unwrap().conn(), "s1")
+        .unwrap()
+        .unwrap();
+    assert_eq!(session.state, SessionState::HandedOff);
+
+    script.outbox.fail(false);
+    let claimed = script
+        .mediator
+        .hand_off(&session, HandoffReason::FraudSignal, None, 2)
+        .await
+        .unwrap();
+
+    assert!(!claimed);
+    assert!(script.outbox.texts().is_empty(), "no second brief");
+    let handoffs = event_kinds(&script)
+        .iter()
+        .filter(|k| *k == "handoff")
+        .count();
+    assert_eq!(handoffs, 1);
+}
+
+#[tokio::test]
+async fn an_update_no_solver_received_is_sent_with_the_next_one() {
+    let script = script(&[("buyer_wants_human", ("yes", 0.95))]).await;
+    let mut buyer = buyer_side(&script).await;
+    buyer.say("quiero hablar con una persona").await;
+    buyer.next_from_serbero().await;
+    let briefed = script.outbox.texts().len();
+    script.outbox.fail(true);
+
+    buyer.say("hola?").await;
+    tokio::time::sleep(QUIET + Duration::from_millis(600)).await;
+
+    assert!(!event_kinds(&script).contains(&"update_sent".to_owned()));
+    script.outbox.fail(false);
+    buyer.say("sigue alguien?").await;
+    let update = tokio::time::timeout(WAIT, async {
+        loop {
+            if let Some(text) = script.outbox.texts().get(briefed).cloned() {
+                return text;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .unwrap();
+
+    assert!(
+        update.starts_with("Dispute d1 · new messages since handoff (2)\n"),
+        "{update}"
+    );
+    assert!(update.contains("buyer: hola?"), "{update}");
 }
 
 #[tokio::test]

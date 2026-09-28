@@ -199,12 +199,14 @@ pub fn exists_for_dispute(conn: &Connection, dispute_id: &str) -> Result<bool> {
     )?)
 }
 
-/// Moves a live session to `handed_off` and records why. A terminal session
-/// is never changed. Returns `true` if the session was updated.
+/// Claims a session for a handoff: moves it to `handed_off` and records
+/// why, only while it is still opening, active or guiding. Returns `false`
+/// if it ended or was already handed off, so each session is handed off
+/// once.
 pub fn hand_off(conn: &Connection, session_id: &str, reason: &str, now: i64) -> Result<bool> {
     let updated = conn.execute(
         "UPDATE sessions SET state = 'handed_off', handoff_reason = ?2, updated_at = ?3
-         WHERE session_id = ?1 AND state NOT IN ('closed', 'superseded')",
+         WHERE session_id = ?1 AND state IN ('opening', 'active', 'guiding')",
         params![session_id, reason, now],
     )?;
     Ok(updated == 1)
@@ -417,6 +419,21 @@ mod tests {
         assert_eq!(session.state, SessionState::HandedOff);
         assert_eq!(session.handoff_reason.as_deref(), Some("opening_failed"));
         assert_eq!(session.updated_at, 300);
+    }
+
+    #[test]
+    fn a_session_is_handed_off_only_once() {
+        let store = store_with_session();
+
+        assert!(hand_off(store.conn(), "s1", "uncertain", 300).unwrap());
+        assert!(!hand_off(store.conn(), "s1", "unresponsive", 400).unwrap());
+
+        let session = get(store.conn(), "s1").unwrap().unwrap();
+        assert_eq!(
+            session.handoff_reason.as_deref(),
+            Some("uncertain"),
+            "the first claim stands"
+        );
     }
 
     #[test]
