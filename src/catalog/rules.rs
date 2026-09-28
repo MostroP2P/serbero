@@ -1,10 +1,7 @@
 //! The template rules of `docs/messages.md` §4 that code can check. Rules 4
 //! and 5 (how guidance and questions are phrased) are for human review.
 
-use super::{Amount, Catalog, Catalogs, NO_AMOUNT_SUFFIX};
-
-/// The reference catalog every language must match template for template.
-pub const REFERENCE: &str = "en";
+use super::{Amount, Catalog, Catalogs, NO_AMOUNT_SUFFIX, TEMPLATE_IDS};
 
 /// Prefix of templates allowed to mention fund actions.
 pub const GUIDE_PREFIX: &str = "guide_";
@@ -24,21 +21,26 @@ const LONGEST_AMOUNT: Amount<'static> = Amount {
 /// Every rule violation across `catalogs`; empty when all pass.
 pub fn check(catalogs: &Catalogs) -> Vec<String> {
     let mut violations = Vec::new();
-    let Some(reference) = catalogs.get(REFERENCE) else {
-        return vec![format!("no {REFERENCE} catalog to compare against")];
-    };
     for catalog in catalogs.iter() {
-        check_one(catalog, reference, &mut violations);
+        check_one(catalog, &mut violations);
     }
     violations
 }
 
-fn check_one(catalog: &Catalog, reference: &Catalog, violations: &mut Vec<String>) {
+fn check_one(catalog: &Catalog, violations: &mut Vec<String>) {
     let code = &catalog.code;
-    // Rule 1: every template of the reference, and non-empty word lists.
-    for id in reference.template_ids() {
+    // Rule 1: every required template (a fixed list, so no catalog, English
+    // included, can drop one unnoticed), nothing unknown, and non-empty word
+    // lists.
+    for id in TEMPLATE_IDS {
         if catalog.template(id).is_none() {
             violations.push(format!("{code}: missing template {id}"));
+        }
+    }
+    for id in catalog.template_ids() {
+        let base = id.strip_suffix(NO_AMOUNT_SUFFIX).unwrap_or(id);
+        if !TEMPLATE_IDS.contains(&base) {
+            violations.push(format!("{code}: unknown template {id}"));
         }
     }
     // A blank entry matches nothing, so it does not count.
@@ -155,21 +157,23 @@ mod tests {
     }
 
     #[test]
-    fn a_missing_reference_is_reported() {
-        let only = r#"
-name = "X"
-[format]
-thousands_separator = ","
-decimal_separator = "."
-[words]
-fund_action = ["release"]
-verdict = ["guilty"]
-[templates]
-intro = "Hi"
-"#;
-        let catalogs = Catalogs::from_sources([("xx", only)].into_iter()).unwrap();
+    fn english_is_checked_against_the_fixed_list_too() {
+        let en = repo_file("messages/en.toml");
+        let dropped: String = en
+            .lines()
+            .filter(|line| !line.starts_with("guide_not_sent_seller ="))
+            .map(|line| format!("{line}\n"))
+            .collect::<String>()
+            + "extra_template = \"Hi\"\n";
+        let catalogs = Catalogs::from_sources([("en", dropped.as_str())].into_iter()).unwrap();
 
-        assert_eq!(check(&catalogs), ["no en catalog to compare against"]);
+        assert_eq!(
+            check(&catalogs),
+            [
+                "en: missing template guide_not_sent_seller",
+                "en: unknown template extra_template",
+            ]
+        );
     }
 
     #[test]
