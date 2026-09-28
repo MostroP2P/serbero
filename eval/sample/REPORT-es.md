@@ -21,12 +21,12 @@ Question set `qs-1-1e7ce156`, 10 cases, 72 labelled answers. Thresholds from def
 
 ## Recommended thresholds (evaluation.md §3)
 
-| Threshold | From | Rule | Value |
-|---|---|---|---:|
-| `guide` | `seller_receipt` | lowest with precision ≥ 0.98 | 0.50 |
-| `guide` | `buyer_payment` | lowest with precision ≥ 0.98 | 0.50 |
-| `human_request` | `<party>_wants_human` | highest with recall ≥ 0.9 | 0.95 |
-| `fraud` | `fraud_signal` | highest with recall ≥ 0.85 | 0.85 |
+| Threshold | Rule | Value |
+|---|---|---:|
+| `guide` | lowest meeting precision ≥ 0.98 for both `seller_receipt = says_received` and `buyer_payment = says_not_sent` | 0.50 |
+| `fact` | lowest meeting accuracy ≥ 0.95 and coverage ≥ 0.70 for both `buyer_payment` and `seller_receipt` | 0.50 |
+| `human_request` | highest keeping `<party>_wants_human` recall ≥ 0.90 | 0.95 |
+| `fraud` | highest keeping `fraud_signal` recall ≥ 0.85 | 0.85 |
 
 Values are swept from 0.50 to 0.95 in steps of 0.05.
 
@@ -45,8 +45,8 @@ Values are swept from 0.50 to 0.95 in steps of 0.05.
 | `seller_checked` | 2 | 1.000 |
 | `seller_receipt` | 7 | 1.000 |
 
-Expected calibration error (10 bins, all answers): 0.029.
+Expected calibration error (10 bins, all answers): 0.030.
 
-Latency: median 433 ms, p95 450 ms. Input tokens: mean 2145.
+Latency: median 319 ms, p95 344 ms. Input tokens: mean 2145.
 
 ## Misses (0)

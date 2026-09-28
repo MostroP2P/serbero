@@ -27,13 +27,18 @@ pub struct Case {
     pub lang: String,
     pub source: String,
     pub state: Value,
+    /// The turn was judged while guiding, so `<party>_rejects_path` is
+    /// asked too.
+    #[serde(default)]
+    pub guiding: bool,
     /// Unlabelled questions are not scored.
     pub expect: BTreeMap<String, Label>,
 }
 
 impl Case {
     /// The questions a turn over this state asks: per-party questions only
-    /// for a party with messages in `latest`, never the guiding question.
+    /// for a party with messages in `latest`, and the guiding question only
+    /// for a guiding turn.
     pub fn questions(&self, turn: &TurnQuestions) -> QuestionSet {
         let wrote: Vec<Party> = [Party::Buyer, Party::Seller]
             .into_iter()
@@ -43,7 +48,7 @@ impl Case {
                     .is_some_and(|ids| !ids.is_empty())
             })
             .collect();
-        turn.for_turn(&wrote, false)
+        turn.for_turn(&wrote, self.guiding)
     }
 
     /// Every label must name an asked question and one of its options (or
@@ -156,6 +161,19 @@ mod tests {
         assert!(!asked.questions.contains_key("seller_language"));
         assert!(!facts_only.questions.contains_key("buyer_language"));
         assert!(!asked.questions.contains_key("buyer_rejects_path"));
+    }
+
+    #[test]
+    fn a_guiding_case_asks_the_rejects_path_question() {
+        let mut guiding = case(&["m1"], json!({ "buyer_rejects_path": true }));
+        guiding.guiding = true;
+
+        guiding.validate(&turn()).unwrap();
+        assert!(
+            case(&["m1"], json!({ "buyer_rejects_path": true }))
+                .validate(&turn())
+                .is_err()
+        );
     }
 
     #[test]
