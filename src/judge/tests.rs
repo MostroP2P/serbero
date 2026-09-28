@@ -125,6 +125,19 @@ fn score_value_is_the_weighted_level() {
 }
 
 #[test]
+fn score_value_stays_in_range_for_a_tolerated_sum() {
+    // Sums to 1.009: accepted by `check`, and still at most 1.
+    let answer = Answer::Score {
+        probabilities: vec![0.0, 0.009, 1.0],
+    };
+
+    assert!(answer.check(&score_question(3)).is_ok());
+    let value = answer.score_value().unwrap();
+    assert!(value <= 1.0, "{value}");
+    assert!(close(value, (0.0045 + 1.0) / 1.009));
+}
+
+#[test]
 fn a_matching_answer_passes_the_check() {
     let answers: Answers = [
         ("n".to_owned(), Answer::Noul { p_yes: 0.3 }),
