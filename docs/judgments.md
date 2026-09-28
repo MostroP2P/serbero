@@ -55,6 +55,12 @@ from the order facts below.
   wrote to them. Per-message questions look only at these.
 - Message text is truncated at `max_message_chars`. Attachments are counted,
   never sent.
+- Nostr identifiers are replaced with `[redacted]` even inside party text,
+  in case a party pastes one: any 64-character hex word (a key or event id)
+  and any word that parses as NIP-19 (`npub`, `nsec`, `note`, `nprofile`,
+  `nevent`, `naddr`), whether or not it belongs to this session.
+- Order facts Serbero does not know (the order event could not be fetched, or
+  Mostro published the initiator as `unknown`) are left out, never guessed.
 - Message ids are the only link between answers and text. Party text never
   appears in instructions or criteria, so it cannot change a question.
 
