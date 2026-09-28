@@ -263,3 +263,50 @@ fn a_noul_at_exactly_one_half_counts_as_yes() {
 
     assert_eq!(tie.predicted(), Label::Yes(true));
 }
+
+#[test]
+fn one_guide_value_satisfies_both_precision_targets() {
+    let mut items = receipts(&[("says_received", 0.97), ("not_stated", 0.82)]);
+    items.push(item(
+        "buyer_payment",
+        opt("says_not_sent"),
+        choice(&[("says_not_sent", 0.96), ("not_stated", 0.04)]),
+    ));
+    items.push(item(
+        "buyer_payment",
+        opt("not_stated"),
+        choice(&[("says_not_sent", 0.91), ("not_stated", 0.09)]),
+    ));
+
+    let guide = recommended_guide(&items).unwrap();
+
+    // seller_receipt needs 0.85, buyer_payment needs 0.95: the stricter wins.
+    assert!(close(guide, 0.95), "{guide}");
+}
+
+#[test]
+fn the_fact_value_meets_accuracy_and_coverage_for_both_questions() {
+    let mut items = receipts(&[
+        ("says_received", 0.99),
+        ("says_received", 0.95),
+        ("not_stated", 0.1),
+        ("not_stated", 0.72),
+    ]);
+    for (label, p) in [
+        ("says_sent", 0.99),
+        ("says_sent", 0.9),
+        ("not_stated", 0.05),
+    ] {
+        items.push(item(
+            "buyer_payment",
+            opt(label),
+            choice(&[("says_sent", p), ("not_stated", 1.0 - p)]),
+        ));
+    }
+
+    let fact = recommended_fact(&items).unwrap();
+
+    // The wrong pick sits at 0.72: from 0.75 on it is excluded, accuracy is
+    // 1.0 and seller_receipt coverage 3/4 still meets 0.70.
+    assert!(close(fact, 0.75), "{fact}");
+}

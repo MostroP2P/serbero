@@ -45,7 +45,7 @@
       "answers": {
         "buyer_details": {
           "type": "noul",
-          "p_yes": 0.05
+          "p_yes": 0.04
         },
         "buyer_language": {
           "type": "choice",
@@ -88,9 +88,9 @@
           "type": "choice",
           "probabilities": {
             "counterpart_unresponsive": 0.01,
-            "not_yet_clear": 0.53,
+            "not_yet_clear": 0.5599999999999999,
             "other": 0.02,
-            "payment_not_confirmed": 0.44,
+            "payment_not_confirmed": 0.41,
             "technical_problem": 0.0,
             "wrong_account_or_method": 0.0,
             "wrong_amount": 0.0
@@ -98,7 +98,7 @@
         },
         "fraud_signal": {
           "type": "noul",
-          "p_yes": 0.06
+          "p_yes": 0.05
         },
         "seller_checked": {
           "type": "noul",
@@ -205,7 +205,7 @@
         },
         "buyer_wants_human": {
           "type": "noul",
-          "p_yes": 0.04
+          "p_yes": 0.03
         },
         "claims_conflict": {
           "type": "noul",
@@ -225,7 +225,7 @@
         },
         "fraud_signal": {
           "type": "noul",
-          "p_yes": 0.09
+          "p_yes": 0.1
         },
         "seller_checked": {
           "type": "noul",
@@ -310,13 +310,13 @@
       "answers": {
         "buyer_details": {
           "type": "noul",
-          "p_yes": 0.04
+          "p_yes": 0.05
         },
         "buyer_language": {
           "type": "choice",
           "probabilities": {
-            "en": 0.95,
-            "es": 0.05,
+            "en": 0.93,
+            "es": 0.07,
             "other": 0.0,
             "pt": 0.0,
             "unknown": 0.0
@@ -353,9 +353,9 @@
           "type": "choice",
           "probabilities": {
             "counterpart_unresponsive": 0.0,
-            "not_yet_clear": 0.29,
+            "not_yet_clear": 0.3,
             "other": 0.01,
-            "payment_not_confirmed": 0.7,
+            "payment_not_confirmed": 0.6900000000000001,
             "technical_problem": 0.0,
             "wrong_account_or_method": 0.0,
             "wrong_amount": 0.0
@@ -466,9 +466,9 @@
           "type": "choice",
           "probabilities": {
             "counterpart_unresponsive": 0.01,
-            "not_yet_clear": 0.15,
+            "not_yet_clear": 0.11,
             "other": 0.0,
-            "payment_not_confirmed": 0.84,
+            "payment_not_confirmed": 0.88,
             "technical_problem": 0.0,
             "wrong_account_or_method": 0.0,
             "wrong_amount": 0.0
@@ -548,15 +548,15 @@
         },
         "claims_conflict": {
           "type": "noul",
-          "p_yes": 0.06
+          "p_yes": 0.07
         },
         "dispute_topic": {
           "type": "choice",
           "probabilities": {
             "counterpart_unresponsive": 0.03,
-            "not_yet_clear": 0.02,
+            "not_yet_clear": 0.01,
             "other": 0.0,
-            "payment_not_confirmed": 0.95,
+            "payment_not_confirmed": 0.96,
             "technical_problem": 0.0,
             "wrong_account_or_method": 0.0,
             "wrong_amount": 0.0
@@ -568,7 +568,7 @@
         },
         "seller_checked": {
           "type": "noul",
-          "p_yes": 0.85
+          "p_yes": 0.86
         },
         "seller_language": {
           "type": "choice",
@@ -649,7 +649,7 @@
       "answers": {
         "buyer_details": {
           "type": "noul",
-          "p_yes": 0.06
+          "p_yes": 0.05
         },
         "buyer_payment": {
           "type": "choice",
@@ -661,15 +661,15 @@
         },
         "claims_conflict": {
           "type": "noul",
-          "p_yes": 0.07
+          "p_yes": 0.06
         },
         "dispute_topic": {
           "type": "choice",
           "probabilities": {
-            "counterpart_unresponsive": 0.07,
-            "not_yet_clear": 0.02,
+            "counterpart_unresponsive": 0.08,
+            "not_yet_clear": 0.04,
             "other": 0.0,
-            "payment_not_confirmed": 0.91,
+            "payment_not_confirmed": 0.88,
             "technical_problem": 0.0,
             "wrong_account_or_method": 0.0,
             "wrong_amount": 0.0
@@ -681,7 +681,7 @@
         },
         "seller_checked": {
           "type": "noul",
-          "p_yes": 0.44
+          "p_yes": 0.41
         },
         "seller_language": {
           "type": "choice",
@@ -770,7 +770,7 @@
       "answers": {
         "buyer_details": {
           "type": "noul",
-          "p_yes": 0.87
+          "p_yes": 0.88
         },
         "buyer_language": {
           "type": "choice",
@@ -807,7 +807,7 @@
         },
         "claims_conflict": {
           "type": "noul",
-          "p_yes": 0.91
+          "p_yes": 0.92
         },
         "dispute_topic": {
           "type": "choice",
@@ -823,7 +823,7 @@
         },
         "fraud_signal": {
           "type": "noul",
-          "p_yes": 0.89
+          "p_yes": 0.9
         },
         "seller_checked": {
           "type": "noul",
@@ -947,11 +947,11 @@
         },
         "buyer_wants_human": {
           "type": "noul",
-          "p_yes": 0.16
+          "p_yes": 0.19
         },
         "claims_conflict": {
           "type": "noul",
-          "p_yes": 0.1
+          "p_yes": 0.09
         },
         "dispute_topic": {
           "type": "choice",
@@ -967,11 +967,11 @@
         },
         "fraud_signal": {
           "type": "noul",
-          "p_yes": 0.9
+          "p_yes": 0.89
         },
         "seller_checked": {
           "type": "noul",
-          "p_yes": 0.04
+          "p_yes": 0.05
         },
         "seller_receipt": {
           "type": "choice",
@@ -1093,7 +1093,7 @@
         },
         "fraud_signal": {
           "type": "noul",
-          "p_yes": 0.1
+          "p_yes": 0.11
         },
         "seller_checked": {
           "type": "noul",
@@ -1195,10 +1195,10 @@
         "dispute_topic": {
           "type": "choice",
           "probabilities": {
-            "counterpart_unresponsive": 0.01,
+            "counterpart_unresponsive": 0.02,
             "not_yet_clear": 0.22,
             "other": 0.0,
-            "payment_not_confirmed": 0.77,
+            "payment_not_confirmed": 0.76,
             "technical_problem": 0.0,
             "wrong_account_or_method": 0.0,
             "wrong_amount": 0.0
@@ -1206,7 +1206,7 @@
         },
         "fraud_signal": {
           "type": "noul",
-          "p_yes": 0.05
+          "p_yes": 0.06
         },
         "seller_checked": {
           "type": "noul",
