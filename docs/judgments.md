@@ -363,16 +363,22 @@ verdict. It is never shown to the parties.
 - The question set is defined in `src/judge/questions.rs` in provider-neutral
   types and serialized to the JSON above. The `<party>_language` options are
   generated from `[mediation].languages`; the `en`, `es` and `pt` entries shown
-  are the initial set.
+  are the initial set. A test compares the code with the JSON blocks of §2.1
+  and §2.2 of this document, so the two cannot drift apart.
 - Every evaluation stores the question-set identifier:
-  `QUESTION_SET_VERSION` plus a short hash of the rendered questions. The
-  rendered questions include the options generated from
+  `QUESTION_SET_VERSION`, a dash, and the first 8 hex characters of the
+  SHA-256 of the full set's canonical JSON (every question of §2.1 and §2.2,
+  for both parties), for example `qs-1-40e09af5` with the default languages.
+  Each turn sends a subset of the full set under the full set's identifier.
+  The rendered questions include the options generated from
   `[mediation].languages`, so enabling a language changes the identifier even
-  though the version is unchanged. Recorded answers and evaluation reports are
-  keyed by this identifier and are never reused across language sets.
-- A snapshot test hashes the serialized question set. Changing any
-  instruction, option, or criterion fails the test until the version is bumped
-  and the golden set is re-run ([evaluation.md](evaluation.md)).
+  though the version is unchanged; the order of the languages does not, since
+  options are rendered keyed by code. Recorded answers and evaluation reports
+  are keyed by this identifier and are never reused across language sets.
+- A snapshot test lists every released version with its hash for the default
+  languages. Changing any instruction, option, or criterion fails the test
+  until the version is bumped, a line is added for it, and the golden set is
+  re-run ([evaluation.md](evaluation.md)).
 - Thresholds live in config, per provider and model, and are not part of the
   version. Their values are
   logged with each evaluation's action.
