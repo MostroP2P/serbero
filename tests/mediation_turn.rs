@@ -933,6 +933,29 @@ async fn a_closing_whose_report_failed_is_completed_later_without_thanking_twice
 }
 
 #[tokio::test]
+async fn guidance_with_no_solver_configured_records_the_brief_as_pending() {
+    let script = script_with(
+        &[("seller_receipt", ("says_received", 0.97))],
+        Options {
+            no_solvers: true,
+            ..Options::default()
+        },
+    )
+    .await;
+    let mut seller = seller_side(&script).await;
+
+    seller.say("sí, me llegó el pago").await;
+
+    assert_eq!(seller.next_from_serbero().await, en("guide_arrived_seller"));
+    let pending = events::list_for_dispute(script.store.lock().unwrap().conn(), "d1")
+        .unwrap()
+        .into_iter()
+        .find(|e| e.kind == "brief_pending")
+        .expect("a pending brief");
+    assert_eq!(pending.payload["path"], "payment_arrived");
+}
+
+#[tokio::test]
 async fn guidance_a_party_missed_is_sent_again() {
     let script = script(&[("seller_receipt", ("says_received", 0.97))]).await;
     let mut buyer = buyer_side(&script).await;
@@ -1037,19 +1060,6 @@ async fn an_update_no_solver_received_is_sent_with_the_next_one() {
         "{update}"
     );
     assert!(update.contains("buyer: hola?"), "{update}");
-}
-
-async fn wait_for_text(outbox: &Outbox, prefix: &str) -> String {
-    tokio::time::timeout(WAIT, async {
-        loop {
-            if let Some(text) = outbox.texts().into_iter().find(|t| t.starts_with(prefix)) {
-                return text;
-            }
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-    })
-    .await
-    .unwrap_or_else(|_| panic!("no solver DM starting {prefix:?}"))
 }
 
 #[tokio::test]

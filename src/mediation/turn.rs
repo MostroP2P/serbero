@@ -229,6 +229,7 @@ impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
                     state: &built.value,
                     answers: &judged.answers,
                     facts: &facts,
+                    last_message_id: messages.iter().map(|m| m.id).max().unwrap_or(0),
                 };
                 self.guide(&session, *path, reading, now).await?;
             }
