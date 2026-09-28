@@ -433,6 +433,7 @@ fn a_failed_opening_asks_the_solvers_to_take_over() {
          Please take it over; Serbero will not write to the parties."
     );
 }
+
 #[test]
 fn a_message_longer_than_a_dm_is_split_not_cut() {
     let long = format!("{}END", "x".repeat(70_000));

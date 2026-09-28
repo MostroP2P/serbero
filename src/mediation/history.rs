@@ -26,10 +26,15 @@ pub fn from_messages(messages: &[Message]) -> (Asked, PartyHistory<'_>, PartyHis
     )
 }
 
+/// Order is arrival order (the row id), not `created_at`: an inbound
+/// message's `created_at` comes from the party's clock and may be skewed.
 fn party_history(messages: &[Message], party: Party) -> PartyHistory<'_> {
+    let mut arrived: Vec<&Message> = messages.iter().collect();
+    arrived.sort_by_key(|m| m.id);
     let theirs = || {
-        messages
+        arrived
             .iter()
+            .copied()
             .enumerate()
             .filter(move |(_, m)| m.party == party)
     };
@@ -78,6 +83,27 @@ mod tests {
 
     fn reply(party: Party) -> Message {
         message(Direction::In, party, None)
+    }
+
+    #[test]
+    fn a_reply_counts_by_arrival_not_by_the_partys_clock() {
+        // The party's clock is behind: its reply, received after the
+        // question, carries an earlier created_at and sorts before it.
+        let question = Message {
+            id: 5,
+            created_at: 100,
+            ..out(Party::Seller, template::ASK_SELLER_RECEIVED)
+        };
+        let reply = Message {
+            id: 6,
+            created_at: 90,
+            ..reply(Party::Seller)
+        };
+
+        let messages = [reply, question];
+        let (_, _, seller) = from_messages(&messages);
+
+        assert!(!seller.outstanding, "the reply arrived after the question");
     }
 
     #[test]

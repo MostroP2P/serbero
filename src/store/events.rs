@@ -72,6 +72,53 @@ pub fn last_notification_to(
         .find(|event| event.id == id))
 }
 
+/// A mediated dispute that reached its final status.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Resolution {
+    pub dispute_id: String,
+    pub status: String,
+    pub by_parties: bool,
+}
+
+/// Mediated disputes resolved since `since` whose closing (thanks and final
+/// report) was not completed, oldest first: a `resolved` event, a session,
+/// and no `finished` event.
+pub fn unfinished_resolutions(conn: &Connection, since: i64) -> Result<Vec<Resolution>> {
+    let mut stmt = conn.prepare(
+        "SELECT e.dispute_id,
+                json_extract(e.payload_json, '$.status'),
+                json_extract(e.payload_json, '$.resolved_by')
+         FROM events e
+         WHERE e.kind = 'resolved' AND e.created_at >= ?1
+           AND EXISTS (SELECT 1 FROM sessions s WHERE s.dispute_id = e.dispute_id)
+           AND NOT EXISTS (SELECT 1 FROM events f
+                           WHERE f.dispute_id = e.dispute_id AND f.kind = 'finished')
+         ORDER BY e.id",
+    )?;
+    let rows = stmt.query_map([since], |row| {
+        Ok(Resolution {
+            dispute_id: row.get(0)?,
+            status: row.get::<_, Option<String>>(1)?.unwrap_or_default(),
+            by_parties: row.get::<_, Option<String>>(2)?.as_deref() == Some("parties"),
+        })
+    })?;
+    rows.map(|r| r.map_err(Into::into)).collect()
+}
+
+/// Whether a `solver_feedback` from this source DM was already recorded.
+pub fn feedback_recorded(conn: &Connection, source: &str) -> Result<bool> {
+    Ok(conn
+        .query_row(
+            "SELECT 1 FROM events
+             WHERE kind = 'solver_feedback' AND json_extract(payload_json, '$.source') = ?1
+             LIMIT 1",
+            [source],
+            |_| Ok(()),
+        )
+        .optional()?
+        .is_some())
+}
+
 /// Events for one dispute, oldest first.
 pub fn list_for_dispute(conn: &Connection, dispute_id: &str) -> Result<Vec<Event>> {
     let mut stmt = conn.prepare(
@@ -151,6 +198,44 @@ mod tests {
             last_notification_to(store.conn(), "cc", "brief")
                 .unwrap()
                 .is_none()
+        );
+    }
+
+    #[test]
+    fn a_mediated_resolution_is_unfinished_until_finished() {
+        let store = crate::store::sessions::testing::store_with_session();
+        let resolved = |dispute_id, by, now| NewEvent {
+            dispute_id,
+            session_id: None,
+            kind: "resolved",
+            payload: json!({ "status": "seller-refunded", "resolved_by": by }),
+            now,
+        };
+        append(store.conn(), &resolved("d1", "parties", 500)).unwrap();
+        // No session: Serbero never mediated it.
+        append(store.conn(), &resolved("d2", "solver", 500)).unwrap();
+
+        assert_eq!(
+            unfinished_resolutions(store.conn(), 400).unwrap(),
+            [Resolution {
+                dispute_id: "d1".into(),
+                status: "seller-refunded".into(),
+                by_parties: true,
+            }]
+        );
+        assert!(
+            unfinished_resolutions(store.conn(), 600)
+                .unwrap()
+                .is_empty(),
+            "too old"
+        );
+
+        append(store.conn(), &event("d1", "finished", 510)).unwrap();
+
+        assert!(
+            unfinished_resolutions(store.conn(), 400)
+                .unwrap()
+                .is_empty()
         );
     }
 

@@ -5,14 +5,18 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use super::handoff::TurnReading;
+use serde_json::json;
+
+use super::guide::FINISH_LOOKBACK_SECS;
+use super::handoff::{BRIEF_PENDING, HANDOFF_NOTICE, TurnReading};
 use super::{Mediator, ReadyJudge};
 use crate::error::Result;
 use crate::judge::facts::{self, Facts};
 use crate::judge::{Answers, state};
 use crate::nostr::dm::DmSender;
 use crate::policy::timers::{Clocks, PartyClock, Timer, check};
-use crate::policy::{Phase, template};
+use crate::policy::{HandoffReason, Path, Phase, template};
+use crate::solver::Subject;
 use crate::store::events::Event;
 use crate::store::messages::{self, Direction, Message};
 use crate::store::sessions::{self, Party, Session, SessionState};
@@ -22,23 +26,26 @@ use crate::store::{disputes, evaluations, events};
 pub const TICK: Duration = Duration::from_secs(30);
 
 /// The clocks of one session, read from its messages and events.
+///
+/// Whether a party replied is decided by arrival order (the stored id), not
+/// by the `created_at` the party's client chose: a reply that arrived after
+/// the last question counts as answering it, whatever its timestamp.
 pub fn clocks(session: &Session, messages: &[Message], history: &[Event], now: i64) -> Clocks {
     let party_clock = |party: Party| {
         let theirs = || messages.iter().filter(move |m| m.party == party);
-        let sent = |pick: &dyn Fn(&str) -> bool| {
+        let last_sent = |pick: &dyn Fn(&str) -> bool| {
             theirs()
                 .filter(|m| m.direction == Direction::Out)
                 .filter(|m| m.template_id.as_deref().is_some_and(pick))
-                .map(|m| m.created_at)
-                .max()
+                .max_by_key(|m| m.id)
         };
+        let question = last_sent(&template::is_question);
+        let replied =
+            question.is_some_and(|q| theirs().any(|m| m.direction == Direction::In && m.id > q.id));
         PartyClock {
-            question_at: sent(&template::is_question),
-            replied_at: theirs()
-                .filter(|m| m.direction == Direction::In)
-                .map(|m| m.created_at)
-                .max(),
-            reminded_at: sent(&|t| t == template::REMINDER),
+            question_at: question.map(|q| q.created_at),
+            replied_at: question.filter(|_| replied).map(|q| q.created_at),
+            reminded_at: last_sent(&|t| t == template::REMINDER).map(|m| m.created_at),
         }
     };
     Clocks {
@@ -58,6 +65,33 @@ pub fn clocks(session: &Session, messages: &[Message], history: &[Event], now: i
     }
 }
 
+/// Records that a `brief_pending` brief was delivered later.
+const BRIEF_SENT: &str = "brief_sent";
+
+/// The session's briefs no solver received yet: each `brief_pending` event
+/// id with what it was about, unless a `brief_sent` event covers it.
+fn pending_briefs(session: &Session, history: &[Event]) -> Vec<(i64, Subject)> {
+    let ours = || {
+        history
+            .iter()
+            .filter(|e| e.session_id.as_deref() == Some(&session.session_id))
+    };
+    ours()
+        .filter(|e| e.kind == BRIEF_PENDING)
+        .filter(|e| {
+            !ours().any(|s| s.kind == BRIEF_SENT && s.payload["pending"].as_i64() == Some(e.id))
+        })
+        .filter_map(|e| {
+            let subject = if let Some(reason) = e.payload["reason"].as_str() {
+                Subject::Handoff(HandoffReason::parse(reason)?)
+            } else {
+                Subject::Guide(Path::parse(e.payload["path"].as_str()?)?)
+            };
+            Some((e.id, subject))
+        })
+        .collect()
+}
+
 /// What a handoff from a timer shows the solvers: the state as it is now,
 /// read with the last turn's answers, if the judge answered one.
 struct LastReading {
@@ -68,8 +102,12 @@ struct LastReading {
 
 impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
     /// Checks every live session every `TICK` until the task is dropped.
-    pub async fn run_timers(self: Arc<Self>) {
-        let mut ticks = tokio::time::interval(TICK);
+    /// It starts once `resumed` completes (the chat subscriptions were
+    /// re-sent) and one `TICK` later, so replies the relays replay after a
+    /// restart are stored before any reminder or handoff is decided.
+    pub async fn run_timers(self: Arc<Self>, resumed: impl Future<Output = ()>) {
+        resumed.await;
+        let mut ticks = tokio::time::interval_at(tokio::time::Instant::now() + TICK, TICK);
         ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             ticks.tick().await;
@@ -79,19 +117,77 @@ impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
         }
     }
 
-    /// One pass over the live sessions that are gathering or guiding.
+    /// One pass over the live sessions: timers for those gathering or
+    /// guiding, then whatever did not reach its recipient before (a brief,
+    /// a handoff notice, guidance, a resolved dispute's closing).
     pub async fn tick(&self, now: i64) -> Result<()> {
         let live = {
             let store = self.lock_store()?;
             sessions::list_live(store.conn())?
         };
         for session in live {
-            if !matches!(session.state, SessionState::Active | SessionState::Guiding) {
-                continue;
-            }
-            if let Err(e) = self.tick_session(&session, now).await {
+            if matches!(session.state, SessionState::Active | SessionState::Guiding)
+                && let Err(e) = self.tick_session(&session, now).await
+            {
                 tracing::error!(session_id = %session.session_id, error = %e, "session timer failed");
             }
+            if let Err(e) = self.retry_undelivered(&session, now).await {
+                tracing::warn!(session_id = %session.session_id, error = %e, "retry failed");
+            }
+        }
+        self.finish_pending(now - FINISH_LOOKBACK_SECS, now).await;
+        Ok(())
+    }
+
+    /// Resends what a session's recipients did not get: pending briefs,
+    /// the handoff notice, and guidance.
+    async fn retry_undelivered(&self, session: &Session, now: i64) -> Result<()> {
+        let (messages, history) = {
+            let store = self.lock_store()?;
+            (
+                messages::list_for_session(store.conn(), &session.session_id)?,
+                events::list_for_dispute(store.conn(), &session.dispute_id)?,
+            )
+        };
+        for (pending, subject) in pending_briefs(session, &history) {
+            let last = self.last_reading(session, &messages)?;
+            let reading = last.as_ref().map(|l| TurnReading {
+                state: &l.state,
+                answers: &l.answers,
+                facts: &l.facts,
+            });
+            if self.brief_solvers(session, subject, reading, now).await? == 0 {
+                continue;
+            }
+            let store = self.lock_store()?;
+            events::append(
+                store.conn(),
+                &events::NewEvent {
+                    dispute_id: &session.dispute_id,
+                    session_id: Some(&session.session_id),
+                    kind: BRIEF_SENT,
+                    payload: json!({ "pending": pending }),
+                    now,
+                },
+            )?;
+        }
+        match session.state {
+            SessionState::HandedOff => {
+                for party in [Party::Buyer, Party::Seller] {
+                    let told = messages.iter().any(|m| {
+                        m.direction == Direction::Out
+                            && m.party == party
+                            && m.template_id.as_deref() == Some(HANDOFF_NOTICE)
+                    });
+                    if !told {
+                        self.send_template(session, party, HANDOFF_NOTICE).await?;
+                    }
+                }
+            }
+            SessionState::Guiding => {
+                self.resend_guides(session).await?;
+            }
+            _ => {}
         }
         Ok(())
     }
@@ -186,9 +282,10 @@ mod tests {
     use super::*;
     use crate::store::sessions::testing::store_with_session;
 
+    /// A message stored in arrival order: its id follows `at`.
     fn message(direction: Direction, party: Party, template: Option<&str>, at: i64) -> Message {
         Message {
-            id: 0,
+            id: at,
             session_id: "s1".into(),
             direction,
             party,
@@ -247,7 +344,7 @@ mod tests {
             clocks.buyer,
             PartyClock {
                 question_at: Some(30),
-                replied_at: Some(20),
+                replied_at: None,
                 reminded_at: None
             }
         );
@@ -258,6 +355,34 @@ mod tests {
                 replied_at: None,
                 reminded_at: Some(40)
             }
+        );
+    }
+
+    #[test]
+    fn a_reply_counts_by_arrival_not_by_its_timestamp() {
+        let at = |id: i64, created_at: i64, direction, template: Option<&str>| Message {
+            id,
+            created_at,
+            ..message(direction, Party::Buyer, template, 0)
+        };
+        let question = at(1, 100, Direction::Out, Some(template::ASK_BUYER_SENT));
+        let session = session(SessionState::Active);
+
+        // Arrived after the question, with a timestamp before it.
+        let backdated = [question.clone(), at(2, 5, Direction::In, None)];
+        assert_eq!(
+            clocks(&session, &backdated, &[], 99).buyer.replied_at,
+            Some(100)
+        );
+
+        // Arrived before the question, with a timestamp after it.
+        let future_dated = [
+            at(1, 900, Direction::In, None),
+            Message { id: 2, ..question },
+        ];
+        assert_eq!(
+            clocks(&session, &future_dated, &[], 99).buyer.replied_at,
+            None
         );
     }
 
