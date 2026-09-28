@@ -6,6 +6,7 @@ pub mod chat;
 pub mod config;
 pub mod daemon;
 pub mod error;
+pub mod eval;
 pub mod judge;
 pub mod logging;
 pub mod mostro;

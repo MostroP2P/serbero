@@ -143,9 +143,11 @@ async fn translates_questions_and_answers_of_every_type() {
         .await;
     let judge = judge(&server, 0).await;
 
-    let answers = judge.evaluate(&state(), &questions()).await.unwrap();
+    let judged = judge.evaluate(&state(), &questions()).await.unwrap();
+    let answers = judged.answers;
 
     assert_eq!(judge.id(), "typesafe/jev-1.13.0");
+    assert_eq!(judged.input_tokens, Some(300));
     assert_eq!(answers["wants_human"], Answer::Noul { p_yes: 0.12 });
     assert_eq!(answers["payment"].winner(), Some("says_sent"));
     assert_eq!(
@@ -154,6 +156,19 @@ async fn translates_questions_and_answers_of_every_type() {
             probabilities: vec![0.1, 0.7, 0.2]
         }
     );
+}
+
+#[tokio::test]
+async fn a_response_without_usage_has_unknown_tokens() {
+    let server = MockServer::start().await;
+    let mut body = answers_body();
+    body.as_object_mut().unwrap().remove("usage");
+    respond(&server, ResponseTemplate::new(200).set_body_json(body)).await;
+    let judge = judge(&server, 0).await;
+
+    let judged = judge.evaluate(&state(), &questions()).await.unwrap();
+
+    assert_eq!(judged.input_tokens, None);
 }
 
 #[tokio::test]
@@ -208,7 +223,8 @@ async fn retryable_failures_are_retried_until_success() {
         .await
         .evaluate(&state(), &questions())
         .await
-        .unwrap();
+        .unwrap()
+        .answers;
 
     assert_eq!(answers.len(), 3);
 }

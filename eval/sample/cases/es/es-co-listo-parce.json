@@ -1,0 +1,50 @@
+{
+  "id": "es-co-listo-parce",
+  "lang": "es",
+  "source": "synthetic",
+  "state": {
+    "roles": {
+      "buyer": "Pays the fiat money to the seller outside Mostro, then waits for the bitcoin.",
+      "seller": "Has bitcoin locked in Mostro escrow and must confirm the fiat arrived before the trade can finish.",
+      "serbero": "Automated assistant that asks both parties questions for the human solver. It cannot move funds or decide the dispute."
+    },
+    "order": {
+      "fiat_amount": "120000",
+      "fiat_code": "COP",
+      "payment_method": "Nequi",
+      "dispute_opened_by": "buyer"
+    },
+    "transcript": [
+      {
+        "id": "m1",
+        "from": "serbero",
+        "to": "buyer",
+        "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Enviaste el pago de 120.000 COP de esta orden? Si lo hiciste, dime cuándo y desde qué cuenta o aplicación."
+      },
+      {
+        "id": "m2",
+        "from": "serbero",
+        "to": "seller",
+        "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Te llegó a tu cuenta el pago de 120.000 COP de esta orden?"
+      },
+      {
+        "id": "m3",
+        "from": "seller",
+        "text": "listo parce ya me entró a nequi"
+      }
+    ],
+    "latest": {
+      "buyer": [],
+      "seller": [
+        "m3"
+      ]
+    }
+  },
+  "expect": {
+    "seller_receipt": "says_received",
+    "fraud_signal": false,
+    "seller_message_kind": "answers",
+    "seller_language": "es",
+    "seller_wants_human": false
+  }
+}

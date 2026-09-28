@@ -18,7 +18,7 @@ use serde_json::{Map, Value};
 
 use crate::config::JudgeConfig;
 use crate::judge::{
-    Answer, Answers, Capabilities, Judge, JudgeError, Question, QuestionKind, QuestionSet,
+    Answer, Answers, Capabilities, Judge, JudgeError, Judged, Question, QuestionKind, QuestionSet,
     check_answers,
 };
 
@@ -91,7 +91,7 @@ impl TypeSafeJudge {
         &self,
         body: &WireRequest<'_>,
         questions: &QuestionSet,
-    ) -> Result<Answers, Failure> {
+    ) -> Result<Judged, Failure> {
         let response = self
             .http
             .post(format!("{}/v1/systemone", self.api_base))
@@ -119,7 +119,10 @@ impl TypeSafeJudge {
             .map(|(id, answer)| Ok((id, answer.into_answer()?)))
             .collect::<Result<Answers, JudgeError>>()?;
         check_answers(questions, &answers)?;
-        Ok(answers)
+        Ok(Judged {
+            answers,
+            input_tokens: wire.usage.map(|usage| usage.input_tokens),
+        })
     }
 
     async fn health_once(&self) -> Result<(), Failure> {
@@ -179,7 +182,7 @@ impl Judge for TypeSafeJudge {
         &'a self,
         state: &'a Value,
         questions: &'a QuestionSet,
-    ) -> BoxFuture<'a, Result<Answers, JudgeError>> {
+    ) -> BoxFuture<'a, Result<Judged, JudgeError>> {
         Box::pin(async move {
             let body = WireRequest {
                 state,
@@ -331,6 +334,13 @@ impl<'a> From<&'a Question> for WireQuestion<'a> {
 struct WireResponse {
     model: String,
     answers: BTreeMap<String, WireAnswer>,
+    #[serde(default)]
+    usage: Option<WireUsage>,
+}
+
+#[derive(Deserialize)]
+struct WireUsage {
+    input_tokens: u32,
 }
 
 /// Only the probabilities are read; TypeSafe's own `choice`, `score`,

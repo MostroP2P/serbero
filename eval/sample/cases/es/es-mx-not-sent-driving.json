@@ -1,0 +1,70 @@
+{
+  "id": "es-mx-not-sent-driving",
+  "lang": "es",
+  "source": "synthetic",
+  "state": {
+    "roles": {
+      "buyer": "Pays the fiat money to the seller outside Mostro, then waits for the bitcoin.",
+      "seller": "Has bitcoin locked in Mostro escrow and must confirm the fiat arrived before the trade can finish.",
+      "serbero": "Automated assistant that asks both parties questions for the human solver. It cannot move funds or decide the dispute."
+    },
+    "order": {
+      "fiat_amount": "1200",
+      "fiat_code": "MXN",
+      "payment_method": "SPEI",
+      "dispute_opened_by": "seller"
+    },
+    "transcript": [
+      {
+        "id": "m1",
+        "from": "serbero",
+        "to": "buyer",
+        "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Enviaste el pago de 1.200 MXN de esta orden? Si lo hiciste, dime cuándo y desde qué cuenta o aplicación."
+      },
+      {
+        "id": "m2",
+        "from": "serbero",
+        "to": "seller",
+        "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Te llegó a tu cuenta el pago de 1.200 MXN de esta orden?"
+      },
+      {
+        "id": "m3",
+        "from": "buyer",
+        "text": "no, todavía no lo he mandado, andaba manejando y no pude"
+      },
+      {
+        "id": "m4",
+        "from": "buyer",
+        "text": "ahorita que llegue a mi casa lo hago"
+      },
+      {
+        "id": "m5",
+        "from": "seller",
+        "text": "pues ya pasó más de una hora, yo no he recibido nada"
+      }
+    ],
+    "latest": {
+      "buyer": [
+        "m3",
+        "m4"
+      ],
+      "seller": [
+        "m5"
+      ]
+    }
+  },
+  "expect": {
+    "buyer_payment": "says_not_sent",
+    "buyer_details": false,
+    "seller_receipt": "says_not_received",
+    "claims_conflict": false,
+    "fraud_signal": false,
+    "dispute_topic": "payment_not_confirmed",
+    "buyer_message_kind": "answers",
+    "buyer_language": "es",
+    "buyer_wants_human": false,
+    "seller_message_kind": "answers",
+    "seller_language": "es",
+    "seller_wants_human": false
+  }
+}

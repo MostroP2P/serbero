@@ -1,0 +1,1252 @@
+{
+  "judge": "typesafe/jev-1.13.0",
+  "question_set": "qs-1-1e7ce156",
+  "cases": [
+    {
+      "case_id": "es-ar-buyer-wants-person",
+      "state": {
+        "latest": {
+          "buyer": [
+            "m3"
+          ],
+          "seller": []
+        },
+        "order": {
+          "dispute_opened_by": "buyer",
+          "fiat_amount": "30000",
+          "fiat_code": "ARS",
+          "payment_method": "Transferencia bancaria"
+        },
+        "roles": {
+          "buyer": "Pays the fiat money to the seller outside Mostro, then waits for the bitcoin.",
+          "seller": "Has bitcoin locked in Mostro escrow and must confirm the fiat arrived before the trade can finish.",
+          "serbero": "Automated assistant that asks both parties questions for the human solver. It cannot move funds or decide the dispute."
+        },
+        "transcript": [
+          {
+            "from": "serbero",
+            "id": "m1",
+            "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Enviaste el pago de 30.000 ARS de esta orden? Si lo hiciste, dime cuándo y desde qué cuenta o aplicación.",
+            "to": "buyer"
+          },
+          {
+            "from": "serbero",
+            "id": "m2",
+            "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Te llegó a tu cuenta el pago de 30.000 ARS de esta orden?",
+            "to": "seller"
+          },
+          {
+            "from": "buyer",
+            "id": "m3",
+            "text": "quiero hablar con una persona, no con un bot"
+          }
+        ]
+      },
+      "answers": {
+        "buyer_details": {
+          "type": "noul",
+          "p_yes": 0.04
+        },
+        "buyer_language": {
+          "type": "choice",
+          "probabilities": {
+            "en": 0.0,
+            "es": 1.0,
+            "other": 0.0,
+            "pt": 0.0,
+            "unknown": 0.0
+          }
+        },
+        "buyer_message_kind": {
+          "type": "choice",
+          "probabilities": {
+            "answers": 0.0,
+            "asks_language": 0.0,
+            "asks_next_step": 0.09,
+            "greeting": 0.0,
+            "not_understood": 0.0,
+            "other": 0.91
+          }
+        },
+        "buyer_payment": {
+          "type": "choice",
+          "probabilities": {
+            "not_stated": 1.0,
+            "says_not_sent": 0.0,
+            "says_sent": 0.0
+          }
+        },
+        "buyer_wants_human": {
+          "type": "noul",
+          "p_yes": 0.97
+        },
+        "claims_conflict": {
+          "type": "noul",
+          "p_yes": 0.06
+        },
+        "dispute_topic": {
+          "type": "choice",
+          "probabilities": {
+            "counterpart_unresponsive": 0.01,
+            "not_yet_clear": 0.5599999999999999,
+            "other": 0.02,
+            "payment_not_confirmed": 0.41,
+            "technical_problem": 0.0,
+            "wrong_account_or_method": 0.0,
+            "wrong_amount": 0.0
+          }
+        },
+        "fraud_signal": {
+          "type": "noul",
+          "p_yes": 0.05
+        },
+        "seller_checked": {
+          "type": "noul",
+          "p_yes": 0.04
+        },
+        "seller_receipt": {
+          "type": "choice",
+          "probabilities": {
+            "not_stated": 1.0,
+            "says_not_received": 0.0,
+            "says_received": 0.0,
+            "says_received_with_problem": 0.0
+          }
+        }
+      }
+    },
+    {
+      "case_id": "es-ar-sent-details-seller-checked-denies",
+      "state": {
+        "latest": {
+          "buyer": [
+            "m3",
+            "m4"
+          ],
+          "seller": [
+            "m5"
+          ]
+        },
+        "order": {
+          "dispute_opened_by": "buyer",
+          "fiat_amount": "50000",
+          "fiat_code": "ARS",
+          "payment_method": "Mercado Pago"
+        },
+        "roles": {
+          "buyer": "Pays the fiat money to the seller outside Mostro, then waits for the bitcoin.",
+          "seller": "Has bitcoin locked in Mostro escrow and must confirm the fiat arrived before the trade can finish.",
+          "serbero": "Automated assistant that asks both parties questions for the human solver. It cannot move funds or decide the dispute."
+        },
+        "transcript": [
+          {
+            "from": "serbero",
+            "id": "m1",
+            "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Enviaste el pago de 50.000 ARS de esta orden? Si lo hiciste, dime cuándo y desde qué cuenta o aplicación.",
+            "to": "buyer"
+          },
+          {
+            "from": "serbero",
+            "id": "m2",
+            "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Te llegó a tu cuenta el pago de 50.000 ARS de esta orden?",
+            "to": "seller"
+          },
+          {
+            "from": "buyer",
+            "id": "m3",
+            "text": "hola si, le transferí ayer a las 19:40 desde mi cuenta de MP"
+          },
+          {
+            "attachments": 1,
+            "from": "buyer",
+            "id": "m4",
+            "text": "ahi va el comprobante"
+          },
+          {
+            "from": "seller",
+            "id": "m5",
+            "text": "no me llego nada, revise mp y no hay ningun ingreso de 50 lucas"
+          }
+        ]
+      },
+      "answers": {
+        "buyer_details": {
+          "type": "noul",
+          "p_yes": 0.99
+        },
+        "buyer_language": {
+          "type": "choice",
+          "probabilities": {
+            "en": 0.0,
+            "es": 1.0,
+            "other": 0.0,
+            "pt": 0.0,
+            "unknown": 0.0
+          }
+        },
+        "buyer_message_kind": {
+          "type": "choice",
+          "probabilities": {
+            "answers": 1.0,
+            "asks_language": 0.0,
+            "asks_next_step": 0.0,
+            "greeting": 0.0,
+            "not_understood": 0.0,
+            "other": 0.0
+          }
+        },
+        "buyer_payment": {
+          "type": "choice",
+          "probabilities": {
+            "not_stated": 0.0,
+            "says_not_sent": 0.0,
+            "says_sent": 1.0
+          }
+        },
+        "buyer_wants_human": {
+          "type": "noul",
+          "p_yes": 0.03
+        },
+        "claims_conflict": {
+          "type": "noul",
+          "p_yes": 0.88
+        },
+        "dispute_topic": {
+          "type": "choice",
+          "probabilities": {
+            "counterpart_unresponsive": 0.0,
+            "not_yet_clear": 0.0,
+            "other": 0.0,
+            "payment_not_confirmed": 1.0,
+            "technical_problem": 0.0,
+            "wrong_account_or_method": 0.0,
+            "wrong_amount": 0.0
+          }
+        },
+        "fraud_signal": {
+          "type": "noul",
+          "p_yes": 0.1
+        },
+        "seller_checked": {
+          "type": "noul",
+          "p_yes": 0.98
+        },
+        "seller_language": {
+          "type": "choice",
+          "probabilities": {
+            "en": 0.0,
+            "es": 1.0,
+            "other": 0.0,
+            "pt": 0.0,
+            "unknown": 0.0
+          }
+        },
+        "seller_message_kind": {
+          "type": "choice",
+          "probabilities": {
+            "answers": 1.0,
+            "asks_language": 0.0,
+            "asks_next_step": 0.0,
+            "greeting": 0.0,
+            "not_understood": 0.0,
+            "other": 0.0
+          }
+        },
+        "seller_receipt": {
+          "type": "choice",
+          "probabilities": {
+            "not_stated": 0.0,
+            "says_not_received": 1.0,
+            "says_received": 0.0,
+            "says_received_with_problem": 0.0
+          }
+        },
+        "seller_wants_human": {
+          "type": "noul",
+          "p_yes": 0.03
+        }
+      }
+    },
+    {
+      "case_id": "es-buyer-asks-english",
+      "state": {
+        "latest": {
+          "buyer": [
+            "m3"
+          ],
+          "seller": []
+        },
+        "order": {
+          "dispute_opened_by": "buyer",
+          "fiat_amount": "120",
+          "fiat_code": "EUR",
+          "payment_method": "SEPA"
+        },
+        "roles": {
+          "buyer": "Pays the fiat money to the seller outside Mostro, then waits for the bitcoin.",
+          "seller": "Has bitcoin locked in Mostro escrow and must confirm the fiat arrived before the trade can finish.",
+          "serbero": "Automated assistant that asks both parties questions for the human solver. It cannot move funds or decide the dispute."
+        },
+        "transcript": [
+          {
+            "from": "serbero",
+            "id": "m1",
+            "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Enviaste el pago de 120 EUR de esta orden? Si lo hiciste, dime cuándo y desde qué cuenta o aplicación.",
+            "to": "buyer"
+          },
+          {
+            "from": "serbero",
+            "id": "m2",
+            "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Te llegó a tu cuenta el pago de 120 EUR de esta orden?",
+            "to": "seller"
+          },
+          {
+            "from": "buyer",
+            "id": "m3",
+            "text": "¿puedes hablarme en inglés? mi español no es muy bueno"
+          }
+        ]
+      },
+      "answers": {
+        "buyer_details": {
+          "type": "noul",
+          "p_yes": 0.05
+        },
+        "buyer_language": {
+          "type": "choice",
+          "probabilities": {
+            "en": 0.93,
+            "es": 0.07,
+            "other": 0.0,
+            "pt": 0.0,
+            "unknown": 0.0
+          }
+        },
+        "buyer_message_kind": {
+          "type": "choice",
+          "probabilities": {
+            "answers": 0.0,
+            "asks_language": 1.0,
+            "asks_next_step": 0.0,
+            "greeting": 0.0,
+            "not_understood": 0.0,
+            "other": 0.0
+          }
+        },
+        "buyer_payment": {
+          "type": "choice",
+          "probabilities": {
+            "not_stated": 1.0,
+            "says_not_sent": 0.0,
+            "says_sent": 0.0
+          }
+        },
+        "buyer_wants_human": {
+          "type": "noul",
+          "p_yes": 0.04
+        },
+        "claims_conflict": {
+          "type": "noul",
+          "p_yes": 0.05
+        },
+        "dispute_topic": {
+          "type": "choice",
+          "probabilities": {
+            "counterpart_unresponsive": 0.0,
+            "not_yet_clear": 0.3,
+            "other": 0.01,
+            "payment_not_confirmed": 0.6900000000000001,
+            "technical_problem": 0.0,
+            "wrong_account_or_method": 0.0,
+            "wrong_amount": 0.0
+          }
+        },
+        "fraud_signal": {
+          "type": "noul",
+          "p_yes": 0.04
+        },
+        "seller_checked": {
+          "type": "noul",
+          "p_yes": 0.04
+        },
+        "seller_receipt": {
+          "type": "choice",
+          "probabilities": {
+            "not_stated": 1.0,
+            "says_not_received": 0.0,
+            "says_received": 0.0,
+            "says_received_with_problem": 0.0
+          }
+        }
+      }
+    },
+    {
+      "case_id": "es-buyer-asks-next-step",
+      "state": {
+        "latest": {
+          "buyer": [
+            "m3"
+          ],
+          "seller": []
+        },
+        "order": {
+          "dispute_opened_by": "buyer",
+          "fiat_amount": "150000",
+          "fiat_code": "COP",
+          "payment_method": "Bancolombia"
+        },
+        "roles": {
+          "buyer": "Pays the fiat money to the seller outside Mostro, then waits for the bitcoin.",
+          "seller": "Has bitcoin locked in Mostro escrow and must confirm the fiat arrived before the trade can finish.",
+          "serbero": "Automated assistant that asks both parties questions for the human solver. It cannot move funds or decide the dispute."
+        },
+        "transcript": [
+          {
+            "from": "serbero",
+            "id": "m1",
+            "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Enviaste el pago de 150.000 COP de esta orden? Si lo hiciste, dime cuándo y desde qué cuenta o aplicación.",
+            "to": "buyer"
+          },
+          {
+            "from": "serbero",
+            "id": "m2",
+            "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Te llegó a tu cuenta el pago de 150.000 COP de esta orden?",
+            "to": "seller"
+          },
+          {
+            "from": "buyer",
+            "id": "m3",
+            "text": "ok y ahora que tengo que hacer? cuanto tarda esto"
+          }
+        ]
+      },
+      "answers": {
+        "buyer_details": {
+          "type": "noul",
+          "p_yes": 0.05
+        },
+        "buyer_language": {
+          "type": "choice",
+          "probabilities": {
+            "en": 0.01,
+            "es": 0.99,
+            "other": 0.0,
+            "pt": 0.0,
+            "unknown": 0.0
+          }
+        },
+        "buyer_message_kind": {
+          "type": "choice",
+          "probabilities": {
+            "answers": 0.0,
+            "asks_language": 0.0,
+            "asks_next_step": 1.0,
+            "greeting": 0.0,
+            "not_understood": 0.0,
+            "other": 0.0
+          }
+        },
+        "buyer_payment": {
+          "type": "choice",
+          "probabilities": {
+            "not_stated": 1.0,
+            "says_not_sent": 0.0,
+            "says_sent": 0.0
+          }
+        },
+        "buyer_wants_human": {
+          "type": "noul",
+          "p_yes": 0.04
+        },
+        "claims_conflict": {
+          "type": "noul",
+          "p_yes": 0.06
+        },
+        "dispute_topic": {
+          "type": "choice",
+          "probabilities": {
+            "counterpart_unresponsive": 0.01,
+            "not_yet_clear": 0.11,
+            "other": 0.0,
+            "payment_not_confirmed": 0.88,
+            "technical_problem": 0.0,
+            "wrong_account_or_method": 0.0,
+            "wrong_amount": 0.0
+          }
+        },
+        "fraud_signal": {
+          "type": "noul",
+          "p_yes": 0.05
+        },
+        "seller_checked": {
+          "type": "noul",
+          "p_yes": 0.04
+        },
+        "seller_receipt": {
+          "type": "choice",
+          "probabilities": {
+            "not_stated": 1.0,
+            "says_not_received": 0.0,
+            "says_received": 0.0,
+            "says_received_with_problem": 0.0
+          }
+        }
+      }
+    },
+    {
+      "case_id": "es-co-listo-parce",
+      "state": {
+        "latest": {
+          "buyer": [],
+          "seller": [
+            "m3"
+          ]
+        },
+        "order": {
+          "dispute_opened_by": "buyer",
+          "fiat_amount": "120000",
+          "fiat_code": "COP",
+          "payment_method": "Nequi"
+        },
+        "roles": {
+          "buyer": "Pays the fiat money to the seller outside Mostro, then waits for the bitcoin.",
+          "seller": "Has bitcoin locked in Mostro escrow and must confirm the fiat arrived before the trade can finish.",
+          "serbero": "Automated assistant that asks both parties questions for the human solver. It cannot move funds or decide the dispute."
+        },
+        "transcript": [
+          {
+            "from": "serbero",
+            "id": "m1",
+            "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Enviaste el pago de 120.000 COP de esta orden? Si lo hiciste, dime cuándo y desde qué cuenta o aplicación.",
+            "to": "buyer"
+          },
+          {
+            "from": "serbero",
+            "id": "m2",
+            "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Te llegó a tu cuenta el pago de 120.000 COP de esta orden?",
+            "to": "seller"
+          },
+          {
+            "from": "seller",
+            "id": "m3",
+            "text": "listo parce ya me entró a nequi"
+          }
+        ]
+      },
+      "answers": {
+        "buyer_details": {
+          "type": "noul",
+          "p_yes": 0.05
+        },
+        "buyer_payment": {
+          "type": "choice",
+          "probabilities": {
+            "not_stated": 1.0,
+            "says_not_sent": 0.0,
+            "says_sent": 0.0
+          }
+        },
+        "claims_conflict": {
+          "type": "noul",
+          "p_yes": 0.07
+        },
+        "dispute_topic": {
+          "type": "choice",
+          "probabilities": {
+            "counterpart_unresponsive": 0.03,
+            "not_yet_clear": 0.01,
+            "other": 0.0,
+            "payment_not_confirmed": 0.96,
+            "technical_problem": 0.0,
+            "wrong_account_or_method": 0.0,
+            "wrong_amount": 0.0
+          }
+        },
+        "fraud_signal": {
+          "type": "noul",
+          "p_yes": 0.05
+        },
+        "seller_checked": {
+          "type": "noul",
+          "p_yes": 0.86
+        },
+        "seller_language": {
+          "type": "choice",
+          "probabilities": {
+            "en": 0.0,
+            "es": 1.0,
+            "other": 0.0,
+            "pt": 0.0,
+            "unknown": 0.0
+          }
+        },
+        "seller_message_kind": {
+          "type": "choice",
+          "probabilities": {
+            "answers": 1.0,
+            "asks_language": 0.0,
+            "asks_next_step": 0.0,
+            "greeting": 0.0,
+            "not_understood": 0.0,
+            "other": 0.0
+          }
+        },
+        "seller_receipt": {
+          "type": "choice",
+          "probabilities": {
+            "not_stated": 0.0,
+            "says_not_received": 0.0,
+            "says_received": 1.0,
+            "says_received_with_problem": 0.0
+          }
+        },
+        "seller_wants_human": {
+          "type": "noul",
+          "p_yes": 0.03
+        }
+      }
+    },
+    {
+      "case_id": "es-es-seller-received-bizum-buyer-silent",
+      "state": {
+        "latest": {
+          "buyer": [],
+          "seller": [
+            "m3"
+          ]
+        },
+        "order": {
+          "dispute_opened_by": "buyer",
+          "fiat_amount": "80",
+          "fiat_code": "EUR",
+          "payment_method": "Bizum"
+        },
+        "roles": {
+          "buyer": "Pays the fiat money to the seller outside Mostro, then waits for the bitcoin.",
+          "seller": "Has bitcoin locked in Mostro escrow and must confirm the fiat arrived before the trade can finish.",
+          "serbero": "Automated assistant that asks both parties questions for the human solver. It cannot move funds or decide the dispute."
+        },
+        "transcript": [
+          {
+            "from": "serbero",
+            "id": "m1",
+            "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Enviaste el pago de 80 EUR de esta orden? Si lo hiciste, dime cuándo y desde qué cuenta o aplicación.",
+            "to": "buyer"
+          },
+          {
+            "from": "serbero",
+            "id": "m2",
+            "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Te llegó a tu cuenta el pago de 80 EUR de esta orden?",
+            "to": "seller"
+          },
+          {
+            "from": "seller",
+            "id": "m3",
+            "text": "sí sí, me ha llegado el bizum, perdonad que estaba currando y no lo había visto"
+          }
+        ]
+      },
+      "answers": {
+        "buyer_details": {
+          "type": "noul",
+          "p_yes": 0.05
+        },
+        "buyer_payment": {
+          "type": "choice",
+          "probabilities": {
+            "not_stated": 1.0,
+            "says_not_sent": 0.0,
+            "says_sent": 0.0
+          }
+        },
+        "claims_conflict": {
+          "type": "noul",
+          "p_yes": 0.06
+        },
+        "dispute_topic": {
+          "type": "choice",
+          "probabilities": {
+            "counterpart_unresponsive": 0.08,
+            "not_yet_clear": 0.04,
+            "other": 0.0,
+            "payment_not_confirmed": 0.88,
+            "technical_problem": 0.0,
+            "wrong_account_or_method": 0.0,
+            "wrong_amount": 0.0
+          }
+        },
+        "fraud_signal": {
+          "type": "noul",
+          "p_yes": 0.06
+        },
+        "seller_checked": {
+          "type": "noul",
+          "p_yes": 0.41
+        },
+        "seller_language": {
+          "type": "choice",
+          "probabilities": {
+            "en": 0.0,
+            "es": 1.0,
+            "other": 0.0,
+            "pt": 0.0,
+            "unknown": 0.0
+          }
+        },
+        "seller_message_kind": {
+          "type": "choice",
+          "probabilities": {
+            "answers": 1.0,
+            "asks_language": 0.0,
+            "asks_next_step": 0.0,
+            "greeting": 0.0,
+            "not_understood": 0.0,
+            "other": 0.0
+          }
+        },
+        "seller_receipt": {
+          "type": "choice",
+          "probabilities": {
+            "not_stated": 0.0,
+            "says_not_received": 0.0,
+            "says_received": 1.0,
+            "says_received_with_problem": 0.0
+          }
+        },
+        "seller_wants_human": {
+          "type": "noul",
+          "p_yes": 0.03
+        }
+      }
+    },
+    {
+      "case_id": "es-fraud-altered-receipt",
+      "state": {
+        "latest": {
+          "buyer": [
+            "m3"
+          ],
+          "seller": [
+            "m4"
+          ]
+        },
+        "order": {
+          "dispute_opened_by": "buyer",
+          "fiat_amount": "45000",
+          "fiat_code": "ARS",
+          "payment_method": "Ualá"
+        },
+        "roles": {
+          "buyer": "Pays the fiat money to the seller outside Mostro, then waits for the bitcoin.",
+          "seller": "Has bitcoin locked in Mostro escrow and must confirm the fiat arrived before the trade can finish.",
+          "serbero": "Automated assistant that asks both parties questions for the human solver. It cannot move funds or decide the dispute."
+        },
+        "transcript": [
+          {
+            "from": "serbero",
+            "id": "m1",
+            "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Enviaste el pago de 45.000 ARS de esta orden? Si lo hiciste, dime cuándo y desde qué cuenta o aplicación.",
+            "to": "buyer"
+          },
+          {
+            "from": "serbero",
+            "id": "m2",
+            "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Te llegó a tu cuenta el pago de 45.000 ARS de esta orden?",
+            "to": "seller"
+          },
+          {
+            "attachments": 1,
+            "from": "buyer",
+            "id": "m3",
+            "text": "ya pagué, acá está el comprobante"
+          },
+          {
+            "from": "seller",
+            "id": "m4",
+            "text": "ese comprobante está editado, llamé al banco y esa operación no existe. no me entró nada"
+          }
+        ]
+      },
+      "answers": {
+        "buyer_details": {
+          "type": "noul",
+          "p_yes": 0.88
+        },
+        "buyer_language": {
+          "type": "choice",
+          "probabilities": {
+            "en": 0.0,
+            "es": 1.0,
+            "other": 0.0,
+            "pt": 0.0,
+            "unknown": 0.0
+          }
+        },
+        "buyer_message_kind": {
+          "type": "choice",
+          "probabilities": {
+            "answers": 1.0,
+            "asks_language": 0.0,
+            "asks_next_step": 0.0,
+            "greeting": 0.0,
+            "not_understood": 0.0,
+            "other": 0.0
+          }
+        },
+        "buyer_payment": {
+          "type": "choice",
+          "probabilities": {
+            "not_stated": 0.0,
+            "says_not_sent": 0.0,
+            "says_sent": 1.0
+          }
+        },
+        "buyer_wants_human": {
+          "type": "noul",
+          "p_yes": 0.03
+        },
+        "claims_conflict": {
+          "type": "noul",
+          "p_yes": 0.92
+        },
+        "dispute_topic": {
+          "type": "choice",
+          "probabilities": {
+            "counterpart_unresponsive": 0.0,
+            "not_yet_clear": 0.0,
+            "other": 0.0,
+            "payment_not_confirmed": 1.0,
+            "technical_problem": 0.0,
+            "wrong_account_or_method": 0.0,
+            "wrong_amount": 0.0
+          }
+        },
+        "fraud_signal": {
+          "type": "noul",
+          "p_yes": 0.9
+        },
+        "seller_checked": {
+          "type": "noul",
+          "p_yes": 0.87
+        },
+        "seller_language": {
+          "type": "choice",
+          "probabilities": {
+            "en": 0.0,
+            "es": 1.0,
+            "other": 0.0,
+            "pt": 0.0,
+            "unknown": 0.0
+          }
+        },
+        "seller_message_kind": {
+          "type": "choice",
+          "probabilities": {
+            "answers": 1.0,
+            "asks_language": 0.0,
+            "asks_next_step": 0.0,
+            "greeting": 0.0,
+            "not_understood": 0.0,
+            "other": 0.0
+          }
+        },
+        "seller_receipt": {
+          "type": "choice",
+          "probabilities": {
+            "not_stated": 0.0,
+            "says_not_received": 1.0,
+            "says_received": 0.0,
+            "says_received_with_problem": 0.0
+          }
+        },
+        "seller_wants_human": {
+          "type": "noul",
+          "p_yes": 0.04
+        }
+      }
+    },
+    {
+      "case_id": "es-fraud-buyer-moves-to-telegram",
+      "state": {
+        "latest": {
+          "buyer": [
+            "m3",
+            "m4"
+          ],
+          "seller": []
+        },
+        "order": {
+          "dispute_opened_by": "buyer",
+          "fiat_amount": "40",
+          "fiat_code": "USD",
+          "payment_method": "Zelle"
+        },
+        "roles": {
+          "buyer": "Pays the fiat money to the seller outside Mostro, then waits for the bitcoin.",
+          "seller": "Has bitcoin locked in Mostro escrow and must confirm the fiat arrived before the trade can finish.",
+          "serbero": "Automated assistant that asks both parties questions for the human solver. It cannot move funds or decide the dispute."
+        },
+        "transcript": [
+          {
+            "from": "serbero",
+            "id": "m1",
+            "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Enviaste el pago de 40 USD de esta orden? Si lo hiciste, dime cuándo y desde qué cuenta o aplicación.",
+            "to": "buyer"
+          },
+          {
+            "from": "serbero",
+            "id": "m2",
+            "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Te llegó a tu cuenta el pago de 40 USD de esta orden?",
+            "to": "seller"
+          },
+          {
+            "from": "buyer",
+            "id": "m3",
+            "text": "ya pagué por zelle a las 10am"
+          },
+          {
+            "from": "buyer",
+            "id": "m4",
+            "text": "pana mejor háblame por telegram, @carlos_p2p, ese chat es mejor, aquí no llegan los mensajes"
+          }
+        ]
+      },
+      "answers": {
+        "buyer_details": {
+          "type": "noul",
+          "p_yes": 0.98
+        },
+        "buyer_language": {
+          "type": "choice",
+          "probabilities": {
+            "en": 0.0,
+            "es": 1.0,
+            "other": 0.0,
+            "pt": 0.0,
+            "unknown": 0.0
+          }
+        },
+        "buyer_message_kind": {
+          "type": "choice",
+          "probabilities": {
+            "answers": 0.98,
+            "asks_language": 0.0,
+            "asks_next_step": 0.0,
+            "greeting": 0.0,
+            "not_understood": 0.0,
+            "other": 0.02
+          }
+        },
+        "buyer_payment": {
+          "type": "choice",
+          "probabilities": {
+            "not_stated": 0.0,
+            "says_not_sent": 0.0,
+            "says_sent": 1.0
+          }
+        },
+        "buyer_wants_human": {
+          "type": "noul",
+          "p_yes": 0.19
+        },
+        "claims_conflict": {
+          "type": "noul",
+          "p_yes": 0.09
+        },
+        "dispute_topic": {
+          "type": "choice",
+          "probabilities": {
+            "counterpart_unresponsive": 0.02,
+            "not_yet_clear": 0.01,
+            "other": 0.0,
+            "payment_not_confirmed": 0.96,
+            "technical_problem": 0.01,
+            "wrong_account_or_method": 0.0,
+            "wrong_amount": 0.0
+          }
+        },
+        "fraud_signal": {
+          "type": "noul",
+          "p_yes": 0.89
+        },
+        "seller_checked": {
+          "type": "noul",
+          "p_yes": 0.05
+        },
+        "seller_receipt": {
+          "type": "choice",
+          "probabilities": {
+            "not_stated": 1.0,
+            "says_not_received": 0.0,
+            "says_received": 0.0,
+            "says_received_with_problem": 0.0
+          }
+        }
+      }
+    },
+    {
+      "case_id": "es-mx-not-sent-driving",
+      "state": {
+        "latest": {
+          "buyer": [
+            "m3",
+            "m4"
+          ],
+          "seller": [
+            "m5"
+          ]
+        },
+        "order": {
+          "dispute_opened_by": "seller",
+          "fiat_amount": "1200",
+          "fiat_code": "MXN",
+          "payment_method": "SPEI"
+        },
+        "roles": {
+          "buyer": "Pays the fiat money to the seller outside Mostro, then waits for the bitcoin.",
+          "seller": "Has bitcoin locked in Mostro escrow and must confirm the fiat arrived before the trade can finish.",
+          "serbero": "Automated assistant that asks both parties questions for the human solver. It cannot move funds or decide the dispute."
+        },
+        "transcript": [
+          {
+            "from": "serbero",
+            "id": "m1",
+            "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Enviaste el pago de 1.200 MXN de esta orden? Si lo hiciste, dime cuándo y desde qué cuenta o aplicación.",
+            "to": "buyer"
+          },
+          {
+            "from": "serbero",
+            "id": "m2",
+            "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Te llegó a tu cuenta el pago de 1.200 MXN de esta orden?",
+            "to": "seller"
+          },
+          {
+            "from": "buyer",
+            "id": "m3",
+            "text": "no, todavía no lo he mandado, andaba manejando y no pude"
+          },
+          {
+            "from": "buyer",
+            "id": "m4",
+            "text": "ahorita que llegue a mi casa lo hago"
+          },
+          {
+            "from": "seller",
+            "id": "m5",
+            "text": "pues ya pasó más de una hora, yo no he recibido nada"
+          }
+        ]
+      },
+      "answers": {
+        "buyer_details": {
+          "type": "noul",
+          "p_yes": 0.05
+        },
+        "buyer_language": {
+          "type": "choice",
+          "probabilities": {
+            "en": 0.0,
+            "es": 1.0,
+            "other": 0.0,
+            "pt": 0.0,
+            "unknown": 0.0
+          }
+        },
+        "buyer_message_kind": {
+          "type": "choice",
+          "probabilities": {
+            "answers": 1.0,
+            "asks_language": 0.0,
+            "asks_next_step": 0.0,
+            "greeting": 0.0,
+            "not_understood": 0.0,
+            "other": 0.0
+          }
+        },
+        "buyer_payment": {
+          "type": "choice",
+          "probabilities": {
+            "not_stated": 0.0,
+            "says_not_sent": 1.0,
+            "says_sent": 0.0
+          }
+        },
+        "buyer_wants_human": {
+          "type": "noul",
+          "p_yes": 0.03
+        },
+        "claims_conflict": {
+          "type": "noul",
+          "p_yes": 0.13
+        },
+        "dispute_topic": {
+          "type": "choice",
+          "probabilities": {
+            "counterpart_unresponsive": 0.0,
+            "not_yet_clear": 0.0,
+            "other": 0.0,
+            "payment_not_confirmed": 1.0,
+            "technical_problem": 0.0,
+            "wrong_account_or_method": 0.0,
+            "wrong_amount": 0.0
+          }
+        },
+        "fraud_signal": {
+          "type": "noul",
+          "p_yes": 0.11
+        },
+        "seller_checked": {
+          "type": "noul",
+          "p_yes": 0.32
+        },
+        "seller_language": {
+          "type": "choice",
+          "probabilities": {
+            "en": 0.0,
+            "es": 1.0,
+            "other": 0.0,
+            "pt": 0.0,
+            "unknown": 0.0
+          }
+        },
+        "seller_message_kind": {
+          "type": "choice",
+          "probabilities": {
+            "answers": 1.0,
+            "asks_language": 0.0,
+            "asks_next_step": 0.0,
+            "greeting": 0.0,
+            "not_understood": 0.0,
+            "other": 0.0
+          }
+        },
+        "seller_receipt": {
+          "type": "choice",
+          "probabilities": {
+            "not_stated": 0.0,
+            "says_not_received": 1.0,
+            "says_received": 0.0,
+            "says_received_with_problem": 0.0
+          }
+        },
+        "seller_wants_human": {
+          "type": "noul",
+          "p_yes": 0.04
+        }
+      }
+    },
+    {
+      "case_id": "es-seller-not-understood",
+      "state": {
+        "latest": {
+          "buyer": [],
+          "seller": [
+            "m3"
+          ]
+        },
+        "order": {
+          "dispute_opened_by": "buyer",
+          "fiat_amount": "40000",
+          "fiat_code": "CLP",
+          "payment_method": "Transferencia bancaria"
+        },
+        "roles": {
+          "buyer": "Pays the fiat money to the seller outside Mostro, then waits for the bitcoin.",
+          "seller": "Has bitcoin locked in Mostro escrow and must confirm the fiat arrived before the trade can finish.",
+          "serbero": "Automated assistant that asks both parties questions for the human solver. It cannot move funds or decide the dispute."
+        },
+        "transcript": [
+          {
+            "from": "serbero",
+            "id": "m1",
+            "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Enviaste el pago de 40.000 CLP de esta orden? Si lo hiciste, dime cuándo y desde qué cuenta o aplicación.",
+            "to": "buyer"
+          },
+          {
+            "from": "serbero",
+            "id": "m2",
+            "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Te llegó a tu cuenta el pago de 40.000 CLP de esta orden?",
+            "to": "seller"
+          },
+          {
+            "from": "seller",
+            "id": "m3",
+            "text": "no entiendo, que es esto? quien eres?"
+          }
+        ]
+      },
+      "answers": {
+        "buyer_details": {
+          "type": "noul",
+          "p_yes": 0.04
+        },
+        "buyer_payment": {
+          "type": "choice",
+          "probabilities": {
+            "not_stated": 1.0,
+            "says_not_sent": 0.0,
+            "says_sent": 0.0
+          }
+        },
+        "claims_conflict": {
+          "type": "noul",
+          "p_yes": 0.06
+        },
+        "dispute_topic": {
+          "type": "choice",
+          "probabilities": {
+            "counterpart_unresponsive": 0.02,
+            "not_yet_clear": 0.22,
+            "other": 0.0,
+            "payment_not_confirmed": 0.76,
+            "technical_problem": 0.0,
+            "wrong_account_or_method": 0.0,
+            "wrong_amount": 0.0
+          }
+        },
+        "fraud_signal": {
+          "type": "noul",
+          "p_yes": 0.06
+        },
+        "seller_checked": {
+          "type": "noul",
+          "p_yes": 0.03
+        },
+        "seller_language": {
+          "type": "choice",
+          "probabilities": {
+            "en": 0.0,
+            "es": 1.0,
+            "other": 0.0,
+            "pt": 0.0,
+            "unknown": 0.0
+          }
+        },
+        "seller_message_kind": {
+          "type": "choice",
+          "probabilities": {
+            "answers": 0.0,
+            "asks_language": 0.0,
+            "asks_next_step": 0.0,
+            "greeting": 0.0,
+            "not_understood": 1.0,
+            "other": 0.0
+          }
+        },
+        "seller_receipt": {
+          "type": "choice",
+          "probabilities": {
+            "not_stated": 1.0,
+            "says_not_received": 0.0,
+            "says_received": 0.0,
+            "says_received_with_problem": 0.0
+          }
+        },
+        "seller_wants_human": {
+          "type": "noul",
+          "p_yes": 0.04
+        }
+      }
+    }
+  ]
+}

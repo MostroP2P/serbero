@@ -79,6 +79,16 @@ least 5.
 Run with `cargo run --bin eval -- --lang es` against the judge configured in
 `[judge]` (or `--provider typesafe --model jev-1.13.0`; pin a version, since answers from any other model are rejected). It sends each case, compares the answers with the labels, and writes a report.
 
+The binary reads cases from `eval/golden/` (`--cases` to change it) and, with
+`--config <file>`, takes `[judge]`, the enabled languages and the calibrated
+thresholds from that file; without one it uses the defaults and the starting
+thresholds of [judgments.md §3](judgments.md#3-from-answers-to-facts). The
+report goes to `eval/reports/<judge_id>/<question_set>/<lang>.md` and the
+answers to `eval/recorded/<judge_id>/<question_set>/<lang>.json` (`--report`,
+`--record-to`, `--no-record`). `--limit <n>` runs the first `n` cases.
+`eval/sample/` holds ten cases and a live report showing the binary end to
+end; they are not part of the golden set.
+
 | Question | Metric | Target to validate a language |
 |---|---|---|
 | `seller_receipt = says_received` | Precision at threshold `guide` | ≥ 0.98 |
@@ -113,10 +123,18 @@ set exists.
 
 ## 3. Choosing thresholds
 
-Thresholds are chosen per provider and model. For each threshold, the report
-plots precision and coverage against the threshold value on the golden set.
-The chosen value is the lowest one that meets the precision or recall target
-above, rounded up to 0.05. For a given provider and model, one value covers all
+Thresholds are chosen per provider and model. The report sweeps each
+threshold from 0.50 to 0.95 in steps of 0.05 on the golden set. For a
+precision target the chosen value is the lowest one that meets it (precision
+rises with the threshold while coverage falls). For a recall target it is the
+highest one that still meets it (recall falls with the threshold, and so do
+false positives); the lowest value would always meet a recall target and
+hand every borderline case to a human. `guide` is one value for both
+self-resolution paths, so the report recommends the stricter of the two
+precision cutoffs; `fact` is the lowest value at which both payment questions
+meet their accuracy and coverage targets. A replay (`--provider recorded`) is
+scored with the thresholds of the judge that made the recording. A golden case
+of a guiding turn sets `"guiding": true`, so `<party>_rejects_path` is asked. For a given provider and model, one value covers all
 enabled languages; if one language needs a stricter value, that value applies
 to all.
 
@@ -140,7 +158,8 @@ through steps 2–4 as well.
 ## 4. Tests without a live judge
 
 - **Recorded answers.** Every golden case also stores the answers the judge returned
-  when the case was last evaluated (`eval/recorded/<judge_id>/<question_set_version>/`).
+  when the case was last evaluated (`eval/recorded/<judge_id>/<question_set_version>/<lang>.json`,
+  written by the eval binary; `--provider recorded --recording <file>` replays one).
   A `RecordedJudge` implementation of the `judge` trait replays them, so the
   policy, templates, and brief are tested end to end, deterministically and
   offline, in CI.
