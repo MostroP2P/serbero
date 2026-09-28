@@ -281,10 +281,22 @@ Transcript (18 messages) follows in the next message.
 ```
 
 The full transcript follows as a second DM, one line per message
-(`[hh:mm] buyer: …`), so the solver has everything even though they cannot
-read Serbero's chat keys. When the brief is sent because of
-`judge_unavailable`, the facts section is replaced by
-`Automated reading unavailable` and the transcript is still sent.
+(`[hh:mm] buyer: …`, Serbero's own lines as `serbero → buyer: …`), so the
+solver has everything even though they cannot read Serbero's chat keys. When
+the brief is sent because of `judge_unavailable`, the facts section is
+replaced by `Automated reading unavailable` and the transcript is still sent.
+
+Rendering details (`src/solver/mod.rs`):
+
+- A brief sent with guidance starts `Dispute <dispute_id> · guidance sent:
+  payment_arrived` (or `payment_not_sent`).
+- The transcript starts with `Dispute <dispute_id> · transcript (18 messages,
+  times UTC)`. A transcript longer than 30,000 characters is split into
+  numbered parts (`…, part 1/2`), so no DM grows past what relays accept.
+- The order amount is shown as Mostro publishes it (`50000 ARS`).
+- Quotes and transcript lines keep the party's words, but any Nostr
+  identifier in them is replaced by `[redacted]`, so a pasted pubkey never
+  reaches a solver.
 
 ### Update after handoff
 

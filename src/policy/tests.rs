@@ -439,3 +439,27 @@ fn rows_are_checked_in_order() {
         }
     }
 }
+
+#[test]
+fn handoff_reasons_use_the_spec_names() {
+    let spec = include_str!("../../docs/spec.md");
+    for reason in [
+        HandoffReason::SelfResolutionStalled,
+        HandoffReason::FactsGathered,
+        HandoffReason::ConflictingClaims,
+        HandoffReason::FraudSignal,
+        HandoffReason::HumanRequested,
+        HandoffReason::OutsideScope,
+        HandoffReason::Unresponsive,
+        HandoffReason::RoundLimit,
+        HandoffReason::Uncertain,
+        HandoffReason::JudgeUnavailable,
+        HandoffReason::Flood,
+    ] {
+        assert!(
+            spec.contains(&format!("| `{}` |", reason.as_str())),
+            "{} is not in spec.md §7.6",
+            reason.as_str()
+        );
+    }
+}

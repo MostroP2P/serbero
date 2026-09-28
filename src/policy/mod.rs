@@ -108,6 +108,36 @@ pub enum HandoffReason {
     Flood,
 }
 
+impl Path {
+    /// The name used in solver messages and the store.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::PaymentArrived => "payment_arrived",
+            Self::PaymentNotSent => "payment_not_sent",
+        }
+    }
+}
+
+impl HandoffReason {
+    /// The name in `docs/spec.md` §7.6, used in solver messages and the
+    /// store.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::SelfResolutionStalled => "self_resolution_stalled",
+            Self::FactsGathered => "facts_gathered",
+            Self::ConflictingClaims => "conflicting_claims",
+            Self::FraudSignal => "fraud_signal",
+            Self::HumanRequested => "human_requested",
+            Self::OutsideScope => "outside_scope",
+            Self::Unresponsive => "unresponsive",
+            Self::RoundLimit => "round_limit",
+            Self::Uncertain => "uncertain",
+            Self::JudgeUnavailable => "judge_unavailable",
+            Self::Flood => "flood",
+        }
+    }
+}
+
 /// Where a live session is: gathering facts, or watching after guidance.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Phase {
