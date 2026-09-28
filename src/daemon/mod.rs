@@ -51,9 +51,12 @@ pub async fn run(settings: &Settings) -> Result<()> {
         solvers.clone(),
         mostro,
     ));
+    // The npub is what a Mostro admin registers as a solver (`<npub>:read`).
+    let npub = keys.public_key().to_bech32().unwrap_or_default();
     tracing::info!(
         version = env!("CARGO_PKG_VERSION"),
         pubkey = %keys.public_key(),
+        npub,
         mostro = %mostro,
         relays = config.mostro.relays.len(),
         solvers = config.solvers.len(),
