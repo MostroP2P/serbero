@@ -308,7 +308,18 @@ needed question changed and who has no question outstanding.
    never sent to that party again, except for the language rule above. If the
    needed template was already used, fall through the table.
 
-A round is counted whenever a turn sends at least one question template.
+Two clarifications, as implemented in `src/policy/next.rs`:
+
+- `thanks_waiting` tells the party nothing more is needed, so it is sent only
+  when no fact is needed from that party. A fact still unknown after all of
+  its questions were used gets no template; the decision table then hands
+  off with `uncertain` (§4 row 11).
+- `asks_language` resends the last template only when this turn changed the
+  party's language. Otherwise the resend would repeat the same text in the
+  same language, and the turn continues with step 2.
+
+A round is counted whenever a turn sends at least one question template,
+except a language resend (`NextQuestions::counts_as_round`).
 
 ### 4.2 Timers
 

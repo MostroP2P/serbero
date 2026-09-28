@@ -21,6 +21,7 @@ pub mod template {
     pub const ASK_SELLER_CHECK_ACCOUNT: &str = "ask_seller_check_account";
     pub const WHAT_HAPPENS_NEXT: &str = "what_happens_next";
     pub const THANKS_WAITING: &str = "thanks_waiting";
+    pub const REMINDER: &str = "reminder";
 
     /// Templates that ask a party for a fact. A turn that sends one counts
     /// as a round, and only these keep a turn from handing off (§4 row 10).
@@ -35,6 +36,34 @@ pub mod template {
 
     pub fn is_question(id: &str) -> bool {
         QUESTIONS.contains(&id)
+    }
+
+    /// Templates that may be sent again in a new language when a party
+    /// asks about the language (§4.1 step 1).
+    const RESENDABLE: [&str; 9] = [
+        ASK_BUYER_SENT,
+        ASK_BUYER_SENT_SIMPLE,
+        ASK_BUYER_DETAILS,
+        ASK_SELLER_RECEIVED,
+        ASK_SELLER_RECEIVED_SIMPLE,
+        ASK_SELLER_CHECK_ACCOUNT,
+        WHAT_HAPPENS_NEXT,
+        THANKS_WAITING,
+        REMINDER,
+    ];
+
+    /// The static id of a stored template id that may be resent.
+    pub fn resendable(id: &str) -> Option<&'static str> {
+        RESENDABLE.into_iter().find(|t| *t == id)
+    }
+
+    /// The `_simple` variant of a question, if it has one.
+    pub fn simple_variant(id: &str) -> Option<&'static str> {
+        match id {
+            ASK_BUYER_SENT => Some(ASK_BUYER_SENT_SIMPLE),
+            ASK_SELLER_RECEIVED => Some(ASK_SELLER_RECEIVED_SIMPLE),
+            _ => None,
+        }
     }
 }
 
@@ -107,6 +136,21 @@ impl Asked {
 pub struct NextQuestions {
     pub buyer: Vec<&'static str>,
     pub seller: Vec<&'static str>,
+    /// The party's templates are a resend in a new language (§4.1 step 1),
+    /// which never counts as a round.
+    pub buyer_resend: bool,
+    pub seller_resend: bool,
+}
+
+impl NextQuestions {
+    /// A turn counts as a round when it sends a question that is not a
+    /// language resend (§4.1).
+    pub fn counts_as_round(&self) -> bool {
+        let asks = |templates: &[&str], resend: bool| {
+            !resend && templates.iter().any(|t| template::is_question(t))
+        };
+        asks(&self.buyer, self.buyer_resend) || asks(&self.seller, self.seller_resend)
+    }
 }
 
 /// Everything one decision reads.
@@ -226,6 +270,8 @@ fn unknown_after_both_variants(turn: &Turn<'_>) -> bool {
                 template::ASK_SELLER_RECEIVED_SIMPLE,
             ))
 }
+
+pub mod next;
 
 #[cfg(test)]
 mod tests;

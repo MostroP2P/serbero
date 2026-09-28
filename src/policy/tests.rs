@@ -268,6 +268,7 @@ fn row_10_a_pending_question_is_asked() {
         c.next = NextQuestions {
             buyer: vec![WHAT_HAPPENS_NEXT, ASK_BUYER_SENT],
             seller: vec![THANKS_WAITING],
+            ..NextQuestions::default()
         }
     });
 
@@ -288,6 +289,7 @@ fn row_10_needs_a_question_not_only_courtesy_templates() {
         c.next = NextQuestions {
             buyer: vec![THANKS_WAITING],
             seller: vec![WHAT_HAPPENS_NEXT],
+            ..NextQuestions::default()
         }
     });
 
