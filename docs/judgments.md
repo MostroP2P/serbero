@@ -319,8 +319,9 @@ Timers never call Jev.
 Sent once, when the action is `Handoff` or `Guide`, on the same
 state as the last turn. Options are message ids from `transcript` plus `none`,
 so every quote in the brief is a message a party actually wrote. Options are
-limited to the relevant party's messages; criteria are `null` because the text
-lives in the state.
+limited to the relevant party's messages, at most the newest 100 of them (so a
+long session stays below provider option limits); criteria are `null` because
+the text lives in the state.
 
 ```json
 {
@@ -380,9 +381,14 @@ verdict. It is never shown to the parties.
   though the version is unchanged; the order of the languages does not, since
   options are rendered keyed by code. Recorded answers and evaluation reports
   are keyed by this identifier and are never reused across language sets.
+- The brief request (§5) has its own identifier, computed the same way over
+  its fixed text: the instructions, the `none` descriptions and the
+  `evidence_balance` levels, since its other options are the transcript's
+  message ids. It is stored with every brief evaluation.
 - A snapshot test lists every released version with its hash for `en`, `es`
   and `pt`, fixed in the test so that adding a catalog changes neither the
-  snapshot nor the comparison with this document. Changing any instruction, option, or criterion fails the test
+  snapshot nor the comparison with this document. The brief has its own
+  snapshot, and a test compares it with §5 for the example transcript there. Changing any instruction, option, or criterion fails the test
   until the version is bumped, a line is added for it, and the golden set is
   re-run ([evaluation.md](evaluation.md)).
 - Thresholds live in config, per provider and model, and are not part of the

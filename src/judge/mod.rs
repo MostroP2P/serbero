@@ -12,6 +12,7 @@ use futures_util::future::BoxFuture;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+pub mod brief;
 pub mod facts;
 pub mod providers;
 pub mod questions;
@@ -123,6 +124,21 @@ impl Answer {
             Self::Choice { probabilities } => probabilities.get(option).copied().unwrap_or(0.0),
             _ => 0.0,
         }
+    }
+
+    /// An option's probability as a share of the choice's total (0 when
+    /// absent). A distribution may sum to slightly more than 1 and still be
+    /// accepted; comparing shares keeps two options of one choice from both
+    /// reaching a threshold above 0.5.
+    pub fn share(&self, option: &str) -> f64 {
+        let Self::Choice { probabilities } = self else {
+            return 0.0;
+        };
+        let total: f64 = probabilities.values().sum();
+        if total <= 0.0 {
+            return 0.0;
+        }
+        self.probability(option) / total
     }
 
     /// The probability-weighted level of a score, from 0 to 1 (level `i` of

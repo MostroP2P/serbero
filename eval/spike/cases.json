@@ -1,6 +1,7 @@
 [
   {
     "id": "es-ar-sent-details-seller-checked-denies",
+    "brief_expect": {"quote_buyer_payment": "m3", "quote_seller_receipt": "m5", "evidence_level": 3},
     "region": "AR",
     "order": {"fiat_amount": "50000", "fiat_code": "ARS", "payment_method": "Mercado Pago", "dispute_opened_by": "buyer"},
     "msgs": [
@@ -18,6 +19,7 @@
   },
   {
     "id": "es-ve-sent-no-details",
+    "brief_expect": {"quote_buyer_payment": "m3", "quote_buyer_details": "none", "evidence_level": 1},
     "region": "VE",
     "order": {"fiat_amount": "3500", "fiat_code": "VES", "payment_method": "Pago Móvil", "dispute_opened_by": "buyer"},
     "msgs": [
@@ -32,6 +34,7 @@
   },
   {
     "id": "es-mx-not-sent-driving",
+    "brief_expect": {"quote_buyer_payment": "m3", "quote_buyer_details": "none", "quote_seller_receipt": "m5", "evidence_level": 0},
     "region": "MX",
     "order": {"fiat_amount": "1200", "fiat_code": "MXN", "payment_method": "SPEI", "dispute_opened_by": "seller"},
     "msgs": [
@@ -49,6 +52,7 @@
   },
   {
     "id": "es-es-seller-received-bizum-buyer-silent",
+    "brief_expect": {"quote_seller_receipt": "m3", "evidence_level": 4},
     "region": "ES",
     "order": {"fiat_amount": "80", "fiat_code": "EUR", "payment_method": "Bizum", "dispute_opened_by": "buyer"},
     "msgs": [
@@ -62,6 +66,7 @@
   },
   {
     "id": "es-co-seller-sees-pending",
+    "brief_expect": {"quote_buyer_payment": "m3", "quote_buyer_details": "m3", "quote_seller_receipt": "m4", "evidence_level": 3},
     "region": "CO",
     "order": {"fiat_amount": "200000", "fiat_code": "COP", "payment_method": "Nequi", "dispute_opened_by": "buyer"},
     "msgs": [
@@ -90,6 +95,7 @@
   },
   {
     "id": "es-ve-impatient-not-human",
+    "brief_expect": {"quote_buyer_payment": "m3", "quote_buyer_details": "m3"},
     "region": "VE",
     "order": {"fiat_amount": "5000", "fiat_code": "VES", "payment_method": "Pago Móvil", "dispute_opened_by": "buyer"},
     "msgs": [
@@ -103,6 +109,7 @@
   },
   {
     "id": "es-mx-seller-denies-asks-admin",
+    "brief_expect": {"quote_seller_receipt": "m3"},
     "region": "MX",
     "order": {"fiat_amount": "2500", "fiat_code": "MXN", "payment_method": "SPEI", "dispute_opened_by": "seller"},
     "msgs": [
@@ -115,6 +122,7 @@
   },
   {
     "id": "es-buyer-greeting-only",
+    "brief_expect": {"quote_buyer_payment": "none", "quote_concern": "none", "evidence_level": 2},
     "region": "AR",
     "order": {"fiat_amount": "15000", "fiat_code": "ARS", "payment_method": "Mercado Pago", "dispute_opened_by": "seller"},
     "msgs": [
@@ -129,6 +137,7 @@
   },
   {
     "id": "es-seller-estas-ahi",
+    "brief_expect": {"quote_seller_receipt": "none", "quote_concern": "none", "evidence_level": 2},
     "region": "CU",
     "order": {"fiat_amount": "6000", "fiat_code": "CUP", "payment_method": "Transfermóvil", "dispute_opened_by": "buyer"},
     "msgs": [
@@ -207,6 +216,7 @@
   },
   {
     "id": "es-fraud-chargeback",
+    "brief_expect": {"quote_seller_receipt": "m3", "quote_concern": "m3"},
     "expect_by_version": {"qs-1-draft": {"seller_receipt": null}},
     "region": "ES",
     "order": {"fiat_amount": "200", "fiat_code": "EUR", "payment_method": "Revolut", "dispute_opened_by": "seller"},
@@ -221,6 +231,7 @@
   },
   {
     "id": "es-fraud-outside-mostro",
+    "brief_expect": {"quote_concern": "m3"},
     "region": "VE",
     "order": {"fiat_amount": "100", "fiat_code": "USD", "payment_method": "Zelle", "dispute_opened_by": "seller"},
     "msgs": [
@@ -232,6 +243,7 @@
   },
   {
     "id": "es-fraud-seed-request",
+    "brief_expect": {"quote_buyer_payment": "m3", "quote_buyer_details": "m3", "quote_concern": "m4"},
     "region": "MX",
     "order": {"fiat_amount": "3000", "fiat_code": "MXN", "payment_method": "Mercado Pago", "dispute_opened_by": "buyer"},
     "msgs": [
@@ -245,6 +257,7 @@
   },
   {
     "id": "es-fraud-altered-receipt",
+    "brief_expect": {"quote_buyer_payment": "m3", "quote_seller_receipt": "m4", "quote_concern": "m4"},
     "region": "AR",
     "order": {"fiat_amount": "45000", "fiat_code": "ARS", "payment_method": "Ualá", "dispute_opened_by": "buyer"},
     "msgs": [
@@ -261,6 +274,7 @@
   },
   {
     "id": "es-fraud-threat",
+    "brief_expect": {"quote_concern": "m3"},
     "region": "CO",
     "order": {"fiat_amount": "300000", "fiat_code": "COP", "payment_method": "Nequi", "dispute_opened_by": "buyer"},
     "msgs": [
@@ -273,6 +287,7 @@
   },
   {
     "id": "es-rude-disagreement-no-fraud",
+    "brief_expect": {"quote_buyer_payment": "m3", "quote_buyer_details": "none", "quote_seller_receipt": "m4"},
     "region": "ES",
     "order": {"fiat_amount": "150", "fiat_code": "EUR", "payment_method": "Bizum", "dispute_opened_by": "buyer"},
     "msgs": [
@@ -289,6 +304,7 @@
   },
   {
     "id": "es-seller-finds-it-after-check",
+    "brief_expect": {"quote_seller_receipt": "m5", "evidence_level": 4},
     "region": "VE",
     "order": {"fiat_amount": "8000", "fiat_code": "VES", "payment_method": "Pago Móvil", "dispute_opened_by": "buyer"},
     "msgs": [
@@ -303,6 +319,7 @@
   },
   {
     "id": "es-cl-received-slang",
+    "brief_expect": {"quote_buyer_payment": "m3", "quote_seller_receipt": "m4", "quote_concern": "none", "evidence_level": 4},
     "region": "CL",
     "order": {"fiat_amount": "70000", "fiat_code": "CLP", "payment_method": "Transferencia bancaria", "dispute_opened_by": "buyer"},
     "msgs": [
@@ -331,6 +348,7 @@
   },
   {
     "id": "es-ar-wrong-cbu",
+    "brief_expect": {"quote_buyer_payment": "m3", "quote_seller_receipt": "m4"},
     "region": "AR",
     "order": {"fiat_amount": "25000", "fiat_code": "ARS", "payment_method": "Transferencia bancaria", "dispute_opened_by": "buyer"},
     "msgs": [
@@ -369,6 +387,7 @@
   },
   {
     "id": "es-buyer-cannot-afford",
+    "brief_expect": {"quote_buyer_payment": "m3", "quote_buyer_details": "none", "evidence_level": 0},
     "region": "AR",
     "order": {"fiat_amount": "80000", "fiat_code": "ARS", "payment_method": "Mercado Pago", "dispute_opened_by": "seller"},
     "msgs": [
@@ -381,6 +400,7 @@
   },
   {
     "id": "es-buyer-aun-no",
+    "brief_expect": {"quote_buyer_payment": "m3", "evidence_level": 0},
     "region": "MX",
     "order": {"fiat_amount": "1500", "fiat_code": "MXN", "payment_method": "OXXO", "dispute_opened_by": "seller"},
     "msgs": [
@@ -393,6 +413,7 @@
   },
   {
     "id": "es-buyer-simple-si",
+    "brief_expect": {"quote_buyer_payment": "m5", "quote_buyer_details": "none"},
     "region": "VE",
     "order": {"fiat_amount": "4000", "fiat_code": "VES", "payment_method": "Pago Móvil", "dispute_opened_by": "buyer"},
     "msgs": [
@@ -467,6 +488,7 @@
   },
   {
     "id": "es-co-typos-screenshot",
+    "brief_expect": {"quote_buyer_payment": "m3", "quote_buyer_details": "m3"},
     "region": "CO",
     "order": {"fiat_amount": "250000", "fiat_code": "COP", "payment_method": "Bancolombia", "dispute_opened_by": "buyer"},
     "msgs": [
@@ -479,6 +501,7 @@
   },
   {
     "id": "es-mx-lana-no-cae",
+    "brief_expect": {"quote_seller_receipt": "m3"},
     "region": "MX",
     "order": {"fiat_amount": "2000", "fiat_code": "MXN", "payment_method": "SPEI", "dispute_opened_by": "seller"},
     "msgs": [
@@ -491,6 +514,7 @@
   },
   {
     "id": "es-ar-me-entro-la-guita",
+    "brief_expect": {"quote_seller_receipt": "m3", "evidence_level": 4},
     "region": "AR",
     "order": {"fiat_amount": "55000", "fiat_code": "ARS", "payment_method": "Mercado Pago", "dispute_opened_by": "buyer"},
     "msgs": [
@@ -503,6 +527,7 @@
   },
   {
     "id": "es-both-agree-not-sent",
+    "brief_expect": {"quote_buyer_payment": "m3", "quote_seller_receipt": "m4", "evidence_level": 0},
     "region": "CL",
     "order": {"fiat_amount": "30000", "fiat_code": "CLP", "payment_method": "Transferencia bancaria", "dispute_opened_by": "seller"},
     "msgs": [
@@ -542,6 +567,7 @@
   },
   {
     "id": "es-buyer-burst-zelle",
+    "brief_expect": {"quote_buyer_payment": "m5"},
     "region": "VE",
     "order": {"fiat_amount": "75", "fiat_code": "USD", "payment_method": "Zelle", "dispute_opened_by": "buyer"},
     "msgs": [
@@ -571,6 +597,7 @@
   },
   {
     "id": "es-buyer-no-account-data",
+    "brief_expect": {"quote_buyer_payment": "m3", "evidence_level": 0},
     "region": "PE",
     "order": {"fiat_amount": "400", "fiat_code": "PEN", "payment_method": "Plin", "dispute_opened_by": "buyer"},
     "msgs": [
@@ -583,6 +610,7 @@
   },
   {
     "id": "es-buyer-waiting-own-money",
+    "brief_expect": {"quote_buyer_payment": "m3", "evidence_level": 0},
     "region": "MX",
     "order": {"fiat_amount": "5000", "fiat_code": "MXN", "payment_method": "SPEI", "dispute_opened_by": "seller"},
     "msgs": [
@@ -595,6 +623,7 @@
   },
   {
     "id": "es-ve-took-wrong-order",
+    "brief_expect": {"quote_buyer_payment": "m3", "evidence_level": 0},
     "region": "VE",
     "order": {"fiat_amount": "20", "fiat_code": "USD", "payment_method": "Binance Pay", "dispute_opened_by": "seller"},
     "msgs": [
@@ -607,6 +636,7 @@
   },
   {
     "id": "es-ve-seller-received-buyer-gone",
+    "brief_expect": {"quote_seller_receipt": "m3", "evidence_level": 4},
     "region": "VE",
     "order": {"fiat_amount": "6000", "fiat_code": "VES", "payment_method": "Pago Móvil", "dispute_opened_by": "seller"},
     "msgs": [
@@ -619,6 +649,7 @@
   },
   {
     "id": "es-es-formal-received",
+    "brief_expect": {"quote_seller_receipt": "m3", "quote_concern": "none", "evidence_level": 4},
     "region": "ES",
     "order": {"fiat_amount": "150", "fiat_code": "EUR", "payment_method": "SEPA", "dispute_opened_by": "buyer"},
     "msgs": [
@@ -631,6 +662,7 @@
   },
   {
     "id": "es-co-listo-parce",
+    "brief_expect": {"quote_seller_receipt": "m3", "evidence_level": 4},
     "region": "CO",
     "order": {"fiat_amount": "120000", "fiat_code": "COP", "payment_method": "Nequi", "dispute_opened_by": "buyer"},
     "msgs": [
@@ -667,6 +699,7 @@
   },
   {
     "id": "es-fraud-seller-moves-to-telegram",
+    "brief_expect": {"quote_concern": "m3"},
     "region": "AR",
     "order": {
       "fiat_amount": "40000",
@@ -686,6 +719,7 @@
   },
   {
     "id": "es-fraud-buyer-moves-to-telegram",
+    "brief_expect": {"quote_buyer_payment": "m3", "quote_concern": "m4"},
     "region": "VE",
     "order": {
       "fiat_amount": "40",
@@ -706,6 +740,7 @@
   },
   {
     "id": "es-fraud-telegram-fake-support",
+    "brief_expect": {"quote_concern": "m3"},
     "region": "MX",
     "order": {
       "fiat_amount": "3000",
@@ -724,6 +759,7 @@
   },
   {
     "id": "es-telegram-mention-innocent",
+    "brief_expect": {"quote_buyer_payment": "m3", "quote_buyer_details": "m3"},
     "region": "CO",
     "order": {
       "fiat_amount": "100000",

@@ -272,3 +272,14 @@ fn only_unavailable_is_retryable() {
     assert!(!JudgeError::InvalidRequest("422".into()).is_retryable());
     assert!(!JudgeError::Malformed("x".into()).is_retryable());
 }
+
+#[test]
+fn share_is_the_probability_over_the_choice_total() {
+    let over = choice(&[("a", 0.504), ("b", 0.504)]);
+
+    assert!(close(over.share("a"), 0.5));
+    assert!(close(choice(&[("a", 0.8), ("b", 0.2)]).share("a"), 0.8));
+    assert_eq!(over.share("missing"), 0.0);
+    assert_eq!(Answer::Noul { p_yes: 0.9 }.share("a"), 0.0);
+    assert_eq!(choice(&[("a", 0.0), ("b", 0.0)]).share("a"), 0.0);
+}
