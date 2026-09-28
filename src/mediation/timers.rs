@@ -5,10 +5,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use serde_json::json;
-
 use super::guide::FINISH_LOOKBACK_SECS;
-use super::handoff::{BRIEF_PENDING, HANDOFF_NOTICE, TurnReading};
+use super::handoff::{BRIEF_PENDING, BRIEF_SENT, HANDOFF_NOTICE, TurnReading};
 use super::{Mediator, ReadyJudge};
 use crate::error::Result;
 use crate::judge::facts::{self, Facts};
@@ -69,9 +67,6 @@ pub fn clocks(session: &Session, messages: &[Message], history: &[Event], now: i
 /// that call before a tick resends what is missing.
 const RETRY_GRACE_SECS: i64 = 120;
 
-/// Records that a `brief_pending` brief was delivered later.
-const BRIEF_SENT: &str = "brief_sent";
-
 /// The session's briefs no solver received yet: each `brief_pending` event
 /// id with what it was about, unless a `brief_sent` event covers it.
 fn pending_briefs(session: &Session, history: &[Event]) -> Vec<(i64, Subject)> {
@@ -98,11 +93,11 @@ fn pending_briefs(session: &Session, history: &[Event]) -> Vec<(i64, Subject)> {
 
 /// What a handoff from a timer shows the solvers: the state as it is now,
 /// read with the last turn's answers, if the judge answered one.
-struct LastReading {
-    state: serde_json::Value,
-    answers: Answers,
-    facts: Facts,
-    last_message_id: i64,
+pub(super) struct LastReading {
+    pub(super) state: serde_json::Value,
+    pub(super) answers: Answers,
+    pub(super) facts: Facts,
+    pub(super) last_message_id: i64,
 }
 
 impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
@@ -131,10 +126,19 @@ impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
             sessions::list_live(store.conn())?
         };
         for session in live {
-            if matches!(session.state, SessionState::Active | SessionState::Guiding)
-                && let Err(e) = self.tick_session(&session, now).await
-            {
-                tracing::error!(session_id = %session.session_id, error = %e, "session timer failed");
+            if matches!(session.state, SessionState::Active | SessionState::Guiding) {
+                let result = if self.chat_open(&session).await {
+                    self.tick_session(&session, now).await
+                } else {
+                    // No reply could reach it, so no timer may judge its
+                    // silence: a person takes it over.
+                    self.hand_off(&session, HandoffReason::OpeningFailed, None, now)
+                        .await
+                        .map(drop)
+                };
+                if let Err(e) = result {
+                    tracing::error!(session_id = %session.session_id, error = %e, "session timer failed");
+                }
             }
             if let Err(e) = self.retry_undelivered(&session, now).await {
                 tracing::warn!(session_id = %session.session_id, error = %e, "retry failed");
@@ -142,6 +146,21 @@ impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
         }
         self.finish_pending(now - FINISH_LOOKBACK_SECS, now).await;
         Ok(())
+    }
+
+    /// Whether replies can reach the session: its channels are open, or
+    /// open now (they did not at startup).
+    async fn chat_open(&self, session: &Session) -> bool {
+        if self.chats.is_open(&session.session_id) {
+            return true;
+        }
+        match self.chats.open(session).await {
+            Ok(()) => true,
+            Err(e) => {
+                tracing::warn!(session_id = %session.session_id, error = %e, "chat not open; timers wait");
+                false
+            }
+        }
     }
 
     /// Resends what a session's recipients did not get: pending briefs,
@@ -154,30 +173,8 @@ impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
                 events::list_for_dispute(store.conn(), &session.dispute_id)?,
             )
         };
-        for (pending, subject) in pending_briefs(session, &history) {
-            let last = self.last_reading(session, &messages)?;
-            let reading = last.as_ref().map(|l| TurnReading {
-                state: &l.state,
-                answers: &l.answers,
-                facts: &l.facts,
-                last_message_id: l.last_message_id,
-            });
-            if self.brief_solvers(session, subject, reading, now).await? == 0 {
-                continue;
-            }
-            let store = self.lock_store()?;
-            events::append(
-                store.conn(),
-                &events::NewEvent {
-                    dispute_id: &session.dispute_id,
-                    session_id: Some(&session.session_id),
-                    kind: BRIEF_SENT,
-                    payload: json!({ "pending": pending }),
-                    now,
-                },
-            )?;
-        }
-        // A handoff or guidance still sending its own notices is not retried.
+        // A handoff or guidance still sending its brief and notices is left
+        // to finish first.
         let started = history
             .iter()
             .filter(|e| e.session_id.as_deref() == Some(&session.session_id))
@@ -187,6 +184,18 @@ impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
         if started.is_some_and(|at| now - at < RETRY_GRACE_SECS) {
             return Ok(());
         }
+        for (pending, subject) in pending_briefs(session, &history) {
+            let last = self.last_reading(session, &messages)?;
+            let reading = last.as_ref().map(|l| TurnReading {
+                state: &l.state,
+                answers: &l.answers,
+                facts: &l.facts,
+                last_message_id: l.last_message_id,
+            });
+            if self.brief_solvers(session, subject, reading, now).await? > 0 {
+                self.brief_delivered(session, pending, now)?;
+            }
+        }
         match session.state {
             SessionState::HandedOff => {
                 for party in [Party::Buyer, Party::Seller] {
@@ -195,8 +204,12 @@ impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
                             && m.party == party
                             && m.template_id.as_deref() == Some(HANDOFF_NOTICE)
                     });
-                    if !told {
-                        self.send_template(session, party, HANDOFF_NOTICE).await?;
+                    // Each party on its own: one unreachable party must not
+                    // keep the other uninformed.
+                    if !told
+                        && let Err(e) = self.send_template(session, party, HANDOFF_NOTICE).await
+                    {
+                        tracing::warn!(session_id = %session.session_id, %party, error = %e, "handoff notice not sent; retried on the next tick");
                     }
                 }
             }
@@ -245,7 +258,11 @@ impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
 
     /// The last turn's answers over the current state, if a turn was judged
     /// with the question set in use.
-    fn last_reading(&self, session: &Session, messages: &[Message]) -> Result<Option<LastReading>> {
+    pub(super) fn last_reading(
+        &self,
+        session: &Session,
+        messages: &[Message],
+    ) -> Result<Option<LastReading>> {
         let Some(ready) = self.ready_judge() else {
             return Ok(None);
         };
