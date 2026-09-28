@@ -26,8 +26,11 @@ const HANDOFF_NOTICE: &str = "handoff_notice";
 const HANDOFF_EVENT: &str = "handoff";
 const UPDATE_EVENT: &str = "update_sent";
 
-/// A handoff brief no solver received yet; the timer task retries it.
+/// A brief no solver has received yet, recorded before it is sent; the
+/// timer task retries it until a `brief_sent` event closes it.
 pub(super) const BRIEF_PENDING: &str = "brief_pending";
+/// Closes a `brief_pending` event (`{"pending": <its id>}`).
+pub(super) const BRIEF_SENT: &str = "brief_sent";
 
 /// The last turn's judge reading, when there is one.
 #[derive(Debug, Clone, Copy)]
@@ -84,19 +87,22 @@ impl<S: DmSender> Mediator<S> {
         reading: Option<TurnReading<'_>>,
         now: i64,
     ) -> Result<bool> {
-        {
+        let pending = {
             let store = self.lock_store()?;
-            if !sessions::hand_off(store.conn(), &session.session_id, reason.as_str(), now)? {
+            // One transaction: a handed-off session always has its cutoff
+            // and a pending brief, even if the process stops right after.
+            let tx = store.conn().unchecked_transaction()?;
+            if !sessions::hand_off(&tx, &session.session_id, reason.as_str(), now)? {
                 return Ok(false);
             }
-            // Recorded with the claim: updates forward only later messages.
-            let last = messages::list_for_session(store.conn(), &session.session_id)?
+            // Updates forward only messages after this cutoff.
+            let last = messages::list_for_session(&tx, &session.session_id)?
                 .iter()
                 .map(|m| m.id)
                 .max()
                 .unwrap_or(0);
             events::append(
-                store.conn(),
+                &tx,
                 &events::NewEvent {
                     dispute_id: &session.dispute_id,
                     session_id: Some(&session.session_id),
@@ -105,24 +111,17 @@ impl<S: DmSender> Mediator<S> {
                     now,
                 },
             )?;
-        }
+            let pending = pending_brief(&tx, session, json!({ "reason": reason.as_str() }), now)?;
+            tx.commit()?;
+            pending
+        };
         let delivered = self
             .brief_solvers(session, Subject::Handoff(reason), reading, now)
             .await?;
-        // Recorded even with no solver configured, so a brief is sent once
-        // one is added.
-        if delivered == 0 {
-            let store = self.lock_store()?;
-            events::append(
-                store.conn(),
-                &events::NewEvent {
-                    dispute_id: &session.dispute_id,
-                    session_id: Some(&session.session_id),
-                    kind: BRIEF_PENDING,
-                    payload: json!({ "reason": reason.as_str() }),
-                    now,
-                },
-            )?;
+        // With no delivery (or no solver configured) the brief stays
+        // pending, and the timer task retries it.
+        if delivered > 0 {
+            self.brief_delivered(session, pending, now)?;
         }
         for party in [Party::Buyer, Party::Seller] {
             if let Err(e) = self.send_template(session, party, HANDOFF_NOTICE).await {
@@ -342,6 +341,22 @@ impl<S: DmSender> Mediator<S> {
         Ok(fresh.len())
     }
 
+    /// Marks a pending brief as delivered.
+    pub(super) fn brief_delivered(&self, session: &Session, pending: i64, now: i64) -> Result<()> {
+        let store = self.lock_store()?;
+        events::append(
+            store.conn(),
+            &events::NewEvent {
+                dispute_id: &session.dispute_id,
+                session_id: Some(&session.session_id),
+                kind: BRIEF_SENT,
+                payload: json!({ "pending": pending }),
+                now,
+            },
+        )?;
+        Ok(())
+    }
+
     /// A template rendered for a party, in its language.
     pub(super) fn render_for(
         &self,
@@ -385,6 +400,26 @@ impl<S: DmSender> Mediator<S> {
         .await?;
         Ok(())
     }
+}
+
+/// Records a brief as pending before it is sent. Returns the event id that
+/// `brief_delivered` closes.
+pub(super) fn pending_brief(
+    conn: &rusqlite::Connection,
+    session: &Session,
+    about: Value,
+    now: i64,
+) -> Result<i64> {
+    events::append(
+        conn,
+        &events::NewEvent {
+            dispute_id: &session.dispute_id,
+            session_id: Some(&session.session_id),
+            kind: BRIEF_PENDING,
+            payload: about,
+            now,
+        },
+    )
 }
 
 /// The newest message id the solvers have seen for this session.
