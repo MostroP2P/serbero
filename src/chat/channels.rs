@@ -102,6 +102,13 @@ impl Chats {
         Ok(())
     }
 
+    /// Whether the session's channels are open, so replies reach it.
+    pub fn is_open(&self, session_id: &str) -> bool {
+        self.inbox
+            .lock()
+            .is_ok_and(|inbox| inbox.has_session(session_id))
+    }
+
     /// Forgets a session's channels and closes its subscription.
     pub async fn close(&self, session_id: &str) -> Result<()> {
         self.inbox
