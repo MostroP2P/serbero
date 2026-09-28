@@ -1,0 +1,50 @@
+{
+  "id": "es-buyer-asks-english",
+  "lang": "es",
+  "source": "synthetic",
+  "state": {
+    "roles": {
+      "buyer": "Pays the fiat money to the seller outside Mostro, then waits for the bitcoin.",
+      "seller": "Has bitcoin locked in Mostro escrow and must confirm the fiat arrived before the trade can finish.",
+      "serbero": "Automated assistant that asks both parties questions for the human solver. It cannot move funds or decide the dispute."
+    },
+    "order": {
+      "fiat_amount": "120",
+      "fiat_code": "EUR",
+      "payment_method": "SEPA",
+      "dispute_opened_by": "buyer"
+    },
+    "transcript": [
+      {
+        "id": "m1",
+        "from": "serbero",
+        "to": "buyer",
+        "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Enviaste el pago de 120 EUR de esta orden? Si lo hiciste, dime cuándo y desde qué cuenta o aplicación."
+      },
+      {
+        "id": "m2",
+        "from": "serbero",
+        "to": "seller",
+        "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Te llegó a tu cuenta el pago de 120 EUR de esta orden?"
+      },
+      {
+        "id": "m3",
+        "from": "buyer",
+        "text": "¿puedes hablarme en inglés? mi español no es muy bueno"
+      }
+    ],
+    "latest": {
+      "buyer": [
+        "m3"
+      ],
+      "seller": []
+    }
+  },
+  "expect": {
+    "buyer_payment": "not_stated",
+    "fraud_signal": false,
+    "buyer_message_kind": "asks_language",
+    "buyer_language": "en",
+    "buyer_wants_human": false
+  }
+}

@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::judge::{
-    Answers, Capabilities, Judge, JudgeError, QuestionKind, QuestionSet, check_answers,
+    Answers, Capabilities, Judge, JudgeError, Judged, QuestionKind, QuestionSet, check_answers,
 };
 
 /// Answers recorded from one judge on one question set.
@@ -76,7 +76,7 @@ impl RecordedJudge {
         Self::new(recording)
     }
 
-    fn answer(&self, state: &Value, questions: &QuestionSet) -> Result<Answers, JudgeError> {
+    fn answer(&self, state: &Value, questions: &QuestionSet) -> Result<Judged, JudgeError> {
         if questions.version != self.question_set {
             return Err(JudgeError::InvalidRequest(format!(
                 "recorded on question set {}, asked {}",
@@ -91,7 +91,12 @@ impl RecordedJudge {
                 JudgeError::InvalidRequest("no recorded answers for this request".into())
             })?;
         check_answers(questions, &answers)?;
-        Ok(answers)
+        // A recording keeps answers only; the original request size is not
+        // known.
+        Ok(Judged {
+            answers,
+            input_tokens: None,
+        })
     }
 }
 
@@ -126,7 +131,7 @@ impl Judge for RecordedJudge {
         &'a self,
         state: &'a Value,
         questions: &'a QuestionSet,
-    ) -> BoxFuture<'a, Result<Answers, JudgeError>> {
+    ) -> BoxFuture<'a, Result<Judged, JudgeError>> {
         Box::pin(async move { self.answer(state, questions) })
     }
 
@@ -181,7 +186,11 @@ mod tests {
         let judge = RecordedJudge::new(recording()).unwrap();
         let state = json!({ "transcript": [{ "text": "I paid", "id": "m1" }] });
 
-        let answers = judge.evaluate(&state, &questions("qs-1")).await.unwrap();
+        let answers = judge
+            .evaluate(&state, &questions("qs-1"))
+            .await
+            .unwrap()
+            .answers;
 
         assert_eq!(judge.id(), "recorded/typesafe/jev-1.13.0");
         assert_eq!(answers["buyer_payment"].winner(), Some("says_sent"));
@@ -262,8 +271,16 @@ mod tests {
             .into(),
         };
 
-        let turn = judge.evaluate(&state, &questions("qs-1")).await.unwrap();
-        let brief = judge.evaluate(&state, &brief_questions).await.unwrap();
+        let turn = judge
+            .evaluate(&state, &questions("qs-1"))
+            .await
+            .unwrap()
+            .answers;
+        let brief = judge
+            .evaluate(&state, &brief_questions)
+            .await
+            .unwrap()
+            .answers;
 
         assert_eq!(turn["buyer_payment"].winner(), Some("says_sent"));
         assert!(brief.contains_key("evidence"));

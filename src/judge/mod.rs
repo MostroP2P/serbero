@@ -319,6 +319,14 @@ impl JudgeError {
     }
 }
 
+/// A judge's answers to one request, with the request size when the
+/// provider reports it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Judged {
+    pub answers: Answers,
+    pub input_tokens: Option<u32>,
+}
+
 /// A model that answers typed questions with probabilities.
 pub trait Judge: Send + Sync {
     /// Stable identifier, e.g. `"typesafe/jev-1.13.0"`, stored with every
@@ -333,7 +341,7 @@ pub trait Judge: Send + Sync {
         &'a self,
         state: &'a Value,
         questions: &'a QuestionSet,
-    ) -> BoxFuture<'a, Result<Answers, JudgeError>>;
+    ) -> BoxFuture<'a, Result<Judged, JudgeError>>;
 
     /// A cheap call proving the provider is reachable and the key works.
     fn health_check(&self) -> BoxFuture<'_, Result<(), JudgeError>>;

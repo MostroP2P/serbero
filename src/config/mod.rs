@@ -38,8 +38,7 @@ impl Settings {
 
     /// Parses and validates `text`, resolving secrets through `env`.
     pub fn parse(text: &str, env: impl Fn(&str) -> Option<String>) -> Result<Self> {
-        let config: Config = toml::from_str(text).map_err(|e| Error::Config(e.to_string()))?;
-        config.validate()?;
+        let config = Config::parse(text)?;
         let secrets = Secrets::resolve(&config, env)?;
         Ok(Self { config, secrets })
     }
@@ -234,6 +233,14 @@ impl Thresholds {
 }
 
 impl Config {
+    /// Parses and validates `text` without resolving secrets, for tools such
+    /// as the eval binary that need only part of the configuration.
+    pub fn parse(text: &str) -> Result<Self> {
+        let config: Config = toml::from_str(text).map_err(|e| Error::Config(e.to_string()))?;
+        config.validate()?;
+        Ok(config)
+    }
+
     fn validate(&self) -> Result<()> {
         check_env_name("serbero.private_key_env", &self.serbero.private_key_env)?;
         check_env_name("judge.api_key_env", &self.judge.api_key_env)?;

@@ -381,3 +381,20 @@ fn serbero_catalog_codes() -> Vec<String> {
         .map(str::to_owned)
         .collect()
 }
+
+#[test]
+fn a_config_parses_without_its_secrets() {
+    let config = Config::parse(&minimal("")).unwrap();
+
+    assert_eq!(config.judge.provider, "typesafe");
+}
+
+#[test]
+fn a_config_parsed_without_secrets_is_still_validated() {
+    let err = Config::parse(&minimal("[mediation]\nlanguages = [\"xx\"]\n")).unwrap_err();
+
+    assert!(
+        err.to_string().contains("\"xx\" has no template catalog"),
+        "{err}"
+    );
+}
