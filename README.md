@@ -104,6 +104,27 @@ sqlite3 serbero.db "SELECT dispute_id, json_extract(payload_json, '$.solver'),
   WHERE kind = 'notification_failed' AND created_at > unixepoch() - 86400;"
 ```
 
+## Monitor mediation
+
+With mediation enabled, two read-only `sqlite3` reports summarize it
+([`docs/evaluation.md` §5](docs/evaluation.md#5-production-monitoring)):
+
+```sh
+# the last 7 days: sessions, self-resolved disputes, handoffs by reason,
+# solver feedback, judge requests, median latency and input tokens
+sqlite3 -header -column serbero.db < scripts/weekly-report.sql
+
+# input tokens and cost per day and judge, for the last 30 days
+sqlite3 -header -column serbero.db \
+  -cmd ".parameter set :usd_per_million_tokens 0.25" \
+  < scripts/cost-report.sql
+```
+
+Watch the share of `uncertain` and `round_limit` handoffs and the solver
+feedback: a rise for one question is the signal to add golden cases and
+revise it in the next question-set version. Solvers give feedback by replying
+to a brief with `wrong <question>`, for example `wrong seller_receipt`.
+
 ## Development
 
 ```sh
