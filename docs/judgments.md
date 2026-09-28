@@ -120,7 +120,7 @@ with an empty `latest` list are omitted.
     "type": "noul",
     "instructions": "Does anything in the `transcript` suggest deliberate bad faith by either party?",
     "criteria": {
-      "true": "Signs such as an admitted or described altered receipt, a payment from a third party's account, a reversed or charged-back payment, pressure to finish the trade outside Mostro, requests for passwords, seed words or private keys, or threats.",
+      "true": "Signs such as an admitted or described altered receipt, a payment from a third party's account, a reversed or charged-back payment, asking to move the conversation or the trade to another app or contact (for example a Telegram or WhatsApp username, or a phone number), pointing to a supposed Mostro support or administrator outside this chat, requests for passwords, seed words or private keys, or threats.",
       "false": "Nothing beyond an ordinary disagreement or delay."
     }
   },

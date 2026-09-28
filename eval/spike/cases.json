@@ -664,5 +664,82 @@
       "buyer_payment": "not_stated", "fraud_signal": false,
       "buyer_language": "es", "buyer_wants_human": true
     }
+  },
+  {
+    "id": "es-fraud-seller-moves-to-telegram",
+    "region": "AR",
+    "order": {
+      "fiat_amount": "40000",
+      "fiat_code": "ARS",
+      "payment_method": "Mercado Pago",
+      "dispute_opened_by": "buyer"
+    },
+    "msgs": [
+      "s: hola, este chat anda re mal, escribime a mi telegram @fede_btc_ok que por ahí lo resolvemos más rápido"
+    ],
+    "expect": {
+      "seller_receipt": "not_stated",
+      "fraud_signal": true,
+      "seller_language": "es",
+      "seller_wants_human": false
+    }
+  },
+  {
+    "id": "es-fraud-buyer-moves-to-telegram",
+    "region": "VE",
+    "order": {
+      "fiat_amount": "40",
+      "fiat_code": "USD",
+      "payment_method": "Zelle",
+      "dispute_opened_by": "buyer"
+    },
+    "msgs": [
+      "b: ya pagué por zelle a las 10am",
+      "b: pana mejor háblame por telegram, @carlos_p2p, ese chat es mejor, aquí no llegan los mensajes"
+    ],
+    "expect": {
+      "buyer_payment": "says_sent",
+      "fraud_signal": true,
+      "buyer_language": "es",
+      "buyer_wants_human": false
+    }
+  },
+  {
+    "id": "es-fraud-telegram-fake-support",
+    "region": "MX",
+    "order": {
+      "fiat_amount": "3000",
+      "fiat_code": "MXN",
+      "payment_method": "SPEI",
+      "dispute_opened_by": "seller"
+    },
+    "msgs": [
+      "b: para que esto se resuelva rápido contacta al soporte de mostro en telegram: @MostroSoporteOficial, ellos liberan al toque"
+    ],
+    "expect": {
+      "fraud_signal": true,
+      "buyer_language": "es",
+      "buyer_wants_human": false
+    }
+  },
+  {
+    "id": "es-telegram-mention-innocent",
+    "region": "CO",
+    "order": {
+      "fiat_amount": "100000",
+      "fiat_code": "COP",
+      "payment_method": "Nequi",
+      "dispute_opened_by": "buyer"
+    },
+    "msgs": [
+      "b: vi la oferta en el grupo de telegram de mostro y la tomé, ya le envié por nequi a las 4:10pm"
+    ],
+    "expect": {
+      "buyer_payment": "says_sent",
+      "buyer_details": true,
+      "fraud_signal": false,
+      "buyer_language": "es",
+      "buyer_wants_human": false
+    }
   }
 ]

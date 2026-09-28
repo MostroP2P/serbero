@@ -4,21 +4,26 @@
 enough to build the judge on the qs-1 questions of
 [`docs/judgments.md`](../../docs/judgments.md)?
 
-**Answer: yes.** On 51 Spanish conversations with regional slang, typos and
+**Answer: yes.** On 55 Spanish conversations with regional slang, typos and
 bursts of short messages, Jev (`jev-1.13.0`) answered every critical judgment
 correctly, with no false positive at the default thresholds. The spike found
-one weakness in the questions, not in the model: a seller who reports a
-payment that arrived *with a problem* (wrong sender, short amount, charged
-back) was read as `says_received` with P ≥ 0.93. The question was reworded
-and the fix is folded into `judgments.md`.
+two weaknesses in the questions, not in the model, both reworded and folded
+into `judgments.md`:
+
+1. A seller who reports a payment that arrived *with a problem* (wrong
+   sender, short amount, charged back) was read as `says_received` with
+   P ≥ 0.93, above the `guide` threshold.
+2. A party who asks to continue the conversation on Telegram, giving a
+   username, scored only 0.59–0.71 on `fraud_signal`, at or below the
+   `fraud` threshold.
 
 ## Method
 
-- **Cases.** 51 hand-written synthetic conversations in
+- **Cases.** 55 hand-written synthetic conversations in
   [`cases.json`](cases.json), each one a turn state as in
   [judgments.md §1](../../docs/judgments.md#1-state). Serbero's own messages
   are rendered from the real catalogs (`messages/*.toml`), so the judge sees
-  exactly what Serbero would send. Regions: AR 11, VE 9, ES 8, MX 7, CO 6,
+  exactly what Serbero would send. Regions: AR 12, VE 10, ES 8, MX 8, CO 7,
   CL 4, PE 3, CU 2, and one Brazilian buyer writing Portuguese. Only
   judgments a person can answer with confidence are labelled; ambiguous ones
   are left unlabelled and inspected by hand below.
@@ -47,13 +52,13 @@ python3 eval/spike/run.py --score                           # re-score saved ans
 
 | Question | Labels per option |
 |---|---|
-| `buyer_payment` | says_sent 16, says_not_sent 8, not_stated 13 |
-| `seller_receipt` | says_received 7, says_received_with_problem 3, says_not_received 10, not_stated 8 |
-| `<party>_wants_human` | true 6, false 52 (including impatience, irony and "soporte de mi banco") |
-| `fraud_signal` | true 6 (third-party payer, chargeback, move off Mostro, seed words, edited receipt, threat), false 45 |
+| `buyer_payment` | says_sent 18, says_not_sent 8, not_stated 13 |
+| `seller_receipt` | says_received 7, says_received_with_problem 3, says_not_received 10, not_stated 9 |
+| `<party>_wants_human` | true 6, false 56 (including impatience, irony and "soporte de mi banco") |
+| `fraud_signal` | true 9 (third-party payer, chargeback, move off Mostro, seed words, edited receipt, threat, two moves to Telegram, a fake support account on Telegram), false 46 (including a buyer who found the offer in a Telegram group) |
 | `<party>_message_kind` | answers 28, greeting 2, asks_language 2, not_understood 1, asks_next_step 1 |
-| `<party>_language` | es 53, en 1 (asked in Spanish), pt 1 |
-| others | `buyer_details` 16, `seller_checked` 9, `claims_conflict` 8, `dispute_topic` 8 |
+| `<party>_language` | es 57, en 1 (asked in Spanish), pt 1 |
+| others | `buyer_details` 17, `seller_checked` 9, `claims_conflict` 8, `dispute_topic` 8 |
 
 These counts are below the release-gate minimums (15 per critical option),
 as expected for a spike.
@@ -65,16 +70,16 @@ Full tables: [`metrics-qs-1.md`](metrics-qs-1.md) and
 
 | Question | Accuracy | Mean P(label) |
 |---|---:|---:|
-| `buyer_payment` | 37/37 | 1.00 |
-| `buyer_details` | 16/16 | 0.95 |
-| `seller_receipt` | 28/28 | 0.99 |
-| `seller_checked` | 8/9 | 0.89 |
+| `buyer_payment` | 39/39 | 1.00 |
+| `buyer_details` | 17/17 | 0.95 |
+| `seller_receipt` | 29/29 | 0.99 |
+| `seller_checked` | 8/9 | 0.88 |
 | `claims_conflict` | 8/8 | 0.89 |
-| `fraud_signal` | 51/51 | 0.91 |
-| `dispute_topic` | 7/8 | 0.79 |
+| `fraud_signal` | 55/55 | 0.91 |
+| `dispute_topic` | 7/8 | 0.77 |
 | `<party>_message_kind` | 34/34 | 0.98 |
-| `<party>_language` | 55/55 | 0.99 |
-| `<party>_wants_human` | 58/58 | 0.97 |
+| `<party>_language` | 59/59 | 0.99 |
+| `<party>_wants_human` | 61/62 | 0.95 |
 
 At the default thresholds of [judgments.md §3](../../docs/judgments.md#3-from-answers-to-facts),
 every fact the policy uses fired on every labelled positive and on nothing
@@ -83,13 +88,11 @@ and `guide`), `says_received` (at `fact` and `guide`), `says_not_received`,
 `says_received_with_problem` (at `outside_scope`), `wants_human`, `fraud`
 and `conflict`.
 
-Latency: median 334 ms, max 459 ms. Input tokens: mean 2,062, max 2,456,
+Latency: median 324 ms, max 531 ms. Input tokens: mean 2,090, max 2,489,
 in line with the estimate of [judgments.md §2.3](../../docs/judgments.md#23-size).
 
-**Stability.** A second live run of `qs-1` changed no labelled answer; the
-largest probability change on any question was 0.08, and the only winner that
-changed was an unlabelled near-tie (`dispute_topic` on
-`es-ar-buyer-wants-person`, 0.53 → 0.54).
+**Stability.** Two live runs of the final `qs-1` gave the same winner on
+every question of every case; the largest probability change was 0.13.
 
 ### What the model handled
 
@@ -142,7 +145,7 @@ protect.
   (§3); `spec.md` §7.6 describes the handoff reason accordingly.
 
 With the new wording, all three cases give `says_received_with_problem` at
-1.00, and all 51 cases keep every other answer.
+1.00, and the other cases keep every labelled answer.
 
 The change keeps the name `qs-1`. The question set is frozen, with
 `QUESTION_SET_VERSION` and its snapshot test, only when T3.5 implements it;
@@ -150,10 +153,31 @@ T0.7 exists to fold such findings in before that. No recording under the
 name `qs-1` predates the change: the spike's run on the old wording is kept
 as `qs-1-draft`.
 
-### 2. Minor, no change
+### 2. Moving the conversation to Telegram scored low (fixed)
+
+A party who gives a Telegram username and asks to continue there ("este chat
+anda re mal, escribime a mi telegram @…", "háblame por telegram, ese chat es
+mejor") is a common scam opener: it takes the conversation away from the
+solver and from Serbero. The draft criterion only named "pressure to finish
+the trade outside Mostro", and the judge was unsure:
+
+| Case | Draft | qs-1 |
+|---|---:|---:|
+| `es-fraud-seller-moves-to-telegram` | 0.71 | 0.92 |
+| `es-fraud-buyer-moves-to-telegram` | **0.59** (below `fraud` 0.60) | 0.89 |
+| `es-fraud-telegram-fake-support` (a "Mostro support" Telegram account) | 0.70 | 0.94 |
+| `es-telegram-mention-innocent` (found the offer in a Telegram group) | 0.05 | 0.06 |
+
+**Change folded into `judgments.md`:** the `fraud_signal` true criterion now
+also names "asking to move the conversation or the trade to another app or
+contact (for example a Telegram or WhatsApp username, or a phone number)"
+and "pointing to a supposed Mostro support or administrator outside this
+chat". The highest `fraud_signal` on a case without fraud stays at 0.39.
+
+### 3. Minor, no change
 
 - **`seller_checked` on `es-ar-me-entro-la-guita`** ("me entró la guita a las
-  15:32"): 0.43 against a `true` label. Giving the arrival time implies the
+  15:32"): 0.43–0.49 against a `true` label. Giving the arrival time implies the
   seller looked, but the label is debatable, and the fact only matters when
   the seller says nothing arrived.
 - **`dispute_topic` on a buyer who only greets:** `payment_not_confirmed`
@@ -164,6 +188,11 @@ as `qs-1-draft`.
   `says_not_sent` at 1.00, so the policy would offer `Guide(PaymentNotSent)`
   (cooperative cancel or finish the payment). That is a reasonable outcome
   for this case.
+- **`buyer_wants_human` on the fake-support case** ("contacta al soporte de
+  mostro en telegram"): 0.59–0.63 against a `false` label. The buyer points
+  the seller to a person rather than asking for one. It stays below
+  `human_request` (0.80), and firing it would only hand the case to a human,
+  which `fraud_signal` already does.
 
 ## Limits
 
@@ -173,7 +202,7 @@ as `qs-1-draft`.
   seed the T3.9 golden set. Real chats are messier (long off-topic messages,
   several topics at once, sarcasm), and the perfect scores here should not
   be read as the accuracy to expect in production.
-- **Small.** 6 positives for `wants_human` and `fraud_signal`, 3 for
+- **Small.** 6 positives for `wants_human`, 9 for `fraud_signal`, 3 for
   `claims_conflict`: enough to find a wording problem, not to calibrate
   thresholds (T3.10).
 - **One model.** Every number applies to `jev-1.13.0` only.
@@ -186,5 +215,6 @@ as `qs-1-draft`.
   is extracted from it).
 - Start the Spanish golden set from `cases.json` after native review, and add
   cases for the weakest spots: payments with a problem (short, duplicate,
-  reversed, third party) and more `claims_conflict`, `asks_next_step` and
+  reversed, third party), moves to other channels (WhatsApp, phone,
+  email, a fake support account), and more `claims_conflict`, `asks_next_step` and
   `not_understood`.

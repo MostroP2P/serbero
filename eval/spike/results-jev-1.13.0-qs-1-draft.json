@@ -74,8 +74,8 @@
           "choice": "says_not_received",
           "confidence": 1.0,
           "probabilities": {
-            "says_received": 0.0,
             "says_not_received": 1.0,
+            "says_received": 0.0,
             "not_stated": 0.0
           }
         },
@@ -96,13 +96,13 @@
           "choice": "payment_not_confirmed",
           "confidence": 1.0,
           "probabilities": {
+            "technical_problem": 0.0,
+            "other": 0.0,
+            "wrong_account_or_method": 0.0,
             "payment_not_confirmed": 1.0,
             "not_yet_clear": 0.0,
-            "wrong_account_or_method": 0.0,
             "wrong_amount": 0.0,
-            "other": 0.0,
-            "counterpart_unresponsive": 0.0,
-            "technical_problem": 0.0
+            "counterpart_unresponsive": 0.0
           }
         },
         "buyer_message_kind": {
@@ -110,12 +110,12 @@
           "choice": "answers",
           "confidence": 1.0,
           "probabilities": {
-            "not_understood": 0.0,
+            "asks_next_step": 0.0,
+            "asks_language": 0.0,
+            "other": 0.0,
             "greeting": 0.0,
             "answers": 1.0,
-            "asks_next_step": 0.0,
-            "other": 0.0,
-            "asks_language": 0.0
+            "not_understood": 0.0
           }
         },
         "buyer_language": {
@@ -123,11 +123,11 @@
           "choice": "es",
           "confidence": 1.0,
           "probabilities": {
+            "other": 0.0,
             "en": 0.0,
-            "pt": 0.0,
             "es": 1.0,
             "unknown": 0.0,
-            "other": 0.0
+            "pt": 0.0
           }
         },
         "buyer_wants_human": {
@@ -139,12 +139,12 @@
           "choice": "answers",
           "confidence": 1.0,
           "probabilities": {
-            "not_understood": 0.0,
-            "greeting": 0.0,
             "asks_next_step": 0.0,
-            "answers": 1.0,
+            "asks_language": 0.0,
             "other": 0.0,
-            "asks_language": 0.0
+            "greeting": 0.0,
+            "answers": 1.0,
+            "not_understood": 0.0
           }
         },
         "seller_language": {
@@ -152,11 +152,11 @@
           "choice": "es",
           "confidence": 1.0,
           "probabilities": {
+            "other": 0.0,
             "en": 0.0,
-            "pt": 0.0,
             "es": 1.0,
             "unknown": 0.0,
-            "other": 0.0
+            "pt": 0.0
           }
         },
         "seller_wants_human": {
@@ -168,7 +168,7 @@
         "input_tokens": 2398,
         "output_tokens": 528
       },
-      "latency_ms": 402
+      "latency_ms": 396
     }
   },
   "es-ve-sent-no-details": {
@@ -224,14 +224,14 @@
           "choice": "says_sent",
           "confidence": 1.0,
           "probabilities": {
-            "says_not_sent": 0.0,
+            "says_sent": 1.0,
             "not_stated": 0.0,
-            "says_sent": 1.0
+            "says_not_sent": 0.0
           }
         },
         "buyer_details": {
           "type": "noul",
-          "noul": 0.14
+          "noul": 0.13
         },
         "seller_receipt": {
           "type": "choice",
@@ -260,13 +260,13 @@
           "choice": "payment_not_confirmed",
           "confidence": 0.99,
           "probabilities": {
-            "not_yet_clear": 0.0,
-            "counterpart_unresponsive": 0.0,
-            "technical_problem": 0.0,
-            "other": 0.0,
-            "wrong_account_or_method": 0.0,
+            "payment_not_confirmed": 0.99,
+            "not_yet_clear": 0.01,
             "wrong_amount": 0.0,
-            "payment_not_confirmed": 1.0
+            "counterpart_unresponsive": 0.0,
+            "wrong_account_or_method": 0.0,
+            "other": 0.0,
+            "technical_problem": 0.0
           }
         },
         "buyer_message_kind": {
@@ -274,24 +274,24 @@
           "choice": "answers",
           "confidence": 1.0,
           "probabilities": {
+            "greeting": 0.0,
             "asks_language": 0.0,
-            "other": 0.0,
             "not_understood": 0.0,
-            "answers": 1.0,
             "asks_next_step": 0.0,
-            "greeting": 0.0
+            "other": 0.0,
+            "answers": 1.0
           }
         },
         "buyer_language": {
           "type": "choice",
           "choice": "es",
-          "confidence": 0.99,
+          "confidence": 1.0,
           "probabilities": {
-            "es": 1.0,
             "pt": 0.0,
-            "other": 0.0,
+            "en": 0.0,
+            "es": 1.0,
             "unknown": 0.0,
-            "en": 0.0
+            "other": 0.0
           }
         },
         "buyer_wants_human": {
@@ -303,7 +303,7 @@
         "input_tokens": 1931,
         "output_tokens": 390
       },
-      "latency_ms": 395
+      "latency_ms": 394
     }
   },
   "es-mx-not-sent-driving": {
@@ -366,9 +366,9 @@
           "choice": "says_not_sent",
           "confidence": 1.0,
           "probabilities": {
-            "says_not_sent": 1.0,
+            "says_sent": 0.0,
             "not_stated": 0.0,
-            "says_sent": 0.0
+            "says_not_sent": 1.0
           }
         },
         "buyer_details": {
@@ -380,14 +380,14 @@
           "choice": "says_not_received",
           "confidence": 1.0,
           "probabilities": {
-            "says_not_received": 1.0,
+            "not_stated": 0.0,
             "says_received": 0.0,
-            "not_stated": 0.0
+            "says_not_received": 1.0
           }
         },
         "seller_checked": {
           "type": "noul",
-          "noul": 0.36
+          "noul": 0.29
         },
         "claims_conflict": {
           "type": "noul",
@@ -395,20 +395,20 @@
         },
         "fraud_signal": {
           "type": "noul",
-          "noul": 0.12
+          "noul": 0.14
         },
         "dispute_topic": {
           "type": "choice",
           "choice": "payment_not_confirmed",
           "confidence": 1.0,
           "probabilities": {
-            "wrong_account_or_method": 0.0,
-            "wrong_amount": 0.0,
+            "technical_problem": 0.0,
             "not_yet_clear": 0.0,
-            "counterpart_unresponsive": 0.0,
+            "wrong_amount": 0.0,
             "other": 0.0,
             "payment_not_confirmed": 1.0,
-            "technical_problem": 0.0
+            "counterpart_unresponsive": 0.0,
+            "wrong_account_or_method": 0.0
           }
         },
         "buyer_message_kind": {
@@ -416,12 +416,12 @@
           "choice": "answers",
           "confidence": 1.0,
           "probabilities": {
-            "greeting": 0.0,
-            "not_understood": 0.0,
-            "asks_language": 0.0,
-            "asks_next_step": 0.0,
             "answers": 1.0,
-            "other": 0.0
+            "greeting": 0.0,
+            "other": 0.0,
+            "asks_next_step": 0.0,
+            "not_understood": 0.0,
+            "asks_language": 0.0
           }
         },
         "buyer_language": {
@@ -429,11 +429,11 @@
           "choice": "es",
           "confidence": 1.0,
           "probabilities": {
+            "pt": 0.0,
+            "other": 0.0,
             "en": 0.0,
             "unknown": 0.0,
-            "other": 0.0,
-            "es": 1.0,
-            "pt": 0.0
+            "es": 1.0
           }
         },
         "buyer_wants_human": {
@@ -443,14 +443,14 @@
         "seller_message_kind": {
           "type": "choice",
           "choice": "answers",
-          "confidence": 1.0,
+          "confidence": 0.99,
           "probabilities": {
-            "asks_next_step": 0.0,
-            "not_understood": 0.0,
-            "asks_language": 0.0,
-            "other": 0.0,
             "answers": 1.0,
-            "greeting": 0.0
+            "greeting": 0.0,
+            "not_understood": 0.0,
+            "asks_next_step": 0.0,
+            "other": 0.0,
+            "asks_language": 0.0
           }
         },
         "seller_language": {
@@ -458,10 +458,10 @@
           "choice": "es",
           "confidence": 1.0,
           "probabilities": {
-            "other": 0.0,
-            "unknown": 0.0,
             "pt": 0.0,
             "en": 0.0,
+            "other": 0.0,
+            "unknown": 0.0,
             "es": 1.0
           }
         },
@@ -474,7 +474,7 @@
         "input_tokens": 2383,
         "output_tokens": 529
       },
-      "latency_ms": 421
+      "latency_ms": 399
     }
   },
   "es-es-seller-received-bizum-buyer-silent": {
@@ -538,35 +538,35 @@
           "choice": "says_received",
           "confidence": 1.0,
           "probabilities": {
-            "not_stated": 0.0,
+            "says_received": 1.0,
             "says_not_received": 0.0,
-            "says_received": 1.0
+            "not_stated": 0.0
           }
         },
         "seller_checked": {
           "type": "noul",
-          "noul": 0.35
+          "noul": 0.37
         },
         "claims_conflict": {
           "type": "noul",
-          "noul": 0.08
+          "noul": 0.07
         },
         "fraud_signal": {
           "type": "noul",
-          "noul": 0.07
+          "noul": 0.06
         },
         "dispute_topic": {
           "type": "choice",
           "choice": "payment_not_confirmed",
-          "confidence": 0.85,
+          "confidence": 0.84,
           "probabilities": {
-            "other": 0.01,
-            "technical_problem": 0.0,
-            "wrong_amount": 0.0,
-            "not_yet_clear": 0.1,
-            "counterpart_unresponsive": 0.03,
             "wrong_account_or_method": 0.0,
-            "payment_not_confirmed": 0.86
+            "not_yet_clear": 0.09,
+            "technical_problem": 0.0,
+            "counterpart_unresponsive": 0.03,
+            "other": 0.01,
+            "payment_not_confirmed": 0.87,
+            "wrong_amount": 0.0
           }
         },
         "seller_message_kind": {
@@ -574,12 +574,12 @@
           "choice": "answers",
           "confidence": 1.0,
           "probabilities": {
-            "other": 0.0,
-            "asks_language": 0.0,
-            "not_understood": 0.0,
             "asks_next_step": 0.0,
+            "not_understood": 0.0,
             "greeting": 0.0,
-            "answers": 1.0
+            "other": 0.0,
+            "answers": 1.0,
+            "asks_language": 0.0
           }
         },
         "seller_language": {
@@ -587,11 +587,11 @@
           "choice": "es",
           "confidence": 1.0,
           "probabilities": {
-            "other": 0.0,
-            "es": 1.0,
-            "en": 0.0,
             "pt": 0.0,
-            "unknown": 0.0
+            "en": 0.0,
+            "unknown": 0.0,
+            "other": 0.0,
+            "es": 1.0
           }
         },
         "seller_wants_human": {
@@ -603,7 +603,7 @@
         "input_tokens": 1903,
         "output_tokens": 390
       },
-      "latency_ms": 405
+      "latency_ms": 413
     }
   },
   "es-co-seller-sees-pending": {
@@ -660,9 +660,9 @@
           "choice": "says_sent",
           "confidence": 1.0,
           "probabilities": {
-            "says_not_sent": 0.0,
             "says_sent": 1.0,
-            "not_stated": 0.0
+            "not_stated": 0.0,
+            "says_not_sent": 0.0
           }
         },
         "buyer_details": {
@@ -674,18 +674,18 @@
           "choice": "says_not_received",
           "confidence": 0.98,
           "probabilities": {
-            "says_not_received": 0.99,
             "not_stated": 0.01,
-            "says_received": 0.0
+            "says_received": 0.0,
+            "says_not_received": 0.99
           }
         },
         "seller_checked": {
           "type": "noul",
-          "noul": 0.93
+          "noul": 0.92
         },
         "claims_conflict": {
           "type": "noul",
-          "noul": 0.27
+          "noul": 0.25
         },
         "fraud_signal": {
           "type": "noul",
@@ -696,13 +696,13 @@
           "choice": "payment_not_confirmed",
           "confidence": 1.0,
           "probabilities": {
-            "technical_problem": 0.0,
             "other": 0.0,
+            "technical_problem": 0.0,
             "wrong_amount": 0.0,
-            "counterpart_unresponsive": 0.0,
-            "payment_not_confirmed": 1.0,
             "not_yet_clear": 0.0,
-            "wrong_account_or_method": 0.0
+            "payment_not_confirmed": 1.0,
+            "wrong_account_or_method": 0.0,
+            "counterpart_unresponsive": 0.0
           }
         },
         "buyer_message_kind": {
@@ -710,12 +710,12 @@
           "choice": "answers",
           "confidence": 1.0,
           "probabilities": {
-            "greeting": 0.0,
-            "answers": 1.0,
             "other": 0.0,
-            "asks_language": 0.0,
             "asks_next_step": 0.0,
-            "not_understood": 0.0
+            "asks_language": 0.0,
+            "not_understood": 0.0,
+            "greeting": 0.0,
+            "answers": 1.0
           }
         },
         "buyer_language": {
@@ -724,10 +724,10 @@
           "confidence": 1.0,
           "probabilities": {
             "other": 0.0,
-            "unknown": 0.0,
+            "es": 1.0,
             "en": 0.0,
             "pt": 0.0,
-            "es": 1.0
+            "unknown": 0.0
           }
         },
         "buyer_wants_human": {
@@ -740,10 +740,10 @@
           "confidence": 1.0,
           "probabilities": {
             "other": 0.0,
-            "answers": 1.0,
-            "greeting": 0.0,
             "asks_language": 0.0,
             "asks_next_step": 0.0,
+            "answers": 1.0,
+            "greeting": 0.0,
             "not_understood": 0.0
           }
         },
@@ -753,10 +753,10 @@
           "confidence": 1.0,
           "probabilities": {
             "other": 0.0,
-            "unknown": 0.0,
+            "es": 1.0,
             "en": 0.0,
             "pt": 0.0,
-            "es": 1.0
+            "unknown": 0.0
           }
         },
         "seller_wants_human": {
@@ -768,7 +768,7 @@
         "input_tokens": 2358,
         "output_tokens": 528
       },
-      "latency_ms": 316
+      "latency_ms": 327
     }
   },
   "es-ar-buyer-wants-person": {
@@ -819,8 +819,8 @@
           "confidence": 1.0,
           "probabilities": {
             "says_not_sent": 0.0,
-            "says_sent": 0.0,
-            "not_stated": 1.0
+            "not_stated": 1.0,
+            "says_sent": 0.0
           }
         },
         "buyer_details": {
@@ -833,8 +833,8 @@
           "confidence": 1.0,
           "probabilities": {
             "says_not_received": 0.0,
-            "says_received": 0.0,
-            "not_stated": 1.0
+            "not_stated": 1.0,
+            "says_received": 0.0
           }
         },
         "seller_checked": {
@@ -851,40 +851,40 @@
         },
         "dispute_topic": {
           "type": "choice",
-          "choice": "not_yet_clear",
-          "confidence": 0.44,
+          "choice": "payment_not_confirmed",
+          "confidence": 0.41,
           "probabilities": {
-            "wrong_account_or_method": 0.0,
-            "counterpart_unresponsive": 0.0,
-            "payment_not_confirmed": 0.47,
+            "payment_not_confirmed": 0.5,
             "other": 0.01,
-            "wrong_amount": 0.0,
+            "not_yet_clear": 0.49,
             "technical_problem": 0.0,
-            "not_yet_clear": 0.52
+            "wrong_amount": 0.0,
+            "wrong_account_or_method": 0.0,
+            "counterpart_unresponsive": 0.0
           }
         },
         "buyer_message_kind": {
           "type": "choice",
           "choice": "other",
-          "confidence": 0.93,
+          "confidence": 0.94,
           "probabilities": {
-            "other": 0.94,
-            "greeting": 0.0,
+            "other": 0.95,
             "asks_language": 0.0,
-            "not_understood": 0.0,
-            "asks_next_step": 0.06,
-            "answers": 0.0
+            "asks_next_step": 0.05,
+            "answers": 0.0,
+            "greeting": 0.0,
+            "not_understood": 0.0
           }
         },
         "buyer_language": {
           "type": "choice",
           "choice": "es",
-          "confidence": 0.99,
+          "confidence": 1.0,
           "probabilities": {
-            "other": 0.0,
-            "pt": 0.0,
-            "en": 0.0,
             "unknown": 0.0,
+            "other": 0.0,
+            "en": 0.0,
+            "pt": 0.0,
             "es": 1.0
           }
         },
@@ -895,9 +895,9 @@
       },
       "usage": {
         "input_tokens": 1909,
-        "output_tokens": 389
+        "output_tokens": 390
       },
-      "latency_ms": 319
+      "latency_ms": 294
     }
   },
   "es-ve-impatient-not-human": {
@@ -953,9 +953,9 @@
           "choice": "says_sent",
           "confidence": 1.0,
           "probabilities": {
-            "not_stated": 0.0,
             "says_not_sent": 0.0,
-            "says_sent": 1.0
+            "says_sent": 1.0,
+            "not_stated": 0.0
           }
         },
         "buyer_details": {
@@ -967,8 +967,8 @@
           "choice": "not_stated",
           "confidence": 1.0,
           "probabilities": {
-            "not_stated": 1.0,
             "says_not_received": 0.0,
+            "not_stated": 1.0,
             "says_received": 0.0
           }
         },
@@ -978,7 +978,7 @@
         },
         "claims_conflict": {
           "type": "noul",
-          "noul": 0.08
+          "noul": 0.09
         },
         "fraud_signal": {
           "type": "noul",
@@ -987,28 +987,28 @@
         "dispute_topic": {
           "type": "choice",
           "choice": "payment_not_confirmed",
-          "confidence": 0.97,
+          "confidence": 0.98,
           "probabilities": {
-            "other": 0.0,
-            "wrong_account_or_method": 0.0,
             "wrong_amount": 0.0,
-            "not_yet_clear": 0.01,
+            "counterpart_unresponsive": 0.01,
             "technical_problem": 0.0,
-            "payment_not_confirmed": 0.98,
-            "counterpart_unresponsive": 0.01
+            "wrong_account_or_method": 0.0,
+            "not_yet_clear": 0.01,
+            "other": 0.0,
+            "payment_not_confirmed": 0.98
           }
         },
         "buyer_message_kind": {
           "type": "choice",
           "choice": "answers",
-          "confidence": 0.63,
+          "confidence": 0.58,
           "probabilities": {
             "asks_language": 0.0,
-            "not_understood": 0.0,
             "asks_next_step": 0.0,
+            "other": 0.35,
             "greeting": 0.0,
-            "answers": 0.7,
-            "other": 0.3
+            "not_understood": 0.0,
+            "answers": 0.65
           }
         },
         "buyer_language": {
@@ -1016,10 +1016,10 @@
           "choice": "es",
           "confidence": 1.0,
           "probabilities": {
-            "es": 1.0,
-            "en": 0.0,
-            "pt": 0.0,
             "other": 0.0,
+            "es": 1.0,
+            "pt": 0.0,
+            "en": 0.0,
             "unknown": 0.0
           }
         },
@@ -1032,7 +1032,7 @@
         "input_tokens": 1946,
         "output_tokens": 390
       },
-      "latency_ms": 296
+      "latency_ms": 297
     }
   },
   "es-mx-seller-denies-asks-admin": {
@@ -1082,8 +1082,8 @@
           "choice": "not_stated",
           "confidence": 1.0,
           "probabilities": {
-            "says_not_sent": 0.0,
             "not_stated": 1.0,
+            "says_not_sent": 0.0,
             "says_sent": 0.0
           }
         },
@@ -1096,18 +1096,18 @@
           "choice": "says_not_received",
           "confidence": 1.0,
           "probabilities": {
-            "says_not_received": 1.0,
             "not_stated": 0.0,
+            "says_not_received": 1.0,
             "says_received": 0.0
           }
         },
         "seller_checked": {
           "type": "noul",
-          "noul": 0.23
+          "noul": 0.22
         },
         "claims_conflict": {
           "type": "noul",
-          "noul": 0.11
+          "noul": 0.1
         },
         "fraud_signal": {
           "type": "noul",
@@ -1118,24 +1118,24 @@
           "choice": "payment_not_confirmed",
           "confidence": 1.0,
           "probabilities": {
+            "counterpart_unresponsive": 0.0,
             "payment_not_confirmed": 1.0,
-            "other": 0.0,
             "wrong_amount": 0.0,
-            "not_yet_clear": 0.0,
             "technical_problem": 0.0,
-            "wrong_account_or_method": 0.0,
-            "counterpart_unresponsive": 0.0
+            "other": 0.0,
+            "not_yet_clear": 0.0,
+            "wrong_account_or_method": 0.0
           }
         },
         "seller_message_kind": {
           "type": "choice",
           "choice": "answers",
-          "confidence": 0.69,
+          "confidence": 0.63,
           "probabilities": {
-            "other": 0.08,
-            "asks_next_step": 0.17,
             "asks_language": 0.0,
-            "answers": 0.75,
+            "asks_next_step": 0.2,
+            "answers": 0.7,
+            "other": 0.1,
             "greeting": 0.0,
             "not_understood": 0.0
           }
@@ -1145,11 +1145,11 @@
           "choice": "es",
           "confidence": 1.0,
           "probabilities": {
-            "unknown": 0.0,
-            "other": 0.0,
             "en": 0.0,
             "pt": 0.0,
-            "es": 1.0
+            "es": 1.0,
+            "other": 0.0,
+            "unknown": 0.0
           }
         },
         "seller_wants_human": {
@@ -1161,7 +1161,7 @@
         "input_tokens": 1907,
         "output_tokens": 391
       },
-      "latency_ms": 301
+      "latency_ms": 309
     }
   },
   "es-buyer-greeting-only": {
@@ -1217,9 +1217,9 @@
           "choice": "not_stated",
           "confidence": 1.0,
           "probabilities": {
-            "not_stated": 1.0,
             "says_sent": 0.0,
-            "says_not_sent": 0.0
+            "says_not_sent": 0.0,
+            "not_stated": 1.0
           }
         },
         "buyer_details": {
@@ -1231,9 +1231,9 @@
           "choice": "not_stated",
           "confidence": 1.0,
           "probabilities": {
+            "says_not_received": 0.0,
             "not_stated": 1.0,
-            "says_received": 0.0,
-            "says_not_received": 0.0
+            "says_received": 0.0
           }
         },
         "seller_checked": {
@@ -1246,20 +1246,20 @@
         },
         "fraud_signal": {
           "type": "noul",
-          "noul": 0.06
+          "noul": 0.07
         },
         "dispute_topic": {
           "type": "choice",
           "choice": "payment_not_confirmed",
-          "confidence": 0.92,
+          "confidence": 0.89,
           "probabilities": {
-            "counterpart_unresponsive": 0.01,
-            "payment_not_confirmed": 0.93,
             "wrong_account_or_method": 0.0,
-            "wrong_amount": 0.0,
-            "not_yet_clear": 0.06,
             "technical_problem": 0.0,
-            "other": 0.0
+            "payment_not_confirmed": 0.91,
+            "counterpart_unresponsive": 0.02,
+            "other": 0.0,
+            "wrong_amount": 0.0,
+            "not_yet_clear": 0.07
           }
         },
         "buyer_message_kind": {
@@ -1267,36 +1267,36 @@
           "choice": "greeting",
           "confidence": 0.33,
           "probabilities": {
+            "other": 0.15,
+            "not_understood": 0.36,
+            "greeting": 0.44,
             "answers": 0.0,
-            "asks_language": 0.0,
             "asks_next_step": 0.05,
-            "not_understood": 0.35,
-            "greeting": 0.45,
-            "other": 0.15
+            "asks_language": 0.0
           }
         },
         "buyer_language": {
           "type": "choice",
           "choice": "es",
-          "confidence": 0.88,
+          "confidence": 0.86,
           "probabilities": {
+            "unknown": 0.1,
+            "es": 0.9,
             "other": 0.0,
-            "pt": 0.0,
-            "unknown": 0.09,
-            "es": 0.91,
-            "en": 0.0
+            "en": 0.0,
+            "pt": 0.0
           }
         },
         "buyer_wants_human": {
           "type": "noul",
-          "noul": 0.04
+          "noul": 0.03
         }
       },
       "usage": {
         "input_tokens": 1928,
         "output_tokens": 392
       },
-      "latency_ms": 331
+      "latency_ms": 305
     }
   },
   "es-seller-estas-ahi": {
@@ -1352,9 +1352,9 @@
           "choice": "not_stated",
           "confidence": 1.0,
           "probabilities": {
-            "says_sent": 0.0,
+            "not_stated": 1.0,
             "says_not_sent": 0.0,
-            "not_stated": 1.0
+            "says_sent": 0.0
           }
         },
         "buyer_details": {
@@ -1366,9 +1366,9 @@
           "choice": "not_stated",
           "confidence": 1.0,
           "probabilities": {
+            "not_stated": 1.0,
             "says_received": 0.0,
-            "says_not_received": 0.0,
-            "not_stated": 1.0
+            "says_not_received": 0.0
           }
         },
         "seller_checked": {
@@ -1381,20 +1381,20 @@
         },
         "fraud_signal": {
           "type": "noul",
-          "noul": 0.06
+          "noul": 0.05
         },
         "dispute_topic": {
           "type": "choice",
           "choice": "payment_not_confirmed",
           "confidence": 0.79,
           "probabilities": {
-            "wrong_account_or_method": 0.0,
-            "counterpart_unresponsive": 0.04,
+            "counterpart_unresponsive": 0.02,
             "payment_not_confirmed": 0.82,
+            "wrong_account_or_method": 0.0,
+            "wrong_amount": 0.0,
+            "not_yet_clear": 0.16,
             "technical_problem": 0.0,
-            "not_yet_clear": 0.14,
-            "other": 0.0,
-            "wrong_amount": 0.0
+            "other": 0.0
           }
         },
         "seller_message_kind": {
@@ -1403,11 +1403,11 @@
           "confidence": 0.99,
           "probabilities": {
             "answers": 0.0,
+            "asks_language": 0.0,
+            "not_understood": 0.0,
             "asks_next_step": 0.0,
             "greeting": 1.0,
-            "asks_language": 0.0,
-            "other": 0.0,
-            "not_understood": 0.0
+            "other": 0.0
           }
         },
         "seller_language": {
@@ -1416,10 +1416,10 @@
           "confidence": 1.0,
           "probabilities": {
             "pt": 0.0,
-            "unknown": 0.0,
             "en": 0.0,
-            "other": 0.0,
-            "es": 1.0
+            "unknown": 0.0,
+            "es": 1.0,
+            "other": 0.0
           }
         },
         "seller_wants_human": {
@@ -1431,7 +1431,7 @@
         "input_tokens": 1929,
         "output_tokens": 392
       },
-      "latency_ms": 336
+      "latency_ms": 290
     }
   },
   "es-buyer-asks-english": {
@@ -1481,9 +1481,9 @@
           "choice": "not_stated",
           "confidence": 1.0,
           "probabilities": {
-            "not_stated": 1.0,
+            "says_sent": 0.0,
             "says_not_sent": 0.0,
-            "says_sent": 0.0
+            "not_stated": 1.0
           }
         },
         "buyer_details": {
@@ -1495,9 +1495,9 @@
           "choice": "not_stated",
           "confidence": 1.0,
           "probabilities": {
-            "not_stated": 1.0,
+            "says_not_received": 0.0,
             "says_received": 0.0,
-            "says_not_received": 0.0
+            "not_stated": 1.0
           }
         },
         "seller_checked": {
@@ -1515,13 +1515,13 @@
         "dispute_topic": {
           "type": "choice",
           "choice": "payment_not_confirmed",
-          "confidence": 0.65,
+          "confidence": 0.72,
           "probabilities": {
-            "payment_not_confirmed": 0.71,
-            "not_yet_clear": 0.29,
             "wrong_account_or_method": 0.0,
-            "technical_problem": 0.0,
             "other": 0.0,
+            "technical_problem": 0.0,
+            "payment_not_confirmed": 0.76,
+            "not_yet_clear": 0.24,
             "wrong_amount": 0.0,
             "counterpart_unresponsive": 0.0
           }
@@ -1531,24 +1531,24 @@
           "choice": "asks_language",
           "confidence": 1.0,
           "probabilities": {
-            "answers": 0.0,
-            "asks_language": 1.0,
-            "not_understood": 0.0,
-            "greeting": 0.0,
+            "asks_next_step": 0.0,
             "other": 0.0,
-            "asks_next_step": 0.0
+            "asks_language": 1.0,
+            "greeting": 0.0,
+            "not_understood": 0.0,
+            "answers": 0.0
           }
         },
         "buyer_language": {
           "type": "choice",
           "choice": "en",
-          "confidence": 0.94,
+          "confidence": 0.93,
           "probabilities": {
-            "pt": 0.0,
-            "es": 0.05,
-            "en": 0.95,
             "other": 0.0,
-            "unknown": 0.0
+            "en": 0.95,
+            "es": 0.05,
+            "unknown": 0.0,
+            "pt": 0.0
           }
         },
         "buyer_wants_human": {
@@ -1560,7 +1560,7 @@
         "input_tokens": 1899,
         "output_tokens": 391
       },
-      "latency_ms": 336
+      "latency_ms": 304
     }
   },
   "es-opening-en-buyer-asks-spanish": {
@@ -1610,9 +1610,9 @@
           "choice": "not_stated",
           "confidence": 1.0,
           "probabilities": {
+            "says_sent": 0.0,
             "not_stated": 1.0,
-            "says_not_sent": 0.0,
-            "says_sent": 0.0
+            "says_not_sent": 0.0
           }
         },
         "buyer_details": {
@@ -1625,8 +1625,8 @@
           "confidence": 1.0,
           "probabilities": {
             "not_stated": 1.0,
-            "says_not_received": 0.0,
-            "says_received": 0.0
+            "says_received": 0.0,
+            "says_not_received": 0.0
           }
         },
         "seller_checked": {
@@ -1639,19 +1639,19 @@
         },
         "fraud_signal": {
           "type": "noul",
-          "noul": 0.05
+          "noul": 0.04
         },
         "dispute_topic": {
           "type": "choice",
           "choice": "payment_not_confirmed",
-          "confidence": 0.86,
+          "confidence": 0.82,
           "probabilities": {
-            "counterpart_unresponsive": 0.0,
-            "payment_not_confirmed": 0.88,
-            "wrong_amount": 0.0,
             "technical_problem": 0.0,
+            "not_yet_clear": 0.15,
+            "payment_not_confirmed": 0.85,
             "wrong_account_or_method": 0.0,
-            "not_yet_clear": 0.12,
+            "wrong_amount": 0.0,
+            "counterpart_unresponsive": 0.0,
             "other": 0.0
           }
         },
@@ -1660,11 +1660,11 @@
           "choice": "asks_language",
           "confidence": 1.0,
           "probabilities": {
-            "asks_language": 1.0,
-            "asks_next_step": 0.0,
             "answers": 0.0,
-            "other": 0.0,
             "greeting": 0.0,
+            "other": 0.0,
+            "asks_next_step": 0.0,
+            "asks_language": 1.0,
             "not_understood": 0.0
           }
         },
@@ -1673,23 +1673,23 @@
           "choice": "es",
           "confidence": 0.99,
           "probabilities": {
-            "en": 0.01,
             "pt": 0.0,
-            "es": 0.99,
+            "en": 0.01,
             "other": 0.0,
-            "unknown": 0.0
+            "unknown": 0.0,
+            "es": 0.99
           }
         },
         "buyer_wants_human": {
           "type": "noul",
-          "noul": 0.04
+          "noul": 0.03
         }
       },
       "usage": {
         "input_tokens": 1870,
         "output_tokens": 391
       },
-      "latency_ms": 328
+      "latency_ms": 340
     }
   },
   "es-seller-not-understood": {
@@ -1739,8 +1739,8 @@
           "choice": "not_stated",
           "confidence": 1.0,
           "probabilities": {
-            "not_stated": 1.0,
             "says_not_sent": 0.0,
+            "not_stated": 1.0,
             "says_sent": 0.0
           }
         },
@@ -1753,9 +1753,9 @@
           "choice": "not_stated",
           "confidence": 1.0,
           "probabilities": {
+            "says_received": 0.0,
             "not_stated": 1.0,
-            "says_not_received": 0.0,
-            "says_received": 0.0
+            "says_not_received": 0.0
           }
         },
         "seller_checked": {
@@ -1773,14 +1773,14 @@
         "dispute_topic": {
           "type": "choice",
           "choice": "payment_not_confirmed",
-          "confidence": 0.82,
+          "confidence": 0.81,
           "probabilities": {
-            "not_yet_clear": 0.15,
-            "technical_problem": 0.0,
-            "payment_not_confirmed": 0.85,
+            "counterpart_unresponsive": 0.0,
             "wrong_amount": 0.0,
             "wrong_account_or_method": 0.0,
-            "counterpart_unresponsive": 0.0,
+            "technical_problem": 0.0,
+            "not_yet_clear": 0.16,
+            "payment_not_confirmed": 0.84,
             "other": 0.0
           }
         },
@@ -1789,12 +1789,12 @@
           "choice": "not_understood",
           "confidence": 1.0,
           "probabilities": {
-            "other": 0.0,
             "greeting": 0.0,
             "answers": 0.0,
+            "asks_next_step": 0.0,
+            "other": 0.0,
             "asks_language": 0.0,
-            "not_understood": 1.0,
-            "asks_next_step": 0.0
+            "not_understood": 1.0
           }
         },
         "seller_language": {
@@ -1802,11 +1802,11 @@
           "choice": "es",
           "confidence": 0.99,
           "probabilities": {
-            "other": 0.0,
-            "es": 1.0,
-            "en": 0.0,
             "pt": 0.0,
-            "unknown": 0.0
+            "en": 0.0,
+            "other": 0.0,
+            "unknown": 0.0,
+            "es": 1.0
           }
         },
         "seller_wants_human": {
@@ -1818,7 +1818,7 @@
         "input_tokens": 1910,
         "output_tokens": 394
       },
-      "latency_ms": 299
+      "latency_ms": 418
     }
   },
   "es-buyer-asks-next-step": {
@@ -1868,9 +1868,9 @@
           "choice": "not_stated",
           "confidence": 1.0,
           "probabilities": {
-            "says_sent": 0.0,
             "says_not_sent": 0.0,
-            "not_stated": 1.0
+            "not_stated": 1.0,
+            "says_sent": 0.0
           }
         },
         "buyer_details": {
@@ -1902,15 +1902,15 @@
         "dispute_topic": {
           "type": "choice",
           "choice": "payment_not_confirmed",
-          "confidence": 0.79,
+          "confidence": 0.78,
           "probabilities": {
-            "counterpart_unresponsive": 0.0,
+            "payment_not_confirmed": 0.81,
             "other": 0.0,
-            "wrong_account_or_method": 0.0,
-            "payment_not_confirmed": 0.82,
-            "not_yet_clear": 0.18,
             "wrong_amount": 0.0,
-            "technical_problem": 0.0
+            "counterpart_unresponsive": 0.0,
+            "technical_problem": 0.0,
+            "not_yet_clear": 0.19,
+            "wrong_account_or_method": 0.0
           }
         },
         "buyer_message_kind": {
@@ -1918,12 +1918,12 @@
           "choice": "asks_next_step",
           "confidence": 1.0,
           "probabilities": {
+            "answers": 0.0,
+            "not_understood": 0.0,
+            "greeting": 0.0,
             "asks_next_step": 1.0,
             "asks_language": 0.0,
-            "other": 0.0,
-            "greeting": 0.0,
-            "not_understood": 0.0,
-            "answers": 0.0
+            "other": 0.0
           }
         },
         "buyer_language": {
@@ -1931,11 +1931,11 @@
           "choice": "es",
           "confidence": 0.97,
           "probabilities": {
-            "other": 0.0,
+            "unknown": 0.01,
+            "pt": 0.0,
             "en": 0.01,
             "es": 0.98,
-            "unknown": 0.0,
-            "pt": 0.01
+            "other": 0.0
           }
         },
         "buyer_wants_human": {
@@ -1947,7 +1947,7 @@
         "input_tokens": 1909,
         "output_tokens": 392
       },
-      "latency_ms": 325
+      "latency_ms": 406
     }
   },
   "es-fraud-third-party-payer": {
@@ -2004,9 +2004,9 @@
           "choice": "says_sent",
           "confidence": 1.0,
           "probabilities": {
-            "not_stated": 0.0,
+            "says_not_sent": 0.0,
             "says_sent": 1.0,
-            "says_not_sent": 0.0
+            "not_stated": 0.0
           }
         },
         "buyer_details": {
@@ -2016,11 +2016,11 @@
         "seller_receipt": {
           "type": "choice",
           "choice": "says_received",
-          "confidence": 0.89,
+          "confidence": 0.92,
           "probabilities": {
-            "says_not_received": 0.06,
-            "not_stated": 0.01,
-            "says_received": 0.93
+            "says_not_received": 0.04,
+            "says_received": 0.95,
+            "not_stated": 0.01
           }
         },
         "seller_checked": {
@@ -2040,13 +2040,13 @@
           "choice": "wrong_account_or_method",
           "confidence": 0.99,
           "probabilities": {
-            "other": 0.0,
-            "technical_problem": 0.0,
-            "wrong_amount": 0.0,
             "wrong_account_or_method": 0.99,
+            "counterpart_unresponsive": 0.0,
             "payment_not_confirmed": 0.01,
-            "not_yet_clear": 0.0,
-            "counterpart_unresponsive": 0.0
+            "other": 0.0,
+            "wrong_amount": 0.0,
+            "technical_problem": 0.0,
+            "not_yet_clear": 0.0
           }
         },
         "buyer_message_kind": {
@@ -2055,11 +2055,11 @@
           "confidence": 1.0,
           "probabilities": {
             "other": 0.0,
-            "answers": 1.0,
             "greeting": 0.0,
             "asks_language": 0.0,
+            "not_understood": 0.0,
             "asks_next_step": 0.0,
-            "not_understood": 0.0
+            "answers": 1.0
           }
         },
         "buyer_language": {
@@ -2069,26 +2069,26 @@
           "probabilities": {
             "other": 0.0,
             "pt": 0.0,
+            "unknown": 0.0,
             "en": 0.0,
-            "es": 1.0,
-            "unknown": 0.0
+            "es": 1.0
           }
         },
         "buyer_wants_human": {
           "type": "noul",
-          "noul": 0.04
+          "noul": 0.03
         },
         "seller_message_kind": {
           "type": "choice",
           "choice": "answers",
           "confidence": 0.99,
           "probabilities": {
-            "other": 0.0,
-            "answers": 1.0,
-            "asks_next_step": 0.0,
+            "other": 0.01,
+            "greeting": 0.0,
             "asks_language": 0.0,
             "not_understood": 0.0,
-            "greeting": 0.0
+            "asks_next_step": 0.0,
+            "answers": 0.99
           }
         },
         "seller_language": {
@@ -2098,8 +2098,8 @@
           "probabilities": {
             "other": 0.0,
             "pt": 0.0,
-            "en": 0.0,
             "unknown": 0.0,
+            "en": 0.0,
             "es": 1.0
           }
         },
@@ -2112,7 +2112,7 @@
         "input_tokens": 2367,
         "output_tokens": 526
       },
-      "latency_ms": 312
+      "latency_ms": 377
     }
   },
   "es-fraud-chargeback": {
@@ -2163,8 +2163,8 @@
           "confidence": 1.0,
           "probabilities": {
             "not_stated": 1.0,
-            "says_sent": 0.0,
-            "says_not_sent": 0.0
+            "says_not_sent": 0.0,
+            "says_sent": 0.0
           }
         },
         "buyer_details": {
@@ -2174,16 +2174,16 @@
         "seller_receipt": {
           "type": "choice",
           "choice": "says_received",
-          "confidence": 0.92,
+          "confidence": 0.9,
           "probabilities": {
-            "says_not_received": 0.05,
             "not_stated": 0.0,
-            "says_received": 0.95
+            "says_not_received": 0.06,
+            "says_received": 0.94
           }
         },
         "seller_checked": {
           "type": "noul",
-          "noul": 0.38
+          "noul": 0.36
         },
         "claims_conflict": {
           "type": "noul",
@@ -2196,15 +2196,15 @@
         "dispute_topic": {
           "type": "choice",
           "choice": "other",
-          "confidence": 0.53,
+          "confidence": 0.48,
           "probabilities": {
-            "not_yet_clear": 0.0,
+            "other": 0.5700000000000001,
             "technical_problem": 0.0,
+            "payment_not_confirmed": 0.43,
             "wrong_amount": 0.0,
+            "counterpart_unresponsive": 0.0,
             "wrong_account_or_method": 0.0,
-            "payment_not_confirmed": 0.39,
-            "other": 0.61,
-            "counterpart_unresponsive": 0.0
+            "not_yet_clear": 0.0
           }
         },
         "seller_message_kind": {
@@ -2213,11 +2213,11 @@
           "confidence": 1.0,
           "probabilities": {
             "other": 0.0,
+            "greeting": 0.0,
             "answers": 1.0,
-            "asks_next_step": 0.0,
             "asks_language": 0.0,
             "not_understood": 0.0,
-            "greeting": 0.0
+            "asks_next_step": 0.0
           }
         },
         "seller_language": {
@@ -2226,22 +2226,22 @@
           "confidence": 1.0,
           "probabilities": {
             "other": 0.0,
-            "pt": 0.0,
-            "en": 0.0,
             "es": 1.0,
-            "unknown": 0.0
+            "unknown": 0.0,
+            "en": 0.0,
+            "pt": 0.0
           }
         },
         "seller_wants_human": {
           "type": "noul",
-          "noul": 0.04
+          "noul": 0.03
         }
       },
       "usage": {
         "input_tokens": 1912,
         "output_tokens": 386
       },
-      "latency_ms": 309
+      "latency_ms": 338
     }
   },
   "es-fraud-outside-mostro": {
@@ -2289,10 +2289,10 @@
         "buyer_payment": {
           "type": "choice",
           "choice": "not_stated",
-          "confidence": 0.67,
+          "confidence": 0.77,
           "probabilities": {
-            "says_not_sent": 0.22,
-            "not_stated": 0.77,
+            "not_stated": 0.85,
+            "says_not_sent": 0.14,
             "says_sent": 0.01
           }
         },
@@ -2305,9 +2305,9 @@
           "choice": "not_stated",
           "confidence": 1.0,
           "probabilities": {
-            "says_received": 0.0,
             "says_not_received": 0.0,
-            "not_stated": 1.0
+            "not_stated": 1.0,
+            "says_received": 0.0
           }
         },
         "seller_checked": {
@@ -2325,52 +2325,52 @@
         "dispute_topic": {
           "type": "choice",
           "choice": "payment_not_confirmed",
-          "confidence": 0.75,
+          "confidence": 0.72,
           "probabilities": {
-            "wrong_account_or_method": 0.01,
-            "wrong_amount": 0.0,
-            "not_yet_clear": 0.1,
-            "counterpart_unresponsive": 0.01,
-            "payment_not_confirmed": 0.78,
+            "not_yet_clear": 0.12,
             "technical_problem": 0.0,
-            "other": 0.1
+            "wrong_amount": 0.0,
+            "other": 0.11,
+            "wrong_account_or_method": 0.01,
+            "payment_not_confirmed": 0.75,
+            "counterpart_unresponsive": 0.01
           }
         },
         "buyer_message_kind": {
           "type": "choice",
           "choice": "other",
-          "confidence": 0.98,
+          "confidence": 0.97,
           "probabilities": {
-            "asks_next_step": 0.02,
-            "answers": 0.0,
-            "not_understood": 0.0,
             "asks_language": 0.0,
-            "other": 0.98,
-            "greeting": 0.0
+            "greeting": 0.0,
+            "asks_next_step": 0.02,
+            "not_understood": 0.0,
+            "answers": 0.0,
+            "other": 0.98
           }
         },
         "buyer_language": {
           "type": "choice",
           "choice": "es",
-          "confidence": 1.0,
+          "confidence": 0.99,
           "probabilities": {
             "es": 1.0,
-            "unknown": 0.0,
-            "other": 0.0,
             "en": 0.0,
-            "pt": 0.0
+            "pt": 0.0,
+            "other": 0.0,
+            "unknown": 0.0
           }
         },
         "buyer_wants_human": {
           "type": "noul",
-          "noul": 0.1
+          "noul": 0.13
         }
       },
       "usage": {
         "input_tokens": 1910,
         "output_tokens": 390
       },
-      "latency_ms": 358
+      "latency_ms": 299
     }
   },
   "es-fraud-seed-request": {
@@ -2427,8 +2427,8 @@
           "choice": "says_sent",
           "confidence": 1.0,
           "probabilities": {
-            "says_not_sent": 0.0,
             "not_stated": 0.0,
+            "says_not_sent": 0.0,
             "says_sent": 1.0
           }
         },
@@ -2452,23 +2452,23 @@
         },
         "claims_conflict": {
           "type": "noul",
-          "noul": 0.14
+          "noul": 0.13
         },
         "fraud_signal": {
           "type": "noul",
-          "noul": 0.93
+          "noul": 0.94
         },
         "dispute_topic": {
           "type": "choice",
           "choice": "payment_not_confirmed",
           "confidence": 0.98,
           "probabilities": {
-            "other": 0.01,
-            "wrong_amount": 0.0,
             "counterpart_unresponsive": 0.0,
-            "payment_not_confirmed": 0.99,
+            "payment_not_confirmed": 0.98,
+            "wrong_amount": 0.0,
+            "not_yet_clear": 0.01,
+            "other": 0.01,
             "technical_problem": 0.0,
-            "not_yet_clear": 0.0,
             "wrong_account_or_method": 0.0
           }
         },
@@ -2477,12 +2477,12 @@
           "choice": "answers",
           "confidence": 1.0,
           "probabilities": {
-            "answers": 1.0,
-            "asks_next_step": 0.0,
             "asks_language": 0.0,
-            "not_understood": 0.0,
             "other": 0.0,
-            "greeting": 0.0
+            "greeting": 0.0,
+            "answers": 1.0,
+            "not_understood": 0.0,
+            "asks_next_step": 0.0
           }
         },
         "buyer_language": {
@@ -2491,10 +2491,10 @@
           "confidence": 1.0,
           "probabilities": {
             "pt": 0.0,
+            "other": 0.0,
             "es": 1.0,
             "en": 0.0,
-            "unknown": 0.0,
-            "other": 0.0
+            "unknown": 0.0
           }
         },
         "buyer_wants_human": {
@@ -2504,14 +2504,14 @@
         "seller_message_kind": {
           "type": "choice",
           "choice": "other",
-          "confidence": 0.83,
+          "confidence": 0.79,
           "probabilities": {
-            "answers": 0.0,
-            "asks_next_step": 0.13,
+            "asks_language": 0.0,
+            "other": 0.82,
             "greeting": 0.0,
-            "not_understood": 0.0,
-            "other": 0.87,
-            "asks_language": 0.0
+            "answers": 0.01,
+            "asks_next_step": 0.17,
+            "not_understood": 0.0
           }
         },
         "seller_language": {
@@ -2520,10 +2520,10 @@
           "confidence": 1.0,
           "probabilities": {
             "pt": 0.0,
+            "other": 0.0,
             "es": 1.0,
             "en": 0.0,
-            "unknown": 0.0,
-            "other": 0.0
+            "unknown": 0.0
           }
         },
         "seller_wants_human": {
@@ -2535,7 +2535,7 @@
         "input_tokens": 2351,
         "output_tokens": 527
       },
-      "latency_ms": 297
+      "latency_ms": 330
     }
   },
   "es-fraud-altered-receipt": {
@@ -2593,14 +2593,14 @@
           "choice": "says_sent",
           "confidence": 1.0,
           "probabilities": {
+            "says_not_sent": 0.0,
             "not_stated": 0.0,
-            "says_sent": 1.0,
-            "says_not_sent": 0.0
+            "says_sent": 1.0
           }
         },
         "buyer_details": {
           "type": "noul",
-          "noul": 0.93
+          "noul": 0.91
         },
         "seller_receipt": {
           "type": "choice",
@@ -2614,28 +2614,28 @@
         },
         "seller_checked": {
           "type": "noul",
-          "noul": 0.8
+          "noul": 0.81
         },
         "claims_conflict": {
           "type": "noul",
-          "noul": 0.92
+          "noul": 0.91
         },
         "fraud_signal": {
           "type": "noul",
-          "noul": 0.84
+          "noul": 0.85
         },
         "dispute_topic": {
           "type": "choice",
           "choice": "payment_not_confirmed",
           "confidence": 1.0,
           "probabilities": {
-            "other": 0.0,
+            "not_yet_clear": 0.0,
             "counterpart_unresponsive": 0.0,
+            "technical_problem": 0.0,
+            "other": 0.0,
             "wrong_amount": 0.0,
             "wrong_account_or_method": 0.0,
-            "payment_not_confirmed": 1.0,
-            "technical_problem": 0.0,
-            "not_yet_clear": 0.0
+            "payment_not_confirmed": 1.0
           }
         },
         "buyer_message_kind": {
@@ -2643,10 +2643,10 @@
           "choice": "answers",
           "confidence": 1.0,
           "probabilities": {
-            "other": 0.0,
-            "answers": 1.0,
             "not_understood": 0.0,
+            "other": 0.0,
             "asks_language": 0.0,
+            "answers": 1.0,
             "asks_next_step": 0.0,
             "greeting": 0.0
           }
@@ -2656,11 +2656,11 @@
           "choice": "es",
           "confidence": 1.0,
           "probabilities": {
-            "other": 0.0,
+            "es": 1.0,
             "pt": 0.0,
-            "en": 0.0,
+            "other": 0.0,
             "unknown": 0.0,
-            "es": 1.0
+            "en": 0.0
           }
         },
         "buyer_wants_human": {
@@ -2672,10 +2672,10 @@
           "choice": "answers",
           "confidence": 1.0,
           "probabilities": {
-            "other": 0.0,
-            "answers": 1.0,
             "not_understood": 0.0,
+            "other": 0.0,
             "asks_language": 0.0,
+            "answers": 1.0,
             "asks_next_step": 0.0,
             "greeting": 0.0
           }
@@ -2685,11 +2685,11 @@
           "choice": "es",
           "confidence": 1.0,
           "probabilities": {
-            "other": 0.0,
+            "es": 1.0,
             "pt": 0.0,
-            "en": 0.0,
+            "other": 0.0,
             "unknown": 0.0,
-            "es": 1.0
+            "en": 0.0
           }
         },
         "seller_wants_human": {
@@ -2701,7 +2701,7 @@
         "input_tokens": 2355,
         "output_tokens": 528
       },
-      "latency_ms": 301
+      "latency_ms": 348
     }
   },
   "es-fraud-threat": {
@@ -2749,11 +2749,11 @@
         "buyer_payment": {
           "type": "choice",
           "choice": "not_stated",
-          "confidence": 1.0,
+          "confidence": 0.99,
           "probabilities": {
-            "says_not_sent": 0.0,
+            "says_sent": 0.0,
             "not_stated": 1.0,
-            "says_sent": 0.0
+            "says_not_sent": 0.0
           }
         },
         "buyer_details": {
@@ -2765,8 +2765,8 @@
           "choice": "not_stated",
           "confidence": 1.0,
           "probabilities": {
-            "says_not_received": 0.0,
             "says_received": 0.0,
+            "says_not_received": 0.0,
             "not_stated": 1.0
           }
         },
@@ -2785,15 +2785,15 @@
         "dispute_topic": {
           "type": "choice",
           "choice": "payment_not_confirmed",
-          "confidence": 0.55,
+          "confidence": 0.53,
           "probabilities": {
-            "wrong_amount": 0.0,
-            "counterpart_unresponsive": 0.01,
-            "wrong_account_or_method": 0.0,
-            "payment_not_confirmed": 0.63,
-            "not_yet_clear": 0.21,
+            "not_yet_clear": 0.24,
+            "other": 0.14,
+            "counterpart_unresponsive": 0.02,
             "technical_problem": 0.0,
-            "other": 0.15
+            "payment_not_confirmed": 0.6,
+            "wrong_amount": 0.0,
+            "wrong_account_or_method": 0.0
           }
         },
         "buyer_message_kind": {
@@ -2801,12 +2801,12 @@
           "choice": "other",
           "confidence": 1.0,
           "probabilities": {
-            "asks_next_step": 0.0,
-            "greeting": 0.0,
-            "not_understood": 0.0,
-            "asks_language": 0.0,
             "answers": 0.0,
-            "other": 1.0
+            "asks_language": 0.0,
+            "not_understood": 0.0,
+            "asks_next_step": 0.0,
+            "other": 1.0,
+            "greeting": 0.0
           }
         },
         "buyer_language": {
@@ -2814,8 +2814,8 @@
           "choice": "es",
           "confidence": 1.0,
           "probabilities": {
-            "en": 0.0,
             "unknown": 0.0,
+            "en": 0.0,
             "pt": 0.0,
             "es": 1.0,
             "other": 0.0
@@ -2830,7 +2830,7 @@
         "input_tokens": 1913,
         "output_tokens": 390
       },
-      "latency_ms": 318
+      "latency_ms": 343
     }
   },
   "es-rude-disagreement-no-fraud": {
@@ -2901,8 +2901,8 @@
           "choice": "says_not_received",
           "confidence": 1.0,
           "probabilities": {
-            "says_not_received": 1.0,
             "not_stated": 0.0,
+            "says_not_received": 1.0,
             "says_received": 0.0
           }
         },
@@ -2912,11 +2912,11 @@
         },
         "claims_conflict": {
           "type": "noul",
-          "noul": 0.77
+          "noul": 0.79
         },
         "fraud_signal": {
           "type": "noul",
-          "noul": 0.16
+          "noul": 0.15
         },
         "dispute_topic": {
           "type": "choice",
@@ -2924,25 +2924,25 @@
           "confidence": 1.0,
           "probabilities": {
             "other": 0.0,
+            "wrong_account_or_method": 0.0,
+            "wrong_amount": 0.0,
+            "not_yet_clear": 0.0,
             "technical_problem": 0.0,
             "payment_not_confirmed": 1.0,
-            "not_yet_clear": 0.0,
-            "wrong_amount": 0.0,
-            "wrong_account_or_method": 0.0,
             "counterpart_unresponsive": 0.0
           }
         },
         "buyer_message_kind": {
           "type": "choice",
           "choice": "answers",
-          "confidence": 0.9,
+          "confidence": 0.94,
           "probabilities": {
-            "asks_language": 0.0,
+            "greeting": 0.0,
             "not_understood": 0.0,
             "asks_next_step": 0.0,
-            "greeting": 0.0,
-            "other": 0.08,
-            "answers": 0.92
+            "asks_language": 0.0,
+            "answers": 0.95,
+            "other": 0.05
           }
         },
         "buyer_language": {
@@ -2950,8 +2950,8 @@
           "choice": "es",
           "confidence": 1.0,
           "probabilities": {
-            "es": 1.0,
             "en": 0.0,
+            "es": 1.0,
             "pt": 0.0,
             "other": 0.0,
             "unknown": 0.0
@@ -2967,9 +2967,9 @@
           "confidence": 1.0,
           "probabilities": {
             "not_understood": 0.0,
-            "greeting": 0.0,
-            "asks_next_step": 0.0,
             "asks_language": 0.0,
+            "asks_next_step": 0.0,
+            "greeting": 0.0,
             "other": 0.0,
             "answers": 1.0
           }
@@ -2979,8 +2979,8 @@
           "choice": "es",
           "confidence": 1.0,
           "probabilities": {
-            "es": 1.0,
             "en": 0.0,
+            "es": 1.0,
             "pt": 0.0,
             "other": 0.0,
             "unknown": 0.0
@@ -2995,7 +2995,7 @@
         "input_tokens": 2335,
         "output_tokens": 528
       },
-      "latency_ms": 318
+      "latency_ms": 348
     }
   },
   "es-seller-finds-it-after-check": {
@@ -3056,23 +3056,23 @@
           "choice": "not_stated",
           "confidence": 1.0,
           "probabilities": {
-            "says_not_sent": 0.0,
             "says_sent": 0.0,
+            "says_not_sent": 0.0,
             "not_stated": 1.0
           }
         },
         "buyer_details": {
           "type": "noul",
-          "noul": 0.05
+          "noul": 0.06
         },
         "seller_receipt": {
           "type": "choice",
           "choice": "says_received",
           "confidence": 0.97,
           "probabilities": {
-            "says_not_received": 0.01,
-            "not_stated": 0.0,
-            "says_received": 0.99
+            "says_received": 0.98,
+            "says_not_received": 0.02,
+            "not_stated": 0.0
           }
         },
         "seller_checked": {
@@ -3081,24 +3081,24 @@
         },
         "claims_conflict": {
           "type": "noul",
-          "noul": 0.17
+          "noul": 0.16
         },
         "fraud_signal": {
           "type": "noul",
-          "noul": 0.08
+          "noul": 0.07
         },
         "dispute_topic": {
           "type": "choice",
           "choice": "payment_not_confirmed",
           "confidence": 1.0,
           "probabilities": {
-            "technical_problem": 0.0,
             "not_yet_clear": 0.0,
-            "wrong_account_or_method": 0.0,
+            "wrong_amount": 0.0,
             "counterpart_unresponsive": 0.0,
-            "other": 0.0,
+            "technical_problem": 0.0,
             "payment_not_confirmed": 1.0,
-            "wrong_amount": 0.0
+            "other": 0.0,
+            "wrong_account_or_method": 0.0
           }
         },
         "seller_message_kind": {
@@ -3106,12 +3106,12 @@
           "choice": "answers",
           "confidence": 1.0,
           "probabilities": {
-            "other": 0.0,
             "answers": 1.0,
-            "greeting": 0.0,
             "asks_language": 0.0,
             "asks_next_step": 0.0,
-            "not_understood": 0.0
+            "not_understood": 0.0,
+            "other": 0.0,
+            "greeting": 0.0
           }
         },
         "seller_language": {
@@ -3119,11 +3119,11 @@
           "choice": "es",
           "confidence": 1.0,
           "probabilities": {
-            "other": 0.0,
-            "unknown": 0.0,
-            "en": 0.0,
+            "es": 1.0,
             "pt": 0.0,
-            "es": 1.0
+            "en": 0.0,
+            "unknown": 0.0,
+            "other": 0.0
           }
         },
         "seller_wants_human": {
@@ -3135,7 +3135,7 @@
         "input_tokens": 2025,
         "output_tokens": 390
       },
-      "latency_ms": 315
+      "latency_ms": 590
     }
   },
   "es-cl-received-slang": {
@@ -3193,8 +3193,8 @@
           "confidence": 1.0,
           "probabilities": {
             "not_stated": 0.0,
-            "says_not_sent": 0.0,
-            "says_sent": 1.0
+            "says_sent": 1.0,
+            "says_not_sent": 0.0
           }
         },
         "buyer_details": {
@@ -3206,14 +3206,14 @@
           "choice": "says_received",
           "confidence": 1.0,
           "probabilities": {
+            "not_stated": 0.0,
             "says_received": 1.0,
-            "says_not_received": 0.0,
-            "not_stated": 0.0
+            "says_not_received": 0.0
           }
         },
         "seller_checked": {
           "type": "noul",
-          "noul": 0.34
+          "noul": 0.33
         },
         "claims_conflict": {
           "type": "noul",
@@ -3221,20 +3221,20 @@
         },
         "fraud_signal": {
           "type": "noul",
-          "noul": 0.05
+          "noul": 0.06
         },
         "dispute_topic": {
           "type": "choice",
           "choice": "payment_not_confirmed",
-          "confidence": 0.76,
+          "confidence": 0.71,
           "probabilities": {
-            "wrong_account_or_method": 0.0,
-            "wrong_amount": 0.0,
-            "not_yet_clear": 0.16,
-            "other": 0.04,
             "counterpart_unresponsive": 0.0,
+            "wrong_amount": 0.0,
             "technical_problem": 0.0,
-            "payment_not_confirmed": 0.8
+            "payment_not_confirmed": 0.76,
+            "other": 0.04,
+            "not_yet_clear": 0.2,
+            "wrong_account_or_method": 0.0
           }
         },
         "buyer_message_kind": {
@@ -3242,24 +3242,24 @@
           "choice": "answers",
           "confidence": 1.0,
           "probabilities": {
-            "asks_next_step": 0.0,
-            "asks_language": 0.0,
-            "not_understood": 0.0,
             "answers": 1.0,
-            "other": 0.0,
-            "greeting": 0.0
+            "greeting": 0.0,
+            "not_understood": 0.0,
+            "asks_language": 0.0,
+            "asks_next_step": 0.0,
+            "other": 0.0
           }
         },
         "buyer_language": {
           "type": "choice",
           "choice": "es",
-          "confidence": 0.99,
+          "confidence": 1.0,
           "probabilities": {
+            "es": 1.0,
             "pt": 0.0,
             "unknown": 0.0,
-            "other": 0.0,
             "en": 0.0,
-            "es": 1.0
+            "other": 0.0
           }
         },
         "buyer_wants_human": {
@@ -3271,12 +3271,12 @@
           "choice": "answers",
           "confidence": 1.0,
           "probabilities": {
-            "asks_next_step": 0.0,
-            "asks_language": 0.0,
-            "not_understood": 0.0,
-            "answers": 1.0,
+            "other": 0.0,
             "greeting": 0.0,
-            "other": 0.0
+            "not_understood": 0.0,
+            "asks_language": 0.0,
+            "asks_next_step": 0.0,
+            "answers": 1.0
           }
         },
         "seller_language": {
@@ -3284,11 +3284,11 @@
           "choice": "es",
           "confidence": 1.0,
           "probabilities": {
-            "pt": 0.0,
+            "es": 1.0,
             "unknown": 0.0,
-            "other": 0.0,
+            "pt": 0.0,
             "en": 0.0,
-            "es": 1.0
+            "other": 0.0
           }
         },
         "seller_wants_human": {
@@ -3300,7 +3300,7 @@
         "input_tokens": 2332,
         "output_tokens": 527
       },
-      "latency_ms": 328
+      "latency_ms": 320
     }
   },
   "es-pe-yape-short-amount": {
@@ -3350,9 +3350,9 @@
           "choice": "not_stated",
           "confidence": 1.0,
           "probabilities": {
-            "says_not_sent": 0.0,
             "says_sent": 0.0,
-            "not_stated": 1.0
+            "not_stated": 1.0,
+            "says_not_sent": 0.0
           }
         },
         "buyer_details": {
@@ -3362,11 +3362,11 @@
         "seller_receipt": {
           "type": "choice",
           "choice": "says_received",
-          "confidence": 0.67,
+          "confidence": 0.78,
           "probabilities": {
-            "says_received": 0.78,
-            "says_not_received": 0.21,
-            "not_stated": 0.01
+            "says_not_received": 0.14,
+            "not_stated": 0.01,
+            "says_received": 0.85
           }
         },
         "seller_checked": {
@@ -3375,24 +3375,24 @@
         },
         "claims_conflict": {
           "type": "noul",
-          "noul": 0.12
+          "noul": 0.11
         },
         "fraud_signal": {
           "type": "noul",
-          "noul": 0.21
+          "noul": 0.22
         },
         "dispute_topic": {
           "type": "choice",
           "choice": "wrong_amount",
           "confidence": 1.0,
           "probabilities": {
+            "not_yet_clear": 0.0,
+            "other": 0.0,
             "wrong_amount": 1.0,
             "counterpart_unresponsive": 0.0,
             "wrong_account_or_method": 0.0,
             "payment_not_confirmed": 0.0,
-            "technical_problem": 0.0,
-            "other": 0.0,
-            "not_yet_clear": 0.0
+            "technical_problem": 0.0
           }
         },
         "seller_message_kind": {
@@ -3400,36 +3400,36 @@
           "choice": "answers",
           "confidence": 1.0,
           "probabilities": {
-            "greeting": 0.0,
-            "not_understood": 0.0,
             "answers": 1.0,
             "asks_language": 0.0,
+            "not_understood": 0.0,
             "asks_next_step": 0.0,
-            "other": 0.0
+            "other": 0.0,
+            "greeting": 0.0
           }
         },
         "seller_language": {
           "type": "choice",
           "choice": "es",
-          "confidence": 1.0,
+          "confidence": 0.99,
           "probabilities": {
-            "es": 1.0,
             "pt": 0.0,
             "en": 0.0,
+            "es": 1.0,
             "unknown": 0.0,
             "other": 0.0
           }
         },
         "seller_wants_human": {
           "type": "noul",
-          "noul": 0.03
+          "noul": 0.04
         }
       },
       "usage": {
         "input_tokens": 1901,
         "output_tokens": 387
       },
-      "latency_ms": 296
+      "latency_ms": 309
     }
   },
   "es-ar-wrong-cbu": {
@@ -3484,16 +3484,16 @@
         "buyer_payment": {
           "type": "choice",
           "choice": "says_sent",
-          "confidence": 0.99,
+          "confidence": 1.0,
           "probabilities": {
-            "says_sent": 1.0,
             "says_not_sent": 0.0,
-            "not_stated": 0.0
+            "not_stated": 0.0,
+            "says_sent": 1.0
           }
         },
         "buyer_details": {
           "type": "noul",
-          "noul": 0.55
+          "noul": 0.51
         },
         "seller_receipt": {
           "type": "choice",
@@ -3501,8 +3501,8 @@
           "confidence": 1.0,
           "probabilities": {
             "says_not_received": 1.0,
-            "says_received": 0.0,
-            "not_stated": 0.0
+            "not_stated": 0.0,
+            "says_received": 0.0
           }
         },
         "seller_checked": {
@@ -3511,7 +3511,7 @@
         },
         "claims_conflict": {
           "type": "noul",
-          "noul": 0.68
+          "noul": 0.67
         },
         "fraud_signal": {
           "type": "noul",
@@ -3522,12 +3522,12 @@
           "choice": "wrong_account_or_method",
           "confidence": 0.99,
           "probabilities": {
-            "other": 0.0,
-            "wrong_account_or_method": 0.99,
-            "wrong_amount": 0.0,
-            "technical_problem": 0.0,
             "payment_not_confirmed": 0.01,
+            "other": 0.0,
             "not_yet_clear": 0.0,
+            "technical_problem": 0.0,
+            "wrong_amount": 0.0,
+            "wrong_account_or_method": 0.99,
             "counterpart_unresponsive": 0.0
           }
         },
@@ -3537,20 +3537,20 @@
           "confidence": 1.0,
           "probabilities": {
             "other": 0.0,
-            "greeting": 0.0,
-            "not_understood": 0.0,
+            "asks_language": 0.0,
             "asks_next_step": 0.0,
             "answers": 1.0,
-            "asks_language": 0.0
+            "greeting": 0.0,
+            "not_understood": 0.0
           }
         },
         "buyer_language": {
           "type": "choice",
           "choice": "es",
-          "confidence": 1.0,
+          "confidence": 0.99,
           "probabilities": {
-            "other": 0.0,
             "unknown": 0.0,
+            "other": 0.0,
             "en": 0.0,
             "pt": 0.0,
             "es": 1.0
@@ -3565,12 +3565,12 @@
           "choice": "answers",
           "confidence": 1.0,
           "probabilities": {
-            "asks_next_step": 0.0,
-            "greeting": 0.0,
-            "not_understood": 0.0,
             "other": 0.0,
+            "asks_language": 0.0,
+            "asks_next_step": 0.0,
             "answers": 1.0,
-            "asks_language": 0.0
+            "greeting": 0.0,
+            "not_understood": 0.0
           }
         },
         "seller_language": {
@@ -3578,23 +3578,23 @@
           "choice": "es",
           "confidence": 1.0,
           "probabilities": {
+            "unknown": 0.0,
             "other": 0.0,
-            "pt": 0.0,
             "en": 0.0,
-            "es": 1.0,
-            "unknown": 0.0
+            "pt": 0.0,
+            "es": 1.0
           }
         },
         "seller_wants_human": {
           "type": "noul",
-          "noul": 0.04
+          "noul": 0.03
         }
       },
       "usage": {
         "input_tokens": 2358,
         "output_tokens": 527
       },
-      "latency_ms": 335
+      "latency_ms": 304
     }
   },
   "es-buyer-app-not-loading": {
@@ -3644,9 +3644,9 @@
           "choice": "says_not_sent",
           "confidence": 1.0,
           "probabilities": {
+            "says_not_sent": 1.0,
             "not_stated": 0.0,
-            "says_sent": 0.0,
-            "says_not_sent": 1.0
+            "says_sent": 0.0
           }
         },
         "buyer_details": {
@@ -3669,24 +3669,24 @@
         },
         "claims_conflict": {
           "type": "noul",
-          "noul": 0.08
+          "noul": 0.07
         },
         "fraud_signal": {
           "type": "noul",
-          "noul": 0.08
+          "noul": 0.07
         },
         "dispute_topic": {
           "type": "choice",
           "choice": "technical_problem",
-          "confidence": 0.55,
+          "confidence": 0.61,
           "probabilities": {
-            "payment_not_confirmed": 0.38,
-            "wrong_amount": 0.0,
             "other": 0.0,
+            "wrong_amount": 0.0,
+            "counterpart_unresponsive": 0.0,
+            "payment_not_confirmed": 0.33,
+            "technical_problem": 0.67,
             "not_yet_clear": 0.0,
-            "technical_problem": 0.62,
-            "wrong_account_or_method": 0.0,
-            "counterpart_unresponsive": 0.0
+            "wrong_account_or_method": 0.0
           }
         },
         "buyer_message_kind": {
@@ -3694,24 +3694,24 @@
           "choice": "answers",
           "confidence": 1.0,
           "probabilities": {
-            "asks_language": 0.0,
             "answers": 1.0,
-            "not_understood": 0.0,
-            "greeting": 0.0,
             "asks_next_step": 0.0,
-            "other": 0.0
+            "not_understood": 0.0,
+            "asks_language": 0.0,
+            "other": 0.0,
+            "greeting": 0.0
           }
         },
         "buyer_language": {
           "type": "choice",
           "choice": "es",
-          "confidence": 0.92,
+          "confidence": 0.88,
           "probabilities": {
-            "other": 0.01,
-            "en": 0.05,
             "pt": 0.0,
-            "es": 0.93,
-            "unknown": 0.01
+            "es": 0.91,
+            "en": 0.06,
+            "unknown": 0.01,
+            "other": 0.02
           }
         },
         "buyer_wants_human": {
@@ -3723,7 +3723,7 @@
         "input_tokens": 1908,
         "output_tokens": 388
       },
-      "latency_ms": 332
+      "latency_ms": 356
     }
   },
   "es-seller-buyer-went-silent": {
@@ -3773,8 +3773,8 @@
           "choice": "not_stated",
           "confidence": 1.0,
           "probabilities": {
-            "not_stated": 1.0,
             "says_not_sent": 0.0,
+            "not_stated": 1.0,
             "says_sent": 0.0
           }
         },
@@ -3787,9 +3787,9 @@
           "choice": "not_stated",
           "confidence": 0.88,
           "probabilities": {
-            "not_stated": 0.92,
             "says_received": 0.0,
-            "says_not_received": 0.08
+            "says_not_received": 0.08,
+            "not_stated": 0.92
           }
         },
         "seller_checked": {
@@ -3798,37 +3798,37 @@
         },
         "claims_conflict": {
           "type": "noul",
-          "noul": 0.09
+          "noul": 0.08
         },
         "fraud_signal": {
           "type": "noul",
-          "noul": 0.1
+          "noul": 0.09
         },
         "dispute_topic": {
           "type": "choice",
           "choice": "counterpart_unresponsive",
-          "confidence": 0.54,
+          "confidence": 0.53,
           "probabilities": {
-            "wrong_account_or_method": 0.0,
-            "payment_not_confirmed": 0.38,
-            "other": 0.0,
             "wrong_amount": 0.0,
-            "technical_problem": 0.0,
+            "counterpart_unresponsive": 0.6,
+            "wrong_account_or_method": 0.0,
+            "payment_not_confirmed": 0.39,
             "not_yet_clear": 0.01,
-            "counterpart_unresponsive": 0.61
+            "technical_problem": 0.0,
+            "other": 0.0
           }
         },
         "seller_message_kind": {
           "type": "choice",
           "choice": "answers",
-          "confidence": 0.86,
+          "confidence": 0.85,
           "probabilities": {
-            "answers": 0.89,
-            "asks_language": 0.0,
-            "not_understood": 0.0,
             "asks_next_step": 0.0,
             "greeting": 0.0,
-            "other": 0.11
+            "not_understood": 0.0,
+            "asks_language": 0.0,
+            "answers": 0.88,
+            "other": 0.12
           }
         },
         "seller_language": {
@@ -3836,9 +3836,9 @@
           "choice": "es",
           "confidence": 1.0,
           "probabilities": {
-            "pt": 0.0,
             "en": 0.0,
             "unknown": 0.0,
+            "pt": 0.0,
             "es": 1.0,
             "other": 0.0
           }
@@ -3852,7 +3852,7 @@
         "input_tokens": 1918,
         "output_tokens": 393
       },
-      "latency_ms": 325
+      "latency_ms": 297
     }
   },
   "es-buyer-cannot-afford": {
@@ -3903,8 +3903,8 @@
           "confidence": 1.0,
           "probabilities": {
             "not_stated": 0.0,
-            "says_sent": 0.0,
-            "says_not_sent": 1.0
+            "says_not_sent": 1.0,
+            "says_sent": 0.0
           }
         },
         "buyer_details": {
@@ -3916,9 +3916,9 @@
           "choice": "not_stated",
           "confidence": 1.0,
           "probabilities": {
-            "says_not_received": 0.0,
+            "says_received": 0.0,
             "not_stated": 1.0,
-            "says_received": 0.0
+            "says_not_received": 0.0
           }
         },
         "seller_checked": {
@@ -3927,48 +3927,48 @@
         },
         "claims_conflict": {
           "type": "noul",
-          "noul": 0.09
+          "noul": 0.11
         },
         "fraud_signal": {
           "type": "noul",
-          "noul": 0.13
+          "noul": 0.12
         },
         "dispute_topic": {
           "type": "choice",
           "choice": "payment_not_confirmed",
-          "confidence": 0.95,
+          "confidence": 0.96,
           "probabilities": {
+            "counterpart_unresponsive": 0.0,
             "not_yet_clear": 0.0,
             "technical_problem": 0.0,
-            "wrong_amount": 0.0,
+            "payment_not_confirmed": 0.97,
             "wrong_account_or_method": 0.0,
-            "payment_not_confirmed": 0.96,
-            "other": 0.04,
-            "counterpart_unresponsive": 0.0
+            "wrong_amount": 0.0,
+            "other": 0.03
           }
         },
         "buyer_message_kind": {
           "type": "choice",
           "choice": "answers",
-          "confidence": 0.77,
+          "confidence": 0.8,
           "probabilities": {
             "other": 0.01,
-            "answers": 0.81,
-            "greeting": 0.0,
-            "asks_language": 0.0,
+            "answers": 0.84,
             "not_understood": 0.0,
-            "asks_next_step": 0.18
+            "greeting": 0.0,
+            "asks_next_step": 0.15,
+            "asks_language": 0.0
           }
         },
         "buyer_language": {
           "type": "choice",
           "choice": "es",
-          "confidence": 0.99,
+          "confidence": 1.0,
           "probabilities": {
             "other": 0.0,
-            "pt": 0.0,
             "en": 0.0,
             "es": 1.0,
+            "pt": 0.0,
             "unknown": 0.0
           }
         },
@@ -3981,7 +3981,7 @@
         "input_tokens": 1909,
         "output_tokens": 391
       },
-      "latency_ms": 339
+      "latency_ms": 369
     }
   },
   "es-buyer-aun-no": {
@@ -4031,9 +4031,9 @@
           "choice": "says_not_sent",
           "confidence": 1.0,
           "probabilities": {
+            "says_sent": 0.0,
             "not_stated": 0.0,
-            "says_not_sent": 1.0,
-            "says_sent": 0.0
+            "says_not_sent": 1.0
           }
         },
         "buyer_details": {
@@ -4052,7 +4052,7 @@
         },
         "seller_checked": {
           "type": "noul",
-          "noul": 0.04
+          "noul": 0.05
         },
         "claims_conflict": {
           "type": "noul",
@@ -4067,13 +4067,13 @@
           "choice": "payment_not_confirmed",
           "confidence": 1.0,
           "probabilities": {
-            "payment_not_confirmed": 1.0,
-            "wrong_account_or_method": 0.0,
-            "wrong_amount": 0.0,
+            "other": 0.0,
             "technical_problem": 0.0,
-            "counterpart_unresponsive": 0.0,
+            "wrong_amount": 0.0,
             "not_yet_clear": 0.0,
-            "other": 0.0
+            "counterpart_unresponsive": 0.0,
+            "wrong_account_or_method": 0.0,
+            "payment_not_confirmed": 1.0
           }
         },
         "buyer_message_kind": {
@@ -4081,24 +4081,24 @@
           "choice": "answers",
           "confidence": 1.0,
           "probabilities": {
-            "asks_language": 0.0,
-            "asks_next_step": 0.0,
-            "not_understood": 0.0,
+            "other": 0.0,
             "greeting": 0.0,
             "answers": 1.0,
-            "other": 0.0
+            "not_understood": 0.0,
+            "asks_language": 0.0,
+            "asks_next_step": 0.0
           }
         },
         "buyer_language": {
           "type": "choice",
           "choice": "es",
-          "confidence": 0.87,
+          "confidence": 0.85,
           "probabilities": {
-            "unknown": 0.06,
-            "pt": 0.01,
+            "other": 0.01,
+            "pt": 0.0,
             "en": 0.03,
             "es": 0.89,
-            "other": 0.01
+            "unknown": 0.07
           }
         },
         "buyer_wants_human": {
@@ -4110,7 +4110,7 @@
         "input_tokens": 1896,
         "output_tokens": 391
       },
-      "latency_ms": 314
+      "latency_ms": 329
     }
   },
   "es-buyer-simple-si": {
@@ -4171,23 +4171,23 @@
           "choice": "says_sent",
           "confidence": 1.0,
           "probabilities": {
-            "says_sent": 1.0,
+            "not_stated": 0.0,
             "says_not_sent": 0.0,
-            "not_stated": 0.0
+            "says_sent": 1.0
           }
         },
         "buyer_details": {
           "type": "noul",
-          "noul": 0.11
+          "noul": 0.1
         },
         "seller_receipt": {
           "type": "choice",
           "choice": "not_stated",
           "confidence": 1.0,
           "probabilities": {
+            "says_not_received": 0.0,
             "not_stated": 1.0,
-            "says_received": 0.0,
-            "says_not_received": 0.0
+            "says_received": 0.0
           }
         },
         "seller_checked": {
@@ -4208,12 +4208,12 @@
           "confidence": 0.97,
           "probabilities": {
             "payment_not_confirmed": 0.98,
-            "other": 0.0,
-            "technical_problem": 0.0,
-            "counterpart_unresponsive": 0.0,
-            "not_yet_clear": 0.02,
+            "wrong_account_or_method": 0.0,
             "wrong_amount": 0.0,
-            "wrong_account_or_method": 0.0
+            "other": 0.0,
+            "not_yet_clear": 0.02,
+            "technical_problem": 0.0,
+            "counterpart_unresponsive": 0.0
           }
         },
         "buyer_message_kind": {
@@ -4221,23 +4221,23 @@
           "choice": "answers",
           "confidence": 1.0,
           "probabilities": {
-            "asks_next_step": 0.0,
-            "other": 0.0,
-            "asks_language": 0.0,
             "greeting": 0.0,
+            "asks_language": 0.0,
+            "asks_next_step": 0.0,
             "not_understood": 0.0,
+            "other": 0.0,
             "answers": 1.0
           }
         },
         "buyer_language": {
           "type": "choice",
           "choice": "es",
-          "confidence": 0.97,
+          "confidence": 0.96,
           "probabilities": {
-            "other": 0.0,
             "en": 0.0,
             "es": 0.98,
             "pt": 0.0,
+            "other": 0.0,
             "unknown": 0.02
           }
         },
@@ -4250,7 +4250,7 @@
         "input_tokens": 1983,
         "output_tokens": 390
       },
-      "latency_ms": 313
+      "latency_ms": 316
     }
   },
   "es-seller-simple-no": {
@@ -4314,18 +4314,18 @@
           "choice": "says_not_received",
           "confidence": 1.0,
           "probabilities": {
-            "says_not_received": 1.0,
+            "not_stated": 0.0,
             "says_received": 0.0,
-            "not_stated": 0.0
+            "says_not_received": 1.0
           }
         },
         "seller_checked": {
           "type": "noul",
-          "noul": 0.1
+          "noul": 0.11
         },
         "claims_conflict": {
           "type": "noul",
-          "noul": 0.13
+          "noul": 0.11
         },
         "fraud_signal": {
           "type": "noul",
@@ -4336,13 +4336,13 @@
           "choice": "payment_not_confirmed",
           "confidence": 1.0,
           "probabilities": {
-            "other": 0.0,
-            "payment_not_confirmed": 1.0,
-            "not_yet_clear": 0.0,
             "wrong_amount": 0.0,
+            "payment_not_confirmed": 1.0,
             "technical_problem": 0.0,
             "counterpart_unresponsive": 0.0,
-            "wrong_account_or_method": 0.0
+            "wrong_account_or_method": 0.0,
+            "not_yet_clear": 0.0,
+            "other": 0.0
           }
         },
         "seller_message_kind": {
@@ -4350,36 +4350,36 @@
           "choice": "answers",
           "confidence": 1.0,
           "probabilities": {
-            "asks_next_step": 0.0,
-            "greeting": 0.0,
-            "not_understood": 0.0,
-            "other": 0.0,
             "answers": 1.0,
-            "asks_language": 0.0
+            "not_understood": 0.0,
+            "asks_next_step": 0.0,
+            "asks_language": 0.0,
+            "other": 0.0,
+            "greeting": 0.0
           }
         },
         "seller_language": {
           "type": "choice",
           "choice": "es",
-          "confidence": 0.75,
+          "confidence": 0.82,
           "probabilities": {
-            "other": 0.05,
-            "es": 0.8,
-            "en": 0.07,
             "unknown": 0.07,
+            "es": 0.86,
+            "en": 0.05,
+            "other": 0.02,
             "pt": 0.0
           }
         },
         "seller_wants_human": {
           "type": "noul",
-          "noul": 0.03
+          "noul": 0.04
         }
       },
       "usage": {
         "input_tokens": 1882,
         "output_tokens": 391
       },
-      "latency_ms": 315
+      "latency_ms": 323
     }
   },
   "es-seller-has-not-looked": {
@@ -4429,9 +4429,9 @@
           "choice": "not_stated",
           "confidence": 1.0,
           "probabilities": {
-            "not_stated": 1.0,
+            "says_sent": 0.0,
             "says_not_sent": 0.0,
-            "says_sent": 0.0
+            "not_stated": 1.0
           }
         },
         "buyer_details": {
@@ -4443,14 +4443,14 @@
           "choice": "not_stated",
           "confidence": 1.0,
           "probabilities": {
-            "not_stated": 1.0,
             "says_not_received": 0.0,
-            "says_received": 0.0
+            "says_received": 0.0,
+            "not_stated": 1.0
           }
         },
         "seller_checked": {
           "type": "noul",
-          "noul": 0.05
+          "noul": 0.04
         },
         "claims_conflict": {
           "type": "noul",
@@ -4466,36 +4466,36 @@
           "confidence": 0.99,
           "probabilities": {
             "counterpart_unresponsive": 0.0,
-            "payment_not_confirmed": 0.99,
             "other": 0.0,
+            "technical_problem": 0.0,
+            "payment_not_confirmed": 0.99,
             "not_yet_clear": 0.01,
             "wrong_amount": 0.0,
-            "wrong_account_or_method": 0.0,
-            "technical_problem": 0.0
+            "wrong_account_or_method": 0.0
           }
         },
         "seller_message_kind": {
           "type": "choice",
           "choice": "answers",
-          "confidence": 0.8,
+          "confidence": 0.83,
           "probabilities": {
-            "asks_language": 0.0,
-            "other": 0.14,
-            "answers": 0.83,
-            "greeting": 0.0,
             "asks_next_step": 0.0,
-            "not_understood": 0.03
+            "other": 0.11,
+            "asks_language": 0.0,
+            "greeting": 0.0,
+            "answers": 0.87,
+            "not_understood": 0.02
           }
         },
         "seller_language": {
           "type": "choice",
           "choice": "es",
-          "confidence": 0.98,
+          "confidence": 0.99,
           "probabilities": {
-            "pt": 0.0,
             "other": 0.01,
-            "es": 0.99,
             "en": 0.0,
+            "es": 0.99,
+            "pt": 0.0,
             "unknown": 0.0
           }
         },
@@ -4508,7 +4508,7 @@
         "input_tokens": 1913,
         "output_tokens": 390
       },
-      "latency_ms": 296
+      "latency_ms": 367
     }
   },
   "es-seller-polite-human": {
@@ -4558,8 +4558,8 @@
           "choice": "not_stated",
           "confidence": 1.0,
           "probabilities": {
-            "not_stated": 1.0,
             "says_not_sent": 0.0,
+            "not_stated": 1.0,
             "says_sent": 0.0
           }
         },
@@ -4572,9 +4572,9 @@
           "choice": "not_stated",
           "confidence": 1.0,
           "probabilities": {
-            "not_stated": 1.0,
             "says_not_received": 0.0,
-            "says_received": 0.0
+            "says_received": 0.0,
+            "not_stated": 1.0
           }
         },
         "seller_checked": {
@@ -4594,26 +4594,26 @@
           "choice": "payment_not_confirmed",
           "confidence": 0.87,
           "probabilities": {
-            "counterpart_unresponsive": 0.0,
-            "payment_not_confirmed": 0.9,
-            "wrong_amount": 0.0,
-            "not_yet_clear": 0.1,
-            "other": 0.0,
             "wrong_account_or_method": 0.0,
-            "technical_problem": 0.0
+            "wrong_amount": 0.0,
+            "technical_problem": 0.0,
+            "counterpart_unresponsive": 0.0,
+            "other": 0.0,
+            "payment_not_confirmed": 0.89,
+            "not_yet_clear": 0.11
           }
         },
         "seller_message_kind": {
           "type": "choice",
           "choice": "other",
-          "confidence": 0.89,
+          "confidence": 0.88,
           "probabilities": {
-            "asks_language": 0.0,
-            "other": 0.91,
-            "greeting": 0.01,
-            "answers": 0.0,
+            "other": 0.9,
             "not_understood": 0.0,
-            "asks_next_step": 0.08
+            "greeting": 0.0,
+            "asks_next_step": 0.1,
+            "answers": 0.0,
+            "asks_language": 0.0
           }
         },
         "seller_language": {
@@ -4621,11 +4621,11 @@
           "choice": "es",
           "confidence": 1.0,
           "probabilities": {
-            "pt": 0.0,
             "other": 0.0,
+            "unknown": 0.0,
+            "pt": 0.0,
             "es": 1.0,
-            "en": 0.0,
-            "unknown": 0.0
+            "en": 0.0
           }
         },
         "seller_wants_human": {
@@ -4637,7 +4637,7 @@
         "input_tokens": 1906,
         "output_tokens": 390
       },
-      "latency_ms": 297
+      "latency_ms": 322
     }
   },
   "es-ve-chamo-soporte": {
@@ -4687,9 +4687,9 @@
           "choice": "not_stated",
           "confidence": 1.0,
           "probabilities": {
-            "says_sent": 0.0,
             "says_not_sent": 0.0,
-            "not_stated": 1.0
+            "not_stated": 1.0,
+            "says_sent": 0.0
           }
         },
         "buyer_details": {
@@ -4701,9 +4701,9 @@
           "choice": "not_stated",
           "confidence": 1.0,
           "probabilities": {
-            "says_not_received": 0.0,
+            "not_stated": 1.0,
             "says_received": 0.0,
-            "not_stated": 1.0
+            "says_not_received": 0.0
           }
         },
         "seller_checked": {
@@ -4721,15 +4721,15 @@
         "dispute_topic": {
           "type": "choice",
           "choice": "not_yet_clear",
-          "confidence": 0.55,
+          "confidence": 0.54,
           "probabilities": {
-            "wrong_account_or_method": 0.0,
-            "other": 0.01,
-            "technical_problem": 0.0,
             "payment_not_confirmed": 0.38,
-            "not_yet_clear": 0.61,
+            "wrong_account_or_method": 0.0,
+            "counterpart_unresponsive": 0.0,
+            "technical_problem": 0.0,
             "wrong_amount": 0.0,
-            "counterpart_unresponsive": 0.0
+            "not_yet_clear": 0.61,
+            "other": 0.01
           }
         },
         "buyer_message_kind": {
@@ -4737,12 +4737,12 @@
           "choice": "other",
           "confidence": 0.89,
           "probabilities": {
-            "asks_next_step": 0.08,
-            "other": 0.92,
             "asks_language": 0.0,
-            "greeting": 0.0,
+            "asks_next_step": 0.08,
             "not_understood": 0.0,
-            "answers": 0.0
+            "greeting": 0.0,
+            "answers": 0.0,
+            "other": 0.92
           }
         },
         "buyer_language": {
@@ -4750,11 +4750,11 @@
           "choice": "es",
           "confidence": 0.98,
           "probabilities": {
-            "other": 0.0,
+            "unknown": 0.0,
+            "pt": 0.01,
             "en": 0.01,
             "es": 0.98,
-            "pt": 0.01,
-            "unknown": 0.0
+            "other": 0.0
           }
         },
         "buyer_wants_human": {
@@ -4766,7 +4766,7 @@
         "input_tokens": 1897,
         "output_tokens": 389
       },
-      "latency_ms": 372
+      "latency_ms": 302
     }
   },
   "es-ironic-bot": {
@@ -4816,9 +4816,9 @@
           "choice": "not_stated",
           "confidence": 1.0,
           "probabilities": {
-            "says_sent": 0.0,
+            "says_not_sent": 0.0,
             "not_stated": 1.0,
-            "says_not_sent": 0.0
+            "says_sent": 0.0
           }
         },
         "buyer_details": {
@@ -4831,8 +4831,8 @@
           "confidence": 1.0,
           "probabilities": {
             "says_not_received": 0.0,
-            "not_stated": 1.0,
-            "says_received": 0.0
+            "says_received": 0.0,
+            "not_stated": 1.0
           }
         },
         "seller_checked": {
@@ -4845,20 +4845,20 @@
         },
         "fraud_signal": {
           "type": "noul",
-          "noul": 0.1
+          "noul": 0.09
         },
         "dispute_topic": {
           "type": "choice",
           "choice": "payment_not_confirmed",
-          "confidence": 0.78,
+          "confidence": 0.85,
           "probabilities": {
             "other": 0.0,
-            "payment_not_confirmed": 0.81,
-            "wrong_amount": 0.0,
-            "counterpart_unresponsive": 0.0,
             "wrong_account_or_method": 0.0,
-            "not_yet_clear": 0.19,
-            "technical_problem": 0.0
+            "counterpart_unresponsive": 0.0,
+            "payment_not_confirmed": 0.88,
+            "not_yet_clear": 0.12,
+            "technical_problem": 0.0,
+            "wrong_amount": 0.0
           }
         },
         "buyer_message_kind": {
@@ -4866,12 +4866,12 @@
           "choice": "other",
           "confidence": 0.99,
           "probabilities": {
-            "greeting": 0.01,
-            "asks_language": 0.0,
-            "not_understood": 0.0,
             "asks_next_step": 0.0,
-            "other": 0.99,
-            "answers": 0.0
+            "greeting": 0.01,
+            "not_understood": 0.0,
+            "asks_language": 0.0,
+            "answers": 0.0,
+            "other": 0.99
           }
         },
         "buyer_language": {
@@ -4880,9 +4880,9 @@
           "confidence": 0.97,
           "probabilities": {
             "pt": 0.0,
-            "en": 0.01,
-            "es": 0.99,
             "unknown": 0.0,
+            "en": 0.02,
+            "es": 0.98,
             "other": 0.0
           }
         },
@@ -4895,7 +4895,7 @@
         "input_tokens": 1911,
         "output_tokens": 390
       },
-      "latency_ms": 299
+      "latency_ms": 294
     }
   },
   "es-co-typos-screenshot": {
@@ -4946,9 +4946,9 @@
           "choice": "says_sent",
           "confidence": 1.0,
           "probabilities": {
-            "says_sent": 1.0,
+            "not_stated": 0.0,
             "says_not_sent": 0.0,
-            "not_stated": 0.0
+            "says_sent": 1.0
           }
         },
         "buyer_details": {
@@ -4960,9 +4960,9 @@
           "choice": "not_stated",
           "confidence": 1.0,
           "probabilities": {
-            "says_received": 0.0,
+            "not_stated": 1.0,
             "says_not_received": 0.0,
-            "not_stated": 1.0
+            "says_received": 0.0
           }
         },
         "seller_checked": {
@@ -4982,13 +4982,13 @@
           "choice": "payment_not_confirmed",
           "confidence": 1.0,
           "probabilities": {
-            "payment_not_confirmed": 1.0,
-            "wrong_amount": 0.0,
-            "wrong_account_or_method": 0.0,
-            "not_yet_clear": 0.0,
             "counterpart_unresponsive": 0.0,
+            "payment_not_confirmed": 1.0,
+            "other": 0.0,
+            "not_yet_clear": 0.0,
+            "wrong_amount": 0.0,
             "technical_problem": 0.0,
-            "other": 0.0
+            "wrong_account_or_method": 0.0
           }
         },
         "buyer_message_kind": {
@@ -4996,12 +4996,12 @@
           "choice": "answers",
           "confidence": 1.0,
           "probabilities": {
-            "not_understood": 0.0,
             "asks_language": 0.0,
-            "answers": 1.0,
-            "asks_next_step": 0.0,
             "other": 0.0,
-            "greeting": 0.0
+            "answers": 1.0,
+            "greeting": 0.0,
+            "not_understood": 0.0,
+            "asks_next_step": 0.0
           }
         },
         "buyer_language": {
@@ -5009,11 +5009,11 @@
           "choice": "es",
           "confidence": 1.0,
           "probabilities": {
-            "en": 0.0,
             "pt": 0.0,
+            "other": 0.0,
             "es": 1.0,
-            "unknown": 0.0,
-            "other": 0.0
+            "en": 0.0,
+            "unknown": 0.0
           }
         },
         "buyer_wants_human": {
@@ -5025,7 +5025,7 @@
         "input_tokens": 1932,
         "output_tokens": 390
       },
-      "latency_ms": 330
+      "latency_ms": 335
     }
   },
   "es-mx-lana-no-cae": {
@@ -5075,8 +5075,8 @@
           "choice": "not_stated",
           "confidence": 1.0,
           "probabilities": {
-            "says_not_sent": 0.0,
             "not_stated": 1.0,
+            "says_not_sent": 0.0,
             "says_sent": 0.0
           }
         },
@@ -5089,9 +5089,9 @@
           "choice": "says_not_received",
           "confidence": 1.0,
           "probabilities": {
+            "not_stated": 0.0,
             "says_not_received": 1.0,
-            "says_received": 0.0,
-            "not_stated": 0.0
+            "says_received": 0.0
           }
         },
         "seller_checked": {
@@ -5111,13 +5111,13 @@
           "choice": "payment_not_confirmed",
           "confidence": 1.0,
           "probabilities": {
-            "payment_not_confirmed": 1.0,
-            "other": 0.0,
-            "wrong_amount": 0.0,
             "not_yet_clear": 0.0,
+            "other": 0.0,
+            "payment_not_confirmed": 1.0,
+            "wrong_amount": 0.0,
+            "counterpart_unresponsive": 0.0,
             "technical_problem": 0.0,
-            "wrong_account_or_method": 0.0,
-            "counterpart_unresponsive": 0.0
+            "wrong_account_or_method": 0.0
           }
         },
         "seller_message_kind": {
@@ -5126,11 +5126,11 @@
           "confidence": 1.0,
           "probabilities": {
             "other": 0.0,
-            "asks_next_step": 0.0,
-            "asks_language": 0.0,
-            "answers": 1.0,
             "greeting": 0.0,
-            "not_understood": 0.0
+            "answers": 1.0,
+            "asks_language": 0.0,
+            "not_understood": 0.0,
+            "asks_next_step": 0.0
           }
         },
         "seller_language": {
@@ -5138,11 +5138,11 @@
           "choice": "es",
           "confidence": 1.0,
           "probabilities": {
-            "unknown": 0.0,
             "other": 0.0,
+            "es": 1.0,
             "en": 0.0,
-            "pt": 0.0,
-            "es": 1.0
+            "unknown": 0.0,
+            "pt": 0.0
           }
         },
         "seller_wants_human": {
@@ -5154,7 +5154,7 @@
         "input_tokens": 1916,
         "output_tokens": 391
       },
-      "latency_ms": 308
+      "latency_ms": 294
     }
   },
   "es-ar-me-entro-la-guita": {
@@ -5204,9 +5204,9 @@
           "choice": "not_stated",
           "confidence": 1.0,
           "probabilities": {
-            "says_not_sent": 0.0,
             "says_sent": 0.0,
-            "not_stated": 1.0
+            "not_stated": 1.0,
+            "says_not_sent": 0.0
           }
         },
         "buyer_details": {
@@ -5218,14 +5218,14 @@
           "choice": "says_received",
           "confidence": 1.0,
           "probabilities": {
+            "not_stated": 0.0,
             "says_not_received": 0.0,
-            "says_received": 1.0,
-            "not_stated": 0.0
+            "says_received": 1.0
           }
         },
         "seller_checked": {
           "type": "noul",
-          "noul": 0.44
+          "noul": 0.46
         },
         "claims_conflict": {
           "type": "noul",
@@ -5238,15 +5238,15 @@
         "dispute_topic": {
           "type": "choice",
           "choice": "payment_not_confirmed",
-          "confidence": 0.92,
+          "confidence": 0.91,
           "probabilities": {
-            "wrong_account_or_method": 0.0,
-            "payment_not_confirmed": 0.94,
-            "technical_problem": 0.0,
-            "counterpart_unresponsive": 0.02,
             "other": 0.01,
             "wrong_amount": 0.0,
-            "not_yet_clear": 0.03
+            "technical_problem": 0.0,
+            "not_yet_clear": 0.04,
+            "counterpart_unresponsive": 0.02,
+            "wrong_account_or_method": 0.0,
+            "payment_not_confirmed": 0.93
           }
         },
         "seller_message_kind": {
@@ -5254,12 +5254,12 @@
           "choice": "answers",
           "confidence": 1.0,
           "probabilities": {
-            "answers": 1.0,
-            "not_understood": 0.0,
-            "greeting": 0.0,
             "other": 0.0,
             "asks_next_step": 0.0,
-            "asks_language": 0.0
+            "not_understood": 0.0,
+            "asks_language": 0.0,
+            "greeting": 0.0,
+            "answers": 1.0
           }
         },
         "seller_language": {
@@ -5267,11 +5267,11 @@
           "choice": "es",
           "confidence": 1.0,
           "probabilities": {
-            "unknown": 0.0,
-            "es": 1.0,
             "other": 0.0,
+            "es": 1.0,
             "en": 0.0,
-            "pt": 0.0
+            "pt": 0.0,
+            "unknown": 0.0
           }
         },
         "seller_wants_human": {
@@ -5283,7 +5283,7 @@
         "input_tokens": 1914,
         "output_tokens": 390
       },
-      "latency_ms": 309
+      "latency_ms": 295
     }
   },
   "es-both-agree-not-sent": {
@@ -5340,9 +5340,9 @@
           "choice": "says_not_sent",
           "confidence": 1.0,
           "probabilities": {
-            "not_stated": 0.0,
+            "says_sent": 0.0,
             "says_not_sent": 1.0,
-            "says_sent": 0.0
+            "not_stated": 0.0
           }
         },
         "buyer_details": {
@@ -5354,14 +5354,14 @@
           "choice": "says_not_received",
           "confidence": 1.0,
           "probabilities": {
+            "says_received": 0.0,
             "says_not_received": 1.0,
-            "not_stated": 0.0,
-            "says_received": 0.0
+            "not_stated": 0.0
           }
         },
         "seller_checked": {
           "type": "noul",
-          "noul": 0.32
+          "noul": 0.38
         },
         "claims_conflict": {
           "type": "noul",
@@ -5369,20 +5369,20 @@
         },
         "fraud_signal": {
           "type": "noul",
-          "noul": 0.07
+          "noul": 0.08
         },
         "dispute_topic": {
           "type": "choice",
           "choice": "payment_not_confirmed",
           "confidence": 0.91,
           "probabilities": {
-            "technical_problem": 0.0,
-            "wrong_account_or_method": 0.07,
-            "wrong_amount": 0.0,
-            "not_yet_clear": 0.0,
-            "other": 0.01,
             "payment_not_confirmed": 0.92,
-            "counterpart_unresponsive": 0.0
+            "not_yet_clear": 0.0,
+            "wrong_account_or_method": 0.06,
+            "wrong_amount": 0.0,
+            "counterpart_unresponsive": 0.0,
+            "other": 0.02,
+            "technical_problem": 0.0
           }
         },
         "buyer_message_kind": {
@@ -5391,11 +5391,11 @@
           "confidence": 1.0,
           "probabilities": {
             "not_understood": 0.0,
-            "asks_language": 0.0,
-            "asks_next_step": 0.0,
             "greeting": 0.0,
+            "asks_next_step": 0.0,
+            "answers": 1.0,
             "other": 0.0,
-            "answers": 1.0
+            "asks_language": 0.0
           }
         },
         "buyer_language": {
@@ -5403,11 +5403,11 @@
           "choice": "es",
           "confidence": 0.99,
           "probabilities": {
-            "es": 1.0,
-            "en": 0.0,
             "pt": 0.0,
-            "other": 0.0,
-            "unknown": 0.0
+            "en": 0.0,
+            "es": 1.0,
+            "unknown": 0.0,
+            "other": 0.0
           }
         },
         "buyer_wants_human": {
@@ -5420,23 +5420,23 @@
           "confidence": 1.0,
           "probabilities": {
             "not_understood": 0.0,
-            "asks_language": 0.0,
-            "asks_next_step": 0.0,
             "greeting": 0.0,
+            "asks_next_step": 0.0,
+            "answers": 1.0,
             "other": 0.0,
-            "answers": 1.0
+            "asks_language": 0.0
           }
         },
         "seller_language": {
           "type": "choice",
           "choice": "es",
-          "confidence": 1.0,
+          "confidence": 0.98,
           "probabilities": {
-            "es": 1.0,
-            "en": 0.0,
             "pt": 0.0,
-            "other": 0.0,
-            "unknown": 0.0
+            "en": 0.01,
+            "es": 0.98,
+            "unknown": 0.01,
+            "other": 0.0
           }
         },
         "seller_wants_human": {
@@ -5448,7 +5448,7 @@
         "input_tokens": 2343,
         "output_tokens": 529
       },
-      "latency_ms": 318
+      "latency_ms": 313
     }
   },
   "es-double-negation-bank-held": {
@@ -5496,16 +5496,16 @@
         "buyer_payment": {
           "type": "choice",
           "choice": "says_sent",
-          "confidence": 0.98,
+          "confidence": 0.97,
           "probabilities": {
+            "says_not_sent": 0.01,
             "not_stated": 0.01,
-            "says_sent": 0.98,
-            "says_not_sent": 0.01
+            "says_sent": 0.98
           }
         },
         "buyer_details": {
           "type": "noul",
-          "noul": 0.16
+          "noul": 0.15
         },
         "seller_receipt": {
           "type": "choice",
@@ -5523,7 +5523,7 @@
         },
         "claims_conflict": {
           "type": "noul",
-          "noul": 0.14
+          "noul": 0.13
         },
         "fraud_signal": {
           "type": "noul",
@@ -5534,13 +5534,13 @@
           "choice": "payment_not_confirmed",
           "confidence": 1.0,
           "probabilities": {
-            "other": 0.0,
-            "counterpart_unresponsive": 0.0,
             "payment_not_confirmed": 1.0,
-            "technical_problem": 0.0,
             "wrong_account_or_method": 0.0,
             "wrong_amount": 0.0,
-            "not_yet_clear": 0.0
+            "counterpart_unresponsive": 0.0,
+            "technical_problem": 0.0,
+            "not_yet_clear": 0.0,
+            "other": 0.0
           }
         },
         "buyer_message_kind": {
@@ -5548,24 +5548,24 @@
           "choice": "answers",
           "confidence": 1.0,
           "probabilities": {
-            "other": 0.0,
             "answers": 1.0,
+            "not_understood": 0.0,
             "greeting": 0.0,
-            "asks_next_step": 0.0,
             "asks_language": 0.0,
-            "not_understood": 0.0
+            "asks_next_step": 0.0,
+            "other": 0.0
           }
         },
         "buyer_language": {
           "type": "choice",
           "choice": "es",
-          "confidence": 0.98,
+          "confidence": 0.97,
           "probabilities": {
-            "other": 0.0,
-            "en": 0.01,
-            "pt": 0.0,
             "unknown": 0.0,
-            "es": 0.99
+            "pt": 0.0,
+            "en": 0.01,
+            "es": 0.98,
+            "other": 0.01
           }
         },
         "buyer_wants_human": {
@@ -5577,7 +5577,7 @@
         "input_tokens": 1906,
         "output_tokens": 390
       },
-      "latency_ms": 289
+      "latency_ms": 354
     }
   },
   "es-buyer-writes-portuguese": {
@@ -5627,14 +5627,14 @@
           "choice": "says_sent",
           "confidence": 1.0,
           "probabilities": {
-            "not_stated": 0.0,
             "says_not_sent": 0.0,
+            "not_stated": 0.0,
             "says_sent": 1.0
           }
         },
         "buyer_details": {
           "type": "noul",
-          "noul": 0.97
+          "noul": 0.96
         },
         "seller_receipt": {
           "type": "choice",
@@ -5642,8 +5642,8 @@
           "confidence": 1.0,
           "probabilities": {
             "says_received": 0.0,
-            "not_stated": 1.0,
-            "says_not_received": 0.0
+            "says_not_received": 0.0,
+            "not_stated": 1.0
           }
         },
         "seller_checked": {
@@ -5652,7 +5652,7 @@
         },
         "claims_conflict": {
           "type": "noul",
-          "noul": 0.08
+          "noul": 0.09
         },
         "fraud_signal": {
           "type": "noul",
@@ -5661,28 +5661,28 @@
         "dispute_topic": {
           "type": "choice",
           "choice": "payment_not_confirmed",
-          "confidence": 0.99,
+          "confidence": 0.98,
           "probabilities": {
+            "other": 0.0,
+            "wrong_account_or_method": 0.0,
             "counterpart_unresponsive": 0.0,
+            "payment_not_confirmed": 0.99,
             "not_yet_clear": 0.01,
             "technical_problem": 0.0,
-            "payment_not_confirmed": 0.99,
-            "wrong_account_or_method": 0.0,
-            "wrong_amount": 0.0,
-            "other": 0.0
+            "wrong_amount": 0.0
           }
         },
         "buyer_message_kind": {
           "type": "choice",
           "choice": "answers",
-          "confidence": 0.93,
+          "confidence": 0.92,
           "probabilities": {
-            "other": 0.0,
-            "answers": 0.95,
-            "not_understood": 0.05,
-            "greeting": 0.0,
             "asks_next_step": 0.0,
-            "asks_language": 0.0
+            "greeting": 0.0,
+            "asks_language": 0.0,
+            "not_understood": 0.06,
+            "answers": 0.9400000000000001,
+            "other": 0.0
           }
         },
         "buyer_language": {
@@ -5690,10 +5690,10 @@
           "choice": "pt",
           "confidence": 1.0,
           "probabilities": {
-            "unknown": 0.0,
             "pt": 1.0,
-            "es": 0.0,
+            "unknown": 0.0,
             "en": 0.0,
+            "es": 0.0,
             "other": 0.0
           }
         },
@@ -5706,7 +5706,7 @@
         "input_tokens": 1907,
         "output_tokens": 390
       },
-      "latency_ms": 305
+      "latency_ms": 325
     }
   },
   "es-buyer-burst-zelle": {
@@ -5786,9 +5786,9 @@
           "choice": "says_sent",
           "confidence": 1.0,
           "probabilities": {
-            "not_stated": 0.0,
             "says_sent": 1.0,
-            "says_not_sent": 0.0
+            "says_not_sent": 0.0,
+            "not_stated": 0.0
           }
         },
         "buyer_details": {
@@ -5801,8 +5801,8 @@
           "confidence": 1.0,
           "probabilities": {
             "not_stated": 1.0,
-            "says_not_received": 0.0,
-            "says_received": 0.0
+            "says_received": 0.0,
+            "says_not_received": 0.0
           }
         },
         "seller_checked": {
@@ -5820,14 +5820,14 @@
         "dispute_topic": {
           "type": "choice",
           "choice": "payment_not_confirmed",
-          "confidence": 0.98,
+          "confidence": 0.99,
           "probabilities": {
             "technical_problem": 0.0,
-            "wrong_amount": 0.0,
             "other": 0.0,
-            "not_yet_clear": 0.0,
-            "payment_not_confirmed": 0.99,
             "wrong_account_or_method": 0.0,
+            "payment_not_confirmed": 0.99,
+            "not_yet_clear": 0.0,
+            "wrong_amount": 0.0,
             "counterpart_unresponsive": 0.01
           }
         },
@@ -5836,12 +5836,12 @@
           "choice": "answers",
           "confidence": 1.0,
           "probabilities": {
-            "asks_language": 0.0,
-            "answers": 1.0,
-            "not_understood": 0.0,
-            "greeting": 0.0,
             "asks_next_step": 0.0,
-            "other": 0.0
+            "other": 0.0,
+            "asks_language": 0.0,
+            "greeting": 0.0,
+            "answers": 1.0,
+            "not_understood": 0.0
           }
         },
         "buyer_language": {
@@ -5849,11 +5849,11 @@
           "choice": "es",
           "confidence": 0.99,
           "probabilities": {
-            "en": 0.0,
+            "other": 0.0,
+            "en": 0.01,
+            "es": 0.99,
             "unknown": 0.0,
-            "pt": 0.0,
-            "es": 1.0,
-            "other": 0.0
+            "pt": 0.0
           }
         },
         "buyer_wants_human": {
@@ -5865,7 +5865,7 @@
         "input_tokens": 2055,
         "output_tokens": 390
       },
-      "latency_ms": 326
+      "latency_ms": 325
     }
   },
   "es-buyer-bank-support-not-human": {
@@ -5913,25 +5913,25 @@
         "buyer_payment": {
           "type": "choice",
           "choice": "says_sent",
-          "confidence": 0.84,
+          "confidence": 0.88,
           "probabilities": {
-            "says_sent": 0.9,
             "says_not_sent": 0.0,
-            "not_stated": 0.1
+            "not_stated": 0.08,
+            "says_sent": 0.92
           }
         },
         "buyer_details": {
           "type": "noul",
-          "noul": 0.12
+          "noul": 0.13
         },
         "seller_receipt": {
           "type": "choice",
           "choice": "not_stated",
           "confidence": 1.0,
           "probabilities": {
+            "not_stated": 1.0,
             "says_not_received": 0.0,
-            "says_received": 0.0,
-            "not_stated": 1.0
+            "says_received": 0.0
           }
         },
         "seller_checked": {
@@ -5940,24 +5940,24 @@
         },
         "claims_conflict": {
           "type": "noul",
-          "noul": 0.09
+          "noul": 0.08
         },
         "fraud_signal": {
           "type": "noul",
-          "noul": 0.06
+          "noul": 0.07
         },
         "dispute_topic": {
           "type": "choice",
           "choice": "payment_not_confirmed",
-          "confidence": 1.0,
+          "confidence": 0.99,
           "probabilities": {
-            "other": 0.0,
-            "wrong_amount": 0.0,
             "wrong_account_or_method": 0.0,
-            "not_yet_clear": 0.0,
-            "payment_not_confirmed": 1.0,
             "counterpart_unresponsive": 0.0,
-            "technical_problem": 0.0
+            "payment_not_confirmed": 1.0,
+            "other": 0.0,
+            "technical_problem": 0.0,
+            "not_yet_clear": 0.0,
+            "wrong_amount": 0.0
           }
         },
         "buyer_message_kind": {
@@ -5965,12 +5965,12 @@
           "choice": "answers",
           "confidence": 1.0,
           "probabilities": {
-            "other": 0.0,
-            "greeting": 0.0,
-            "not_understood": 0.0,
-            "asks_next_step": 0.0,
             "answers": 1.0,
-            "asks_language": 0.0
+            "asks_next_step": 0.0,
+            "other": 0.0,
+            "asks_language": 0.0,
+            "greeting": 0.0,
+            "not_understood": 0.0
           }
         },
         "buyer_language": {
@@ -5978,11 +5978,11 @@
           "choice": "es",
           "confidence": 1.0,
           "probabilities": {
-            "other": 0.0,
             "unknown": 0.0,
-            "en": 0.0,
+            "other": 0.0,
             "es": 1.0,
-            "pt": 0.0
+            "pt": 0.0,
+            "en": 0.0
           }
         },
         "buyer_wants_human": {
@@ -5994,7 +5994,7 @@
         "input_tokens": 1914,
         "output_tokens": 390
       },
-      "latency_ms": 295
+      "latency_ms": 331
     }
   },
   "es-buyer-no-account-data": {
@@ -6044,14 +6044,14 @@
           "choice": "says_not_sent",
           "confidence": 1.0,
           "probabilities": {
-            "says_not_sent": 1.0,
             "not_stated": 0.0,
+            "says_not_sent": 1.0,
             "says_sent": 0.0
           }
         },
         "buyer_details": {
           "type": "noul",
-          "noul": 0.11
+          "noul": 0.09
         },
         "seller_receipt": {
           "type": "choice",
@@ -6059,8 +6059,8 @@
           "confidence": 1.0,
           "probabilities": {
             "not_stated": 1.0,
-            "says_received": 0.0,
-            "says_not_received": 0.0
+            "says_not_received": 0.0,
+            "says_received": 0.0
           }
         },
         "seller_checked": {
@@ -6069,7 +6069,7 @@
         },
         "claims_conflict": {
           "type": "noul",
-          "noul": 0.09
+          "noul": 0.08
         },
         "fraud_signal": {
           "type": "noul",
@@ -6078,15 +6078,15 @@
         "dispute_topic": {
           "type": "choice",
           "choice": "payment_not_confirmed",
-          "confidence": 0.95,
+          "confidence": 0.92,
           "probabilities": {
-            "counterpart_unresponsive": 0.02,
-            "wrong_account_or_method": 0.01,
-            "wrong_amount": 0.0,
-            "payment_not_confirmed": 0.96,
-            "technical_problem": 0.0,
             "not_yet_clear": 0.0,
-            "other": 0.01
+            "technical_problem": 0.0,
+            "wrong_amount": 0.0,
+            "other": 0.01,
+            "wrong_account_or_method": 0.01,
+            "payment_not_confirmed": 0.93,
+            "counterpart_unresponsive": 0.04
           }
         },
         "buyer_message_kind": {
@@ -6094,24 +6094,24 @@
           "choice": "answers",
           "confidence": 1.0,
           "probabilities": {
-            "answers": 1.0,
-            "asks_language": 0.0,
             "greeting": 0.0,
             "not_understood": 0.0,
             "asks_next_step": 0.0,
+            "asks_language": 0.0,
+            "answers": 1.0,
             "other": 0.0
           }
         },
         "buyer_language": {
           "type": "choice",
           "choice": "es",
-          "confidence": 0.94,
+          "confidence": 0.95,
           "probabilities": {
-            "unknown": 0.01,
-            "es": 0.95,
+            "es": 0.96,
             "en": 0.03,
             "pt": 0.0,
-            "other": 0.01
+            "other": 0.01,
+            "unknown": 0.0
           }
         },
         "buyer_wants_human": {
@@ -6123,7 +6123,7 @@
         "input_tokens": 1900,
         "output_tokens": 391
       },
-      "latency_ms": 311
+      "latency_ms": 293
     }
   },
   "es-buyer-waiting-own-money": {
@@ -6180,16 +6180,16 @@
         },
         "buyer_details": {
           "type": "noul",
-          "noul": 0.07
+          "noul": 0.06
         },
         "seller_receipt": {
           "type": "choice",
           "choice": "not_stated",
           "confidence": 1.0,
           "probabilities": {
-            "says_received": 0.0,
+            "says_not_received": 0.0,
             "not_stated": 1.0,
-            "says_not_received": 0.0
+            "says_received": 0.0
           }
         },
         "seller_checked": {
@@ -6198,11 +6198,11 @@
         },
         "claims_conflict": {
           "type": "noul",
-          "noul": 0.11
+          "noul": 0.1
         },
         "fraud_signal": {
           "type": "noul",
-          "noul": 0.45
+          "noul": 0.37
         },
         "dispute_topic": {
           "type": "choice",
@@ -6212,10 +6212,10 @@
             "not_yet_clear": 0.01,
             "counterpart_unresponsive": 0.0,
             "technical_problem": 0.0,
-            "other": 0.01,
+            "other": 0.0,
             "wrong_amount": 0.0,
             "wrong_account_or_method": 0.0,
-            "payment_not_confirmed": 0.98
+            "payment_not_confirmed": 0.99
           }
         },
         "buyer_message_kind": {
@@ -6224,9 +6224,9 @@
           "confidence": 0.99,
           "probabilities": {
             "not_understood": 0.0,
-            "other": 0.01,
+            "other": 0.0,
             "asks_language": 0.0,
-            "answers": 0.99,
+            "answers": 1.0,
             "asks_next_step": 0.0,
             "greeting": 0.0
           }
@@ -6234,7 +6234,7 @@
         "buyer_language": {
           "type": "choice",
           "choice": "es",
-          "confidence": 1.0,
+          "confidence": 0.99,
           "probabilities": {
             "es": 1.0,
             "pt": 0.0,
@@ -6252,7 +6252,7 @@
         "input_tokens": 1910,
         "output_tokens": 391
       },
-      "latency_ms": 290
+      "latency_ms": 330
     }
   },
   "es-ve-took-wrong-order": {
@@ -6302,8 +6302,8 @@
           "choice": "says_not_sent",
           "confidence": 1.0,
           "probabilities": {
-            "says_not_sent": 1.0,
             "not_stated": 0.0,
+            "says_not_sent": 1.0,
             "says_sent": 0.0
           }
         },
@@ -6316,14 +6316,14 @@
           "choice": "not_stated",
           "confidence": 1.0,
           "probabilities": {
-            "says_not_received": 0.0,
             "says_received": 0.0,
-            "not_stated": 1.0
+            "not_stated": 1.0,
+            "says_not_received": 0.0
           }
         },
         "seller_checked": {
           "type": "noul",
-          "noul": 0.04
+          "noul": 0.05
         },
         "claims_conflict": {
           "type": "noul",
@@ -6331,20 +6331,20 @@
         },
         "fraud_signal": {
           "type": "noul",
-          "noul": 0.26
+          "noul": 0.23
         },
         "dispute_topic": {
           "type": "choice",
           "choice": "payment_not_confirmed",
-          "confidence": 0.97,
+          "confidence": 0.98,
           "probabilities": {
-            "other": 0.02,
             "counterpart_unresponsive": 0.0,
-            "wrong_account_or_method": 0.0,
-            "payment_not_confirmed": 0.98,
             "not_yet_clear": 0.0,
+            "wrong_amount": 0.0,
+            "payment_not_confirmed": 0.98,
+            "wrong_account_or_method": 0.0,
             "technical_problem": 0.0,
-            "wrong_amount": 0.0
+            "other": 0.02
           }
         },
         "buyer_message_kind": {
@@ -6352,10 +6352,10 @@
           "choice": "answers",
           "confidence": 0.99,
           "probabilities": {
-            "answers": 1.0,
-            "greeting": 0.0,
             "asks_language": 0.0,
+            "answers": 1.0,
             "not_understood": 0.0,
+            "greeting": 0.0,
             "asks_next_step": 0.0,
             "other": 0.0
           }
@@ -6365,11 +6365,11 @@
           "choice": "es",
           "confidence": 0.9,
           "probabilities": {
-            "en": 0.04,
-            "unknown": 0.01,
-            "pt": 0.01,
             "es": 0.92,
-            "other": 0.02
+            "pt": 0.0,
+            "other": 0.01,
+            "en": 0.06,
+            "unknown": 0.01
           }
         },
         "buyer_wants_human": {
@@ -6381,7 +6381,7 @@
         "input_tokens": 1902,
         "output_tokens": 391
       },
-      "latency_ms": 297
+      "latency_ms": 422
     }
   },
   "es-ve-seller-received-buyer-gone": {
@@ -6431,23 +6431,23 @@
           "choice": "not_stated",
           "confidence": 1.0,
           "probabilities": {
+            "says_not_sent": 0.0,
             "not_stated": 1.0,
-            "says_sent": 0.0,
-            "says_not_sent": 0.0
+            "says_sent": 0.0
           }
         },
         "buyer_details": {
           "type": "noul",
-          "noul": 0.05
+          "noul": 0.04
         },
         "seller_receipt": {
           "type": "choice",
           "choice": "says_received",
           "confidence": 1.0,
           "probabilities": {
-            "says_not_received": 0.0,
             "not_stated": 0.0,
-            "says_received": 1.0
+            "says_received": 1.0,
+            "says_not_received": 0.0
           }
         },
         "seller_checked": {
@@ -6465,15 +6465,15 @@
         "dispute_topic": {
           "type": "choice",
           "choice": "counterpart_unresponsive",
-          "confidence": 0.93,
+          "confidence": 0.9,
           "probabilities": {
-            "not_yet_clear": 0.0,
-            "counterpart_unresponsive": 0.94,
-            "wrong_amount": 0.0,
+            "counterpart_unresponsive": 0.92,
             "wrong_account_or_method": 0.0,
-            "payment_not_confirmed": 0.06,
-            "other": 0.0,
-            "technical_problem": 0.0
+            "wrong_amount": 0.0,
+            "payment_not_confirmed": 0.08,
+            "technical_problem": 0.0,
+            "not_yet_clear": 0.0,
+            "other": 0.0
           }
         },
         "seller_message_kind": {
@@ -6481,12 +6481,12 @@
           "choice": "answers",
           "confidence": 1.0,
           "probabilities": {
-            "other": 0.0,
             "answers": 1.0,
-            "asks_next_step": 0.0,
-            "asks_language": 0.0,
+            "not_understood": 0.0,
             "greeting": 0.0,
-            "not_understood": 0.0
+            "asks_language": 0.0,
+            "asks_next_step": 0.0,
+            "other": 0.0
           }
         },
         "seller_language": {
@@ -6494,11 +6494,11 @@
           "choice": "es",
           "confidence": 1.0,
           "probabilities": {
-            "other": 0.0,
+            "unknown": 0.0,
             "pt": 0.0,
             "en": 0.0,
-            "unknown": 0.0,
-            "es": 1.0
+            "es": 1.0,
+            "other": 0.0
           }
         },
         "seller_wants_human": {
@@ -6510,7 +6510,7 @@
         "input_tokens": 1912,
         "output_tokens": 393
       },
-      "latency_ms": 318
+      "latency_ms": 307
     }
   },
   "es-es-formal-received": {
@@ -6560,9 +6560,9 @@
           "choice": "not_stated",
           "confidence": 1.0,
           "probabilities": {
+            "not_stated": 1.0,
             "says_not_sent": 0.0,
-            "says_sent": 0.0,
-            "not_stated": 1.0
+            "says_sent": 0.0
           }
         },
         "buyer_details": {
@@ -6574,18 +6574,18 @@
           "choice": "says_received",
           "confidence": 1.0,
           "probabilities": {
+            "not_stated": 0.0,
             "says_not_received": 0.0,
-            "says_received": 1.0,
-            "not_stated": 0.0
+            "says_received": 1.0
           }
         },
         "seller_checked": {
           "type": "noul",
-          "noul": 0.23
+          "noul": 0.26
         },
         "claims_conflict": {
           "type": "noul",
-          "noul": 0.07
+          "noul": 0.06
         },
         "fraud_signal": {
           "type": "noul",
@@ -6596,12 +6596,12 @@
           "choice": "payment_not_confirmed",
           "confidence": 0.84,
           "probabilities": {
-            "wrong_account_or_method": 0.0,
-            "payment_not_confirmed": 0.86,
-            "not_yet_clear": 0.11,
-            "counterpart_unresponsive": 0.02,
+            "not_yet_clear": 0.1,
             "other": 0.01,
+            "payment_not_confirmed": 0.86,
             "wrong_amount": 0.0,
+            "wrong_account_or_method": 0.0,
+            "counterpart_unresponsive": 0.03,
             "technical_problem": 0.0
           }
         },
@@ -6610,24 +6610,24 @@
           "choice": "answers",
           "confidence": 1.0,
           "probabilities": {
-            "answers": 1.0,
-            "not_understood": 0.0,
-            "asks_next_step": 0.0,
             "other": 0.0,
             "greeting": 0.0,
-            "asks_language": 0.0
+            "answers": 1.0,
+            "asks_language": 0.0,
+            "not_understood": 0.0,
+            "asks_next_step": 0.0
           }
         },
         "seller_language": {
           "type": "choice",
           "choice": "es",
-          "confidence": 0.96,
+          "confidence": 0.97,
           "probabilities": {
+            "other": 0.01,
+            "es": 0.99,
             "unknown": 0.0,
-            "es": 0.98,
-            "en": 0.0,
-            "other": 0.02,
-            "pt": 0.0
+            "pt": 0.0,
+            "en": 0.0
           }
         },
         "seller_wants_human": {
@@ -6639,7 +6639,7 @@
         "input_tokens": 1898,
         "output_tokens": 390
       },
-      "latency_ms": 319
+      "latency_ms": 314
     }
   },
   "es-co-listo-parce": {
@@ -6714,7 +6714,7 @@
         },
         "claims_conflict": {
           "type": "noul",
-          "noul": 0.07
+          "noul": 0.08
         },
         "fraud_signal": {
           "type": "noul",
@@ -6723,15 +6723,15 @@
         "dispute_topic": {
           "type": "choice",
           "choice": "payment_not_confirmed",
-          "confidence": 0.91,
+          "confidence": 0.93,
           "probabilities": {
             "wrong_amount": 0.0,
+            "payment_not_confirmed": 0.95,
             "wrong_account_or_method": 0.0,
-            "not_yet_clear": 0.06,
-            "counterpart_unresponsive": 0.02,
+            "counterpart_unresponsive": 0.01,
             "technical_problem": 0.0,
             "other": 0.0,
-            "payment_not_confirmed": 0.92
+            "not_yet_clear": 0.04
           }
         },
         "seller_message_kind": {
@@ -6740,9 +6740,9 @@
           "confidence": 1.0,
           "probabilities": {
             "answers": 1.0,
+            "not_understood": 0.0,
             "asks_language": 0.0,
             "asks_next_step": 0.0,
-            "not_understood": 0.0,
             "other": 0.0,
             "greeting": 0.0
           }
@@ -6750,7 +6750,7 @@
         "seller_language": {
           "type": "choice",
           "choice": "es",
-          "confidence": 1.0,
+          "confidence": 0.99,
           "probabilities": {
             "unknown": 0.0,
             "es": 1.0,
@@ -6768,7 +6768,7 @@
         "input_tokens": 1905,
         "output_tokens": 390
       },
-      "latency_ms": 296
+      "latency_ms": 317
     }
   },
   "es-seller-wants-mostro-admin": {
@@ -6819,31 +6819,31 @@
           "confidence": 1.0,
           "probabilities": {
             "not_stated": 1.0,
-            "says_sent": 0.0,
-            "says_not_sent": 0.0
+            "says_not_sent": 0.0,
+            "says_sent": 0.0
           }
         },
         "buyer_details": {
           "type": "noul",
-          "noul": 0.05
+          "noul": 0.04
         },
         "seller_receipt": {
           "type": "choice",
           "choice": "not_stated",
           "confidence": 1.0,
           "probabilities": {
-            "says_received": 0.0,
             "not_stated": 1.0,
+            "says_received": 0.0,
             "says_not_received": 0.0
           }
         },
         "seller_checked": {
           "type": "noul",
-          "noul": 0.03
+          "noul": 0.04
         },
         "claims_conflict": {
           "type": "noul",
-          "noul": 0.07
+          "noul": 0.06
         },
         "fraud_signal": {
           "type": "noul",
@@ -6852,28 +6852,28 @@
         "dispute_topic": {
           "type": "choice",
           "choice": "payment_not_confirmed",
-          "confidence": 0.72,
+          "confidence": 0.68,
           "probabilities": {
-            "payment_not_confirmed": 0.77,
+            "payment_not_confirmed": 0.72,
             "wrong_account_or_method": 0.0,
-            "not_yet_clear": 0.22,
-            "technical_problem": 0.0,
-            "other": 0.0,
             "wrong_amount": 0.0,
-            "counterpart_unresponsive": 0.01
+            "technical_problem": 0.0,
+            "counterpart_unresponsive": 0.02,
+            "not_yet_clear": 0.25,
+            "other": 0.01
           }
         },
         "seller_message_kind": {
           "type": "choice",
           "choice": "other",
-          "confidence": 0.95,
+          "confidence": 0.94,
           "probabilities": {
-            "other": 0.96,
             "asks_language": 0.0,
+            "asks_next_step": 0.05,
             "not_understood": 0.0,
-            "answers": 0.0,
             "greeting": 0.0,
-            "asks_next_step": 0.04
+            "answers": 0.0,
+            "other": 0.95
           }
         },
         "seller_language": {
@@ -6881,11 +6881,11 @@
           "choice": "es",
           "confidence": 1.0,
           "probabilities": {
-            "pt": 0.0,
             "en": 0.0,
+            "pt": 0.0,
+            "unknown": 0.0,
             "es": 1.0,
-            "other": 0.0,
-            "unknown": 0.0
+            "other": 0.0
           }
         },
         "seller_wants_human": {
@@ -6897,7 +6897,7 @@
         "input_tokens": 1917,
         "output_tokens": 390
       },
-      "latency_ms": 299
+      "latency_ms": 293
     }
   },
   "es-buyer-refuses-robot": {
@@ -6947,8 +6947,8 @@
           "choice": "not_stated",
           "confidence": 1.0,
           "probabilities": {
-            "says_sent": 0.0,
             "says_not_sent": 0.0,
+            "says_sent": 0.0,
             "not_stated": 1.0
           }
         },
@@ -6962,8 +6962,8 @@
           "confidence": 1.0,
           "probabilities": {
             "says_not_received": 0.0,
-            "says_received": 0.0,
-            "not_stated": 1.0
+            "not_stated": 1.0,
+            "says_received": 0.0
           }
         },
         "seller_checked": {
@@ -6981,28 +6981,28 @@
         "dispute_topic": {
           "type": "choice",
           "choice": "payment_not_confirmed",
-          "confidence": 0.62,
+          "confidence": 0.54,
           "probabilities": {
-            "wrong_account_or_method": 0.0,
-            "other": 0.0,
             "wrong_amount": 0.0,
+            "counterpart_unresponsive": 0.02,
             "technical_problem": 0.0,
-            "counterpart_unresponsive": 0.01,
-            "payment_not_confirmed": 0.6900000000000001,
-            "not_yet_clear": 0.3
+            "wrong_account_or_method": 0.0,
+            "not_yet_clear": 0.37,
+            "other": 0.01,
+            "payment_not_confirmed": 0.6
           }
         },
         "buyer_message_kind": {
           "type": "choice",
           "choice": "other",
-          "confidence": 0.83,
+          "confidence": 0.81,
           "probabilities": {
-            "answers": 0.0,
-            "other": 0.86,
-            "asks_next_step": 0.14,
             "asks_language": 0.0,
+            "asks_next_step": 0.15,
+            "other": 0.85,
             "greeting": 0.0,
-            "not_understood": 0.0
+            "not_understood": 0.0,
+            "answers": 0.0
           }
         },
         "buyer_language": {
@@ -7011,9 +7011,9 @@
           "confidence": 1.0,
           "probabilities": {
             "other": 0.0,
-            "en": 0.0,
-            "pt": 0.0,
             "es": 1.0,
+            "pt": 0.0,
+            "en": 0.0,
             "unknown": 0.0
           }
         },
@@ -7026,7 +7026,529 @@
         "input_tokens": 1914,
         "output_tokens": 390
       },
-      "latency_ms": 352
+      "latency_ms": 291
+    }
+  },
+  "es-fraud-seller-moves-to-telegram": {
+    "state": {
+      "roles": {
+        "buyer": "Pays the fiat money to the seller outside Mostro, then waits for the bitcoin.",
+        "seller": "Has bitcoin locked in Mostro escrow and must confirm the fiat arrived before the trade can finish.",
+        "serbero": "Automated assistant that asks both parties questions for the human solver. It cannot move funds or decide the dispute."
+      },
+      "order": {
+        "fiat_amount": "40000",
+        "fiat_code": "ARS",
+        "payment_method": "Mercado Pago",
+        "dispute_opened_by": "buyer"
+      },
+      "transcript": [
+        {
+          "id": "m1",
+          "from": "serbero",
+          "to": "buyer",
+          "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Enviaste el pago de 40.000 ARS de esta orden? Si lo hiciste, dime cuándo y desde qué cuenta o aplicación."
+        },
+        {
+          "id": "m2",
+          "from": "serbero",
+          "to": "seller",
+          "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Te llegó a tu cuenta el pago de 40.000 ARS de esta orden?"
+        },
+        {
+          "id": "m3",
+          "from": "seller",
+          "text": "hola, este chat anda re mal, escribime a mi telegram @fede_btc_ok que por ahí lo resolvemos más rápido"
+        }
+      ],
+      "latest": {
+        "buyer": [],
+        "seller": [
+          "m3"
+        ]
+      }
+    },
+    "response": {
+      "model": "jev-1.13.0",
+      "answers": {
+        "buyer_payment": {
+          "type": "choice",
+          "choice": "not_stated",
+          "confidence": 1.0,
+          "probabilities": {
+            "not_stated": 1.0,
+            "says_sent": 0.0,
+            "says_not_sent": 0.0
+          }
+        },
+        "buyer_details": {
+          "type": "noul",
+          "noul": 0.05
+        },
+        "seller_receipt": {
+          "type": "choice",
+          "choice": "not_stated",
+          "confidence": 1.0,
+          "probabilities": {
+            "not_stated": 1.0,
+            "says_received": 0.0,
+            "says_not_received": 0.0
+          }
+        },
+        "seller_checked": {
+          "type": "noul",
+          "noul": 0.04
+        },
+        "claims_conflict": {
+          "type": "noul",
+          "noul": 0.06
+        },
+        "fraud_signal": {
+          "type": "noul",
+          "noul": 0.71
+        },
+        "dispute_topic": {
+          "type": "choice",
+          "choice": "payment_not_confirmed",
+          "confidence": 0.69,
+          "probabilities": {
+            "other": 0.0,
+            "counterpart_unresponsive": 0.0,
+            "payment_not_confirmed": 0.75,
+            "wrong_account_or_method": 0.0,
+            "technical_problem": 0.01,
+            "wrong_amount": 0.0,
+            "not_yet_clear": 0.24
+          }
+        },
+        "seller_message_kind": {
+          "type": "choice",
+          "choice": "other",
+          "confidence": 0.98,
+          "probabilities": {
+            "greeting": 0.01,
+            "answers": 0.0,
+            "asks_language": 0.0,
+            "other": 0.97,
+            "asks_next_step": 0.01,
+            "not_understood": 0.01
+          }
+        },
+        "seller_language": {
+          "type": "choice",
+          "choice": "es",
+          "confidence": 1.0,
+          "probabilities": {
+            "other": 0.0,
+            "en": 0.0,
+            "pt": 0.0,
+            "unknown": 0.0,
+            "es": 1.0
+          }
+        },
+        "seller_wants_human": {
+          "type": "noul",
+          "noul": 0.15
+        }
+      },
+      "usage": {
+        "input_tokens": 1924,
+        "output_tokens": 390
+      },
+      "latency_ms": 328
+    }
+  },
+  "es-fraud-buyer-moves-to-telegram": {
+    "state": {
+      "roles": {
+        "buyer": "Pays the fiat money to the seller outside Mostro, then waits for the bitcoin.",
+        "seller": "Has bitcoin locked in Mostro escrow and must confirm the fiat arrived before the trade can finish.",
+        "serbero": "Automated assistant that asks both parties questions for the human solver. It cannot move funds or decide the dispute."
+      },
+      "order": {
+        "fiat_amount": "40",
+        "fiat_code": "USD",
+        "payment_method": "Zelle",
+        "dispute_opened_by": "buyer"
+      },
+      "transcript": [
+        {
+          "id": "m1",
+          "from": "serbero",
+          "to": "buyer",
+          "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Enviaste el pago de 40 USD de esta orden? Si lo hiciste, dime cuándo y desde qué cuenta o aplicación."
+        },
+        {
+          "id": "m2",
+          "from": "serbero",
+          "to": "seller",
+          "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Te llegó a tu cuenta el pago de 40 USD de esta orden?"
+        },
+        {
+          "id": "m3",
+          "from": "buyer",
+          "text": "ya pagué por zelle a las 10am"
+        },
+        {
+          "id": "m4",
+          "from": "buyer",
+          "text": "pana mejor háblame por telegram, @carlos_p2p, ese chat es mejor, aquí no llegan los mensajes"
+        }
+      ],
+      "latest": {
+        "buyer": [
+          "m3",
+          "m4"
+        ],
+        "seller": []
+      }
+    },
+    "response": {
+      "model": "jev-1.13.0",
+      "answers": {
+        "buyer_payment": {
+          "type": "choice",
+          "choice": "says_sent",
+          "confidence": 1.0,
+          "probabilities": {
+            "says_sent": 1.0,
+            "not_stated": 0.0,
+            "says_not_sent": 0.0
+          }
+        },
+        "buyer_details": {
+          "type": "noul",
+          "noul": 0.97
+        },
+        "seller_receipt": {
+          "type": "choice",
+          "choice": "not_stated",
+          "confidence": 1.0,
+          "probabilities": {
+            "not_stated": 1.0,
+            "says_not_received": 0.0,
+            "says_received": 0.0
+          }
+        },
+        "seller_checked": {
+          "type": "noul",
+          "noul": 0.04
+        },
+        "claims_conflict": {
+          "type": "noul",
+          "noul": 0.08
+        },
+        "fraud_signal": {
+          "type": "noul",
+          "noul": 0.59
+        },
+        "dispute_topic": {
+          "type": "choice",
+          "choice": "payment_not_confirmed",
+          "confidence": 0.96,
+          "probabilities": {
+            "technical_problem": 0.01,
+            "wrong_amount": 0.0,
+            "other": 0.0,
+            "not_yet_clear": 0.02,
+            "payment_not_confirmed": 0.96,
+            "wrong_account_or_method": 0.0,
+            "counterpart_unresponsive": 0.01
+          }
+        },
+        "buyer_message_kind": {
+          "type": "choice",
+          "choice": "answers",
+          "confidence": 0.98,
+          "probabilities": {
+            "asks_language": 0.0,
+            "answers": 0.99,
+            "other": 0.01,
+            "greeting": 0.0,
+            "asks_next_step": 0.0,
+            "not_understood": 0.0
+          }
+        },
+        "buyer_language": {
+          "type": "choice",
+          "choice": "es",
+          "confidence": 0.99,
+          "probabilities": {
+            "en": 0.0,
+            "other": 0.0,
+            "pt": 0.0,
+            "es": 1.0,
+            "unknown": 0.0
+          }
+        },
+        "buyer_wants_human": {
+          "type": "noul",
+          "noul": 0.18
+        }
+      },
+      "usage": {
+        "input_tokens": 1953,
+        "output_tokens": 390
+      },
+      "latency_ms": 336
+    }
+  },
+  "es-fraud-telegram-fake-support": {
+    "state": {
+      "roles": {
+        "buyer": "Pays the fiat money to the seller outside Mostro, then waits for the bitcoin.",
+        "seller": "Has bitcoin locked in Mostro escrow and must confirm the fiat arrived before the trade can finish.",
+        "serbero": "Automated assistant that asks both parties questions for the human solver. It cannot move funds or decide the dispute."
+      },
+      "order": {
+        "fiat_amount": "3000",
+        "fiat_code": "MXN",
+        "payment_method": "SPEI",
+        "dispute_opened_by": "seller"
+      },
+      "transcript": [
+        {
+          "id": "m1",
+          "from": "serbero",
+          "to": "buyer",
+          "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Enviaste el pago de 3.000 MXN de esta orden? Si lo hiciste, dime cuándo y desde qué cuenta o aplicación."
+        },
+        {
+          "id": "m2",
+          "from": "serbero",
+          "to": "seller",
+          "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Te llegó a tu cuenta el pago de 3.000 MXN de esta orden?"
+        },
+        {
+          "id": "m3",
+          "from": "buyer",
+          "text": "para que esto se resuelva rápido contacta al soporte de mostro en telegram: @MostroSoporteOficial, ellos liberan al toque"
+        }
+      ],
+      "latest": {
+        "buyer": [
+          "m3"
+        ],
+        "seller": []
+      }
+    },
+    "response": {
+      "model": "jev-1.13.0",
+      "answers": {
+        "buyer_payment": {
+          "type": "choice",
+          "choice": "not_stated",
+          "confidence": 1.0,
+          "probabilities": {
+            "not_stated": 1.0,
+            "says_sent": 0.0,
+            "says_not_sent": 0.0
+          }
+        },
+        "buyer_details": {
+          "type": "noul",
+          "noul": 0.06
+        },
+        "seller_receipt": {
+          "type": "choice",
+          "choice": "not_stated",
+          "confidence": 1.0,
+          "probabilities": {
+            "not_stated": 1.0,
+            "says_not_received": 0.0,
+            "says_received": 0.0
+          }
+        },
+        "seller_checked": {
+          "type": "noul",
+          "noul": 0.04
+        },
+        "claims_conflict": {
+          "type": "noul",
+          "noul": 0.08
+        },
+        "fraud_signal": {
+          "type": "noul",
+          "noul": 0.7
+        },
+        "dispute_topic": {
+          "type": "choice",
+          "choice": "payment_not_confirmed",
+          "confidence": 0.89,
+          "probabilities": {
+            "counterpart_unresponsive": 0.0,
+            "wrong_amount": 0.0,
+            "other": 0.01,
+            "not_yet_clear": 0.09,
+            "technical_problem": 0.0,
+            "wrong_account_or_method": 0.0,
+            "payment_not_confirmed": 0.9
+          }
+        },
+        "buyer_message_kind": {
+          "type": "choice",
+          "choice": "other",
+          "confidence": 0.91,
+          "probabilities": {
+            "asks_language": 0.0,
+            "answers": 0.0,
+            "other": 0.92,
+            "greeting": 0.0,
+            "asks_next_step": 0.08,
+            "not_understood": 0.0
+          }
+        },
+        "buyer_language": {
+          "type": "choice",
+          "choice": "es",
+          "confidence": 1.0,
+          "probabilities": {
+            "unknown": 0.0,
+            "en": 0.0,
+            "pt": 0.0,
+            "es": 1.0,
+            "other": 0.0
+          }
+        },
+        "buyer_wants_human": {
+          "type": "noul",
+          "noul": 0.62
+        }
+      },
+      "usage": {
+        "input_tokens": 1925,
+        "output_tokens": 390
+      },
+      "latency_ms": 300
+    }
+  },
+  "es-telegram-mention-innocent": {
+    "state": {
+      "roles": {
+        "buyer": "Pays the fiat money to the seller outside Mostro, then waits for the bitcoin.",
+        "seller": "Has bitcoin locked in Mostro escrow and must confirm the fiat arrived before the trade can finish.",
+        "serbero": "Automated assistant that asks both parties questions for the human solver. It cannot move funds or decide the dispute."
+      },
+      "order": {
+        "fiat_amount": "100000",
+        "fiat_code": "COP",
+        "payment_method": "Nequi",
+        "dispute_opened_by": "buyer"
+      },
+      "transcript": [
+        {
+          "id": "m1",
+          "from": "serbero",
+          "to": "buyer",
+          "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Enviaste el pago de 100.000 COP de esta orden? Si lo hiciste, dime cuándo y desde qué cuenta o aplicación."
+        },
+        {
+          "id": "m2",
+          "from": "serbero",
+          "to": "seller",
+          "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Te llegó a tu cuenta el pago de 100.000 COP de esta orden?"
+        },
+        {
+          "id": "m3",
+          "from": "buyer",
+          "text": "vi la oferta en el grupo de telegram de mostro y la tomé, ya le envié por nequi a las 4:10pm"
+        }
+      ],
+      "latest": {
+        "buyer": [
+          "m3"
+        ],
+        "seller": []
+      }
+    },
+    "response": {
+      "model": "jev-1.13.0",
+      "answers": {
+        "buyer_payment": {
+          "type": "choice",
+          "choice": "says_sent",
+          "confidence": 1.0,
+          "probabilities": {
+            "says_sent": 1.0,
+            "not_stated": 0.0,
+            "says_not_sent": 0.0
+          }
+        },
+        "buyer_details": {
+          "type": "noul",
+          "noul": 0.98
+        },
+        "seller_receipt": {
+          "type": "choice",
+          "choice": "not_stated",
+          "confidence": 1.0,
+          "probabilities": {
+            "not_stated": 1.0,
+            "says_not_received": 0.0,
+            "says_received": 0.0
+          }
+        },
+        "seller_checked": {
+          "type": "noul",
+          "noul": 0.04
+        },
+        "claims_conflict": {
+          "type": "noul",
+          "noul": 0.07
+        },
+        "fraud_signal": {
+          "type": "noul",
+          "noul": 0.05
+        },
+        "dispute_topic": {
+          "type": "choice",
+          "choice": "payment_not_confirmed",
+          "confidence": 0.98,
+          "probabilities": {
+            "other": 0.0,
+            "wrong_amount": 0.0,
+            "technical_problem": 0.0,
+            "not_yet_clear": 0.01,
+            "counterpart_unresponsive": 0.0,
+            "wrong_account_or_method": 0.0,
+            "payment_not_confirmed": 0.99
+          }
+        },
+        "buyer_message_kind": {
+          "type": "choice",
+          "choice": "answers",
+          "confidence": 1.0,
+          "probabilities": {
+            "other": 0.0,
+            "not_understood": 0.0,
+            "answers": 1.0,
+            "greeting": 0.0,
+            "asks_language": 0.0,
+            "asks_next_step": 0.0
+          }
+        },
+        "buyer_language": {
+          "type": "choice",
+          "choice": "es",
+          "confidence": 1.0,
+          "probabilities": {
+            "other": 0.0,
+            "pt": 0.0,
+            "en": 0.0,
+            "es": 1.0,
+            "unknown": 0.0
+          }
+        },
+        "buyer_wants_human": {
+          "type": "noul",
+          "noul": 0.03
+        }
+      },
+      "usage": {
+        "input_tokens": 1926,
+        "output_tokens": 390
+      },
+      "latency_ms": 333
     }
   }
 }
