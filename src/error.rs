@@ -7,6 +7,10 @@ pub enum Error {
     #[error("invalid configuration: {0}")]
     Config(String),
 
+    /// A message catalog file is missing, malformed, or lacks a template.
+    #[error("message catalog error: {0}")]
+    Catalog(String),
+
     /// A database operation failed.
     #[error("database error: {0}")]
     Store(#[from] rusqlite::Error),

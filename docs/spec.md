@@ -550,6 +550,8 @@ a translation plus a line of config.
 
 - its English name (`name = "French"`), used as the option description in the
   judge's language question;
+- its number format (`[format]` thousands and decimal separators) for
+  rendering `{amount}`;
 - every party template ([messages.md §2](messages.md#2-party-templates));
 - its own word lists for the template rules: fund-action words and verdict
   words ([messages.md §4](messages.md#4-template-rules)).

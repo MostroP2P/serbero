@@ -18,9 +18,6 @@ use crate::error::{Error, Result};
 /// Environment variable naming the config file; defaults to `./config.toml`.
 pub const CONFIG_PATH_ENV: &str = "SERBERO_CONFIG";
 
-/// Languages that have a complete template catalog (`docs/messages.md`).
-pub const SUPPORTED_LANGUAGES: &[&str] = &["en", "es", "pt"];
-
 /// Judge providers Serbero ships adapters for (`docs/spec.md` §5.2).
 pub const KNOWN_PROVIDERS: &[&str] = &["typesafe", "recorded"];
 
@@ -149,9 +146,10 @@ impl Default for MediationConfig {
         Self {
             enabled: false,
             default_language: "en".into(),
-            languages: SUPPORTED_LANGUAGES
-                .iter()
-                .map(|l| (*l).to_owned())
+            // Every language with a catalog file (`messages/<code>.toml`).
+            languages: crate::catalog::embedded_codes()
+                .into_iter()
+                .map(str::to_owned)
                 .collect(),
             quiet_period: Duration::from_secs(20),
             response_timeout: Duration::from_secs(30 * 60),
@@ -258,11 +256,12 @@ impl Config {
         if m.languages.is_empty() {
             return invalid("mediation.languages must list at least one language");
         }
+        let available = crate::catalog::embedded_codes();
         for lang in &m.languages {
-            if !SUPPORTED_LANGUAGES.contains(&lang.as_str()) {
+            if !available.contains(&lang.as_str()) {
                 return invalid(format!(
-                    "mediation.languages: {lang:?} has no template catalog; supported: {}",
-                    SUPPORTED_LANGUAGES.join(", ")
+                    "mediation.languages: {lang:?} has no template catalog; available: {}",
+                    available.join(", ")
                 ));
             }
         }

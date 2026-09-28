@@ -8,8 +8,9 @@ quotes. No text is generated at runtime.
 ## 1. Rendering
 
 - One placeholder exists: `{amount}`, rendered by code as the fiat amount from
-  `SolverDisputeInfo` plus the currency from the order event (for example
-  `50.000 ARS`; see [spec.md §7.2](spec.md#72-opening)). If either is unknown, the template's `_noamount` form is
+  `SolverDisputeInfo` plus the currency from the order event, with the
+  catalog's own digit separators (for example `50,000 ARS` in English,
+  `50.000 ARS` in Spanish; see [spec.md §7.2](spec.md#72-opening)). If either is unknown, the template's `_noamount` form is
   used, which is the same sentence without it.
 - The first message a party receives is `intro` followed by one blank line and
   the question. `intro` is never sent again.

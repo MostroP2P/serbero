@@ -1,0 +1,17 @@
+# Test fixture, not a shipped catalog: a partial French file proving that a
+# new language is picked up from its file alone (no code change).
+
+name = "French"
+
+[format]
+thousands_separator = " "
+decimal_separator = ","
+
+[words]
+fund_action = ["libérer", "annulation"]
+verdict = ["gagnant", "coupable"]
+
+[templates]
+intro = "Bonjour, je suis Serbero."
+ask_seller_received = "Le paiement de {amount} est-il arrivé sur votre compte ?"
+ask_seller_received_noamount = "Le paiement est-il arrivé sur votre compte ?"
