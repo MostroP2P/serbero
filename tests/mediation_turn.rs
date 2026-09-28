@@ -1741,6 +1741,29 @@ async fn an_unreachable_party_does_not_keep_the_other_from_its_notice() {
     assert_eq!(seller_side.next_from_serbero().await, en("handoff_notice"));
 }
 
+#[tokio::test]
+async fn a_brief_is_recorded_when_it_is_sent() {
+    let script = script(&[]).await;
+    let session = sessions::get(script.store.lock().unwrap().conn(), "s1")
+        .unwrap()
+        .unwrap();
+    let before = serbero::daemon::now();
+
+    // A handoff decided long before its brief went out.
+    script
+        .mediator
+        .hand_off(&session, HandoffReason::Unresponsive, None, 10)
+        .await
+        .unwrap();
+
+    let brief = events::list_for_dispute(script.store.lock().unwrap().conn(), "d1")
+        .unwrap()
+        .into_iter()
+        .find(|e| e.kind == "notification_sent" && e.payload["notification"] == "brief")
+        .unwrap();
+    assert!(brief.created_at >= before, "{}", brief.created_at);
+}
+
 /// AGENTS.md relays rule 7: timer sends to a silent relay never hold back
 /// dispute events.
 #[tokio::test]

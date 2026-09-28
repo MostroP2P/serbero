@@ -217,6 +217,10 @@ impl<S: DmSender> Mediator<S> {
         for solver in to {
             let mut all = true;
             for (notification, text) in parts {
+                // Recorded at the send, not when the turn began: a brief
+                // judged for a while must not predate a solver's reply to
+                // an earlier one (`feedback::record`).
+                let sent_at = crate::daemon::now().max(now);
                 let sent = notify_solvers(
                     &self.store,
                     &self.sender,
@@ -224,7 +228,7 @@ impl<S: DmSender> Mediator<S> {
                     dispute_id,
                     notification,
                     text,
-                    now,
+                    sent_at,
                 )
                 .await?;
                 if sent == 0 {

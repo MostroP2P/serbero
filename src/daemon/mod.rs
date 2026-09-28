@@ -155,6 +155,13 @@ fn start_mediation(
     background.push(tokio::spawn(Arc::clone(&mediator).run_timers(async move {
         let _ = chats_resumed.wait_for(|done| *done).await;
     })));
+    background.push(tokio::spawn(solver_replies(
+        client.clone(),
+        keys.clone(),
+        Arc::clone(store),
+        solvers.to_vec(),
+        background.registry(),
+    )));
     let closing = Arc::clone(&mediator);
     notifier.on_resolved(Box::new(move |dispute_id, status, by_parties| {
         let mediator = Arc::clone(&closing);
@@ -248,6 +255,59 @@ fn start_mediation(
         }
     }));
     Ok(())
+}
+
+/// Subscription for DMs addressed to Serbero (solver feedback).
+const SOLVER_DMS: &str = "serbero-solver-dms";
+
+/// Reads DMs addressed to Serbero and records solvers' `wrong <question>`
+/// replies (`docs/evaluation.md` §5). The notification stream is opened
+/// before the REQ, and the subscription is registered so the relay watcher
+/// re-sends it when a relay reconnects.
+/// How far back solver replies are read at startup.
+const FEEDBACK_BACKLOG: Duration = Duration::from_secs(7 * 24 * 3600);
+
+pub async fn solver_replies(
+    client: Client,
+    keys: Keys,
+    store: Arc<Mutex<Store>>,
+    solvers: Vec<Solver>,
+    registry: relays::Registry,
+) {
+    let mut notifications = client.notifications();
+    let filter = Filter::new()
+        .kind(Kind::PrivateDirectMessage)
+        .pubkey(keys.public_key())
+        // Replies sent while Serbero was offline are still read; the same
+        // DM delivered again is recorded once (`feedback::record`).
+        .since(Timestamp::now() - FEEDBACK_BACKLOG);
+    relays::register(&registry, SOLVER_DMS, filter.clone());
+    if let Err(e) = client
+        .subscribe(filter)
+        .with_id(SubscriptionId::new(SOLVER_DMS))
+        .await
+    {
+        tracing::warn!(error = %e, "cannot subscribe to solver replies yet; the relay watcher retries");
+    }
+    while let Some(notification) = notifications.next().await {
+        let ClientNotification::Event { event, .. } = notification else {
+            continue;
+        };
+        if event.kind != Kind::PrivateDirectMessage {
+            continue;
+        }
+        match crate::mediation::feedback::handle(&event, &keys, &solvers, &store, now()) {
+            Ok(Some(recorded)) => tracing::info!(
+                dispute_id = %recorded.dispute_id,
+                evaluation_id = recorded.evaluation_id,
+                "solver feedback recorded"
+            ),
+            Ok(None) => {}
+            Err(e) => {
+                tracing::error!(error = %e, "cannot record solver feedback")
+            }
+        }
+    }
 }
 
 /// Background tasks started by `start`; dropping it stops them.
