@@ -34,7 +34,6 @@ response_timeout = "30m"
 max_rounds = 3
 max_message_chars = 2000
 max_messages_per_turn = 10
-max_fiat_amount = 0                       # 0 = no limit
 self_resolution_timeout = "2h"
 
 [judge]

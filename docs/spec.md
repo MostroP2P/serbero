@@ -410,7 +410,6 @@ deterministic; no Jev call happens before the take.
 - `[mediation].enabled = true` and the judge health check passed at startup.
 - The dispute is `notified` and has no session and no prior handoff.
 - The dispute has not been taken by a human.
-- Optional operator filters pass (for example `max_fiat_amount`).
 
 ### 7.2 Opening
 
@@ -435,6 +434,16 @@ deterministic; no Jev call happens before the take.
    No Jev call is needed for the opener.
 5. Notify solvers that Serbero is assisting (they can still take over at any
    time).
+
+Mediation is considered once per dispute, right after its new-dispute
+notification, in a task of its own (`src/mediation/mod.rs`), so a slow node
+never delays notification. A take that fails or is refused creates no session
+and changes nothing for the solvers. A take that succeeds but cannot open the
+session (no trade keys, or an opening message that no relay accepts) hands the
+dispute off with `opening_failed`: the solvers are asked to take it over and
+Serbero writes nothing more to the parties. The `in-progress` revision of
+Serbero's own take is announced to solvers as `taken by: Serbero`, even when it
+arrives before the session exists.
 
 ### 7.3 Turn loop
 
@@ -533,6 +542,7 @@ opening ─▶ active ─┬─▶ guiding ─┬─▶ closed          (parties
 | `uncertain` | The same fact stayed below threshold after its follow-up question. |
 | `judge_unavailable` | The judge failed after retries. The brief carries the transcript without judgments. |
 | `flood` | A party sent more than `max_messages_per_turn` in one turn repeatedly. |
+| `opening_failed` | Serbero took the dispute but could not open the session: the node sent no trade keys, or no opening message reached a party. |
 
 Every handoff sends the parties the `handoff_notice` template and the solver
 the brief ([messages.md §3](messages.md#3-solver-messages)). The recipient is
@@ -707,7 +717,6 @@ response_timeout = "30m"                  # per question, before the reminder an
 max_rounds = 3
 max_message_chars = 2000
 max_messages_per_turn = 10
-max_fiat_amount = 0                       # 0 = no limit
 self_resolution_timeout = "2h"           # guiding → handed_off if not resolved
 
 [judge]                                   # see §5.2; switching provider is a config change

@@ -152,6 +152,27 @@ pub fn list_live(conn: &Connection) -> Result<Vec<Session>> {
     rows.map(|row| row?).collect()
 }
 
+/// Whether the dispute ever had a session, live or ended. Mediation opens
+/// at most once per dispute (`docs/spec.md` §7.1).
+pub fn exists_for_dispute(conn: &Connection, dispute_id: &str) -> Result<bool> {
+    Ok(conn.query_row(
+        "SELECT EXISTS (SELECT 1 FROM sessions WHERE dispute_id = ?1)",
+        [dispute_id],
+        |row| row.get(0),
+    )?)
+}
+
+/// Moves a live session to `handed_off` and records why. A terminal session
+/// is never changed. Returns `true` if the session was updated.
+pub fn hand_off(conn: &Connection, session_id: &str, reason: &str, now: i64) -> Result<bool> {
+    let updated = conn.execute(
+        "UPDATE sessions SET state = 'handed_off', handoff_reason = ?2, updated_at = ?3
+         WHERE session_id = ?1 AND state NOT IN ('closed', 'superseded')",
+        params![session_id, reason, now],
+    )?;
+    Ok(updated == 1)
+}
+
 /// Moves a live session to `state`. A terminal session is never changed.
 /// Returns `true` if the session was updated.
 pub fn set_state(
@@ -311,6 +332,40 @@ pub(crate) mod testing {
 mod tests {
     use super::testing::{new_session, store_with_session};
     use super::*;
+
+    #[test]
+    fn any_session_counts_for_a_dispute_even_after_it_ended() {
+        let store = store_with_session();
+
+        assert!(exists_for_dispute(store.conn(), "d1").unwrap());
+        set_state(store.conn(), "s1", SessionState::Closed, 300).unwrap();
+        assert!(exists_for_dispute(store.conn(), "d1").unwrap());
+        assert!(!exists_for_dispute(store.conn(), "d2").unwrap());
+    }
+
+    #[test]
+    fn a_handoff_records_its_reason() {
+        let store = store_with_session();
+
+        assert!(hand_off(store.conn(), "s1", "opening_failed", 300).unwrap());
+
+        let session = get(store.conn(), "s1").unwrap().unwrap();
+        assert_eq!(session.state, SessionState::HandedOff);
+        assert_eq!(session.handoff_reason.as_deref(), Some("opening_failed"));
+        assert_eq!(session.updated_at, 300);
+    }
+
+    #[test]
+    fn an_ended_session_is_never_handed_off() {
+        let store = store_with_session();
+        set_state(store.conn(), "s1", SessionState::Superseded, 300).unwrap();
+
+        assert!(!hand_off(store.conn(), "s1", "uncertain", 400).unwrap());
+        assert_eq!(
+            get(store.conn(), "s1").unwrap().unwrap().state,
+            SessionState::Superseded
+        );
+    }
 
     #[test]
     fn inserted_session_starts_opening_with_its_facts() {

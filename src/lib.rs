@@ -9,6 +9,7 @@ pub mod error;
 pub mod eval;
 pub mod judge;
 pub mod logging;
+pub mod mediation;
 pub mod mostro;
 pub mod nostr;
 pub mod notifier;

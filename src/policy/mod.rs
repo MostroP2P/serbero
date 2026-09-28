@@ -106,6 +106,8 @@ pub enum HandoffReason {
     Uncertain,
     JudgeUnavailable,
     Flood,
+    /// Serbero took the dispute but could not reach the parties.
+    OpeningFailed,
 }
 
 impl Path {
@@ -134,6 +136,7 @@ impl HandoffReason {
             Self::Uncertain => "uncertain",
             Self::JudgeUnavailable => "judge_unavailable",
             Self::Flood => "flood",
+            Self::OpeningFailed => "opening_failed",
         }
     }
 }

@@ -4,7 +4,8 @@
 pub mod send;
 pub mod text;
 
-use std::sync::{Arc, Mutex};
+use std::collections::HashSet;
+use std::sync::{Arc, Mutex, OnceLock};
 
 use mostro_core::dispute::Status as DisputeStatus;
 use nostr_sdk::prelude::{Event, PublicKey};
@@ -39,12 +40,22 @@ pub enum Change {
     Unchanged,
 }
 
+/// Disputes Serbero is taking right now. Mostro may publish the
+/// `in-progress` revision of Serbero's own take before its session exists;
+/// this set tells the notifier that take was Serbero's.
+pub type OwnTakes = Arc<Mutex<HashSet<String>>>;
+
+/// Called with the id of each new dispute once solvers were notified.
+pub type NewDisputeHook = Box<dyn Fn(&str) + Send + Sync>;
+
 pub struct Notifier<S> {
     store: Arc<Mutex<Store>>,
     gate: Arc<crate::chat::OutboundGate>,
     sender: S,
     solvers: Vec<Solver>,
     mostro: PublicKey,
+    own_takes: OwnTakes,
+    on_new_dispute: OnceLock<NewDisputeHook>,
 }
 
 impl<S: DmSender> Notifier<S> {
@@ -65,7 +76,37 @@ impl<S: DmSender> Notifier<S> {
             sender,
             solvers,
             mostro,
+            own_takes: OwnTakes::default(),
+            on_new_dispute: OnceLock::new(),
         }
+    }
+
+    /// The disputes Serbero is taking; mediation adds one before its take.
+    pub fn own_takes(&self) -> OwnTakes {
+        Arc::clone(&self.own_takes)
+    }
+
+    /// Installs the hook called for each new dispute after solvers were
+    /// notified. Only the first hook is kept.
+    pub fn on_new_dispute(&self, hook: NewDisputeHook) {
+        if self.on_new_dispute.set(hook).is_err() {
+            tracing::warn!("a new-dispute hook is already installed");
+        }
+    }
+
+    /// Serbero took the dispute if a take of its own is in flight or one of
+    /// its sessions is live: a human's take would have superseded it.
+    fn taken_by_serbero(&self, dispute_id: &str) -> Result<bool> {
+        let taking = self
+            .own_takes
+            .lock()
+            .map_err(|_| Error::Schema("own takes lock poisoned".into()))?
+            .contains(dispute_id);
+        if taking {
+            return Ok(true);
+        }
+        let store = lock(&self.store)?;
+        Ok(sessions::live_for_dispute(store.conn(), dispute_id)?.is_some())
     }
 
     /// Handles one event from the dispute subscription. Events that are not
@@ -88,11 +129,15 @@ impl<S: DmSender> Notifier<S> {
             tracing::info!(dispute_id = %dispute.dispute_id, status = %dispute.status, ?change, "dispute event");
         }
         match &change {
-            Change::New => self.notify_new(&dispute, now).await?,
+            Change::New => {
+                self.notify_new(&dispute, now).await?;
+                if let Some(hook) = self.on_new_dispute.get() {
+                    hook(&dispute.dispute_id);
+                }
+            }
             Change::Taken => {
-                // Serbero does not take disputes yet (Phase 5), so the
-                // taker is always another solver.
-                let text = text::taken(&dispute.dispute_id, false);
+                let by_serbero = self.taken_by_serbero(&dispute.dispute_id)?;
+                let text = text::taken(&dispute.dispute_id, by_serbero);
                 notify_solvers(
                     &self.store,
                     &self.sender,

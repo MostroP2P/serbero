@@ -424,3 +424,12 @@ fn the_final_report_matches_the_spec() {
          mediation: yes · outcome: superseded · rounds: 1 · duration: 10 min"
     );
 }
+
+#[test]
+fn a_failed_opening_asks_the_solvers_to_take_over() {
+    assert_eq!(
+        opening_failed("d1"),
+        "Serbero took dispute d1 but could not start mediation.\n\
+         Please take it over; Serbero will not write to the parties."
+    );
+}

@@ -330,6 +330,47 @@ async fn every_final_status_resolves_the_dispute() {
 }
 
 #[tokio::test]
+async fn serberos_own_take_is_announced_as_serberos() {
+    let mostro = Keys::generate();
+    let n = notifier(&mostro);
+    n.handle_event(&dispute_event(&mostro, "d1", "initiated", 100), 1_000)
+        .await
+        .unwrap();
+    n.own_takes().lock().unwrap().insert("d1".into());
+
+    n.handle_event(&dispute_event(&mostro, "d1", "in-progress", 200), 1_100)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        n.sender.texts()[1],
+        "Dispute taken\ndispute: d1\ntaken by: Serbero"
+    );
+}
+
+#[tokio::test]
+async fn the_new_dispute_hook_runs_once_per_new_dispute() {
+    let mostro = Keys::generate();
+    let n = notifier(&mostro);
+    let seen = Arc::new(Mutex::new(Vec::<String>::new()));
+    let log = Arc::clone(&seen);
+    n.on_new_dispute(Box::new(move |id| log.lock().unwrap().push(id.to_owned())));
+    let event = dispute_event(&mostro, "d1", "initiated", 100);
+
+    n.handle_event(&event, 1_000).await.unwrap();
+    n.handle_event(&event, 1_001).await.unwrap();
+    n.handle_event(&dispute_event(&mostro, "d2", "in-progress", 100), 1_002)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        *seen.lock().unwrap(),
+        ["d1"],
+        "not for replays or disputes first seen taken"
+    );
+}
+
+#[tokio::test]
 async fn dispute_resolved_before_being_taken_is_resolved() {
     let mostro = Keys::generate();
     let n = notifier(&mostro);

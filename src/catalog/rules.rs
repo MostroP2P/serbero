@@ -10,8 +10,8 @@ pub const GUIDE_PREFIX: &str = "guide_";
 /// scrolling.
 pub const MAX_CHARS: usize = 450;
 
-/// The longest amount a template may be rendered with: `max_fiat_amount`
-/// is a `u64` and 0 means no limit, so the bound is `u64::MAX`, with
+/// The longest amount a template may be rendered with: Mostro's
+/// `fiat_amount` is a 64-bit integer, so the bound is `u64::MAX`, with
 /// decimals and a three-letter currency.
 const LONGEST_AMOUNT: Amount<'static> = Amount {
     value: "18446744073709551615.99",
