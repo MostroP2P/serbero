@@ -8,6 +8,8 @@
 
 use std::collections::BTreeSet;
 
+use serde::Serialize;
+
 use crate::judge::facts::Facts;
 use crate::store::sessions::Party;
 
@@ -68,7 +70,11 @@ pub mod template {
 }
 
 /// What Serbero does after a turn (`docs/spec.md` §7.3).
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Serialized as `{"ask": {"buyer": [...], "seller": [...]}}`,
+/// `{"guide": "payment_arrived"}`, `{"handoff": "fraud_signal"}` or
+/// `"wait"`, and stored with each evaluation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Action {
     /// Send these templates, in order, to each party.
     Ask {
@@ -84,7 +90,8 @@ pub enum Action {
 }
 
 /// A self-resolution path (`docs/spec.md` §7.4).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Path {
     /// The seller says the fiat arrived.
     PaymentArrived,
@@ -93,7 +100,8 @@ pub enum Path {
 }
 
 /// Why a session goes to a human (`docs/spec.md` §7.6).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum HandoffReason {
     SelfResolutionStalled,
     FactsGathered,

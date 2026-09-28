@@ -4,8 +4,10 @@
 //! re-derived from the stored trade pubkeys and re-subscribed from the
 //! stored cursors; inner-id dedup in `messages` makes the replay harmless.
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
+
+use tokio::sync::mpsc::UnboundedSender;
 
 use nostr_sdk::prelude::*;
 
@@ -27,6 +29,8 @@ pub struct Chats {
     store: Arc<Mutex<Store>>,
     inbox: Mutex<Inbox>,
     registry: Registry,
+    /// Where accepted party messages are announced, by session id.
+    forward: OnceLock<UnboundedSender<String>>,
 }
 
 impl Chats {
@@ -43,6 +47,16 @@ impl Chats {
             store,
             inbox: Mutex::new(Inbox::new(max_message_chars)),
             registry,
+            forward: OnceLock::new(),
+        }
+    }
+
+    /// Announces the session id of every accepted party message on `to`,
+    /// so mediation can settle and judge the turn. Only the first target is
+    /// kept.
+    pub fn forward_to(&self, to: UnboundedSender<String>) {
+        if self.forward.set(to).is_err() {
+            tracing::warn!("chat messages are already forwarded");
         }
     }
 
@@ -114,12 +128,19 @@ impl Chats {
                 continue;
             }
             match self.handle(&event) {
-                Ok(Ok(received)) => tracing::info!(
-                    session_id = %received.session_id,
-                    party = %received.party,
-                    attachments = received.attachments,
-                    "party message received"
-                ),
+                Ok(Ok(received)) => {
+                    tracing::info!(
+                        session_id = %received.session_id,
+                        party = %received.party,
+                        attachments = received.attachments,
+                        "party message received"
+                    );
+                    if let Some(forward) = self.forward.get()
+                        && forward.send(received.session_id).is_err()
+                    {
+                        tracing::warn!("mediation stopped; party message not forwarded");
+                    }
+                }
                 Ok(Err(Rejected::UnknownAuthor)) => {}
                 Ok(Err(rejected)) => {
                     tracing::debug!(event_id = %event.id, ?rejected, "chat event dropped")

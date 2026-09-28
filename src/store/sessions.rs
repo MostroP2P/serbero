@@ -59,6 +59,15 @@ impl Session {
         }
     }
 
+    /// The language the party is addressed in: detected, or `default`.
+    pub fn language<'a>(&'a self, party: Party, default: &'a str) -> &'a str {
+        match party {
+            Party::Buyer => self.buyer_lang.as_deref(),
+            Party::Seller => self.seller_lang.as_deref(),
+        }
+        .unwrap_or(default)
+    }
+
     pub fn chat_cursor(&self, party: Party) -> Option<i64> {
         match party {
             Party::Buyer => self.buyer_chat_cursor,
@@ -150,6 +159,34 @@ pub fn list_live(conn: &Connection) -> Result<Vec<Session>> {
     ))?;
     let rows = stmt.query_map([], from_row)?;
     rows.map(|row| row?).collect()
+}
+
+/// Records the language a party is addressed in.
+pub fn set_language(
+    conn: &Connection,
+    session_id: &str,
+    party: Party,
+    lang: &str,
+    now: i64,
+) -> Result<bool> {
+    let column = match party {
+        Party::Buyer => "buyer_lang",
+        Party::Seller => "seller_lang",
+    };
+    let updated = conn.execute(
+        &format!("UPDATE sessions SET {column} = ?2, updated_at = ?3 WHERE session_id = ?1"),
+        params![session_id, lang, now],
+    )?;
+    Ok(updated == 1)
+}
+
+/// Counts one question round (`docs/judgments.md` §4.1).
+pub fn increment_rounds(conn: &Connection, session_id: &str, now: i64) -> Result<()> {
+    conn.execute(
+        "UPDATE sessions SET rounds = rounds + 1, updated_at = ?2 WHERE session_id = ?1",
+        params![session_id, now],
+    )?;
+    Ok(())
 }
 
 /// Whether the dispute ever had a session, live or ended. Mediation opens
@@ -332,6 +369,33 @@ pub(crate) mod testing {
 mod tests {
     use super::testing::{new_session, store_with_session};
     use super::*;
+
+    #[test]
+    fn a_partys_language_is_stored_separately() {
+        let store = store_with_session();
+
+        assert!(set_language(store.conn(), "s1", Party::Seller, "es", 300).unwrap());
+
+        let session = get(store.conn(), "s1").unwrap().unwrap();
+        assert_eq!(session.seller_lang.as_deref(), Some("es"));
+        assert_eq!(session.buyer_lang, None);
+        assert_eq!(session.language(Party::Seller, "en"), "es");
+        assert_eq!(
+            session.language(Party::Buyer, "en"),
+            "en",
+            "the default until detected"
+        );
+    }
+
+    #[test]
+    fn rounds_count_up() {
+        let store = store_with_session();
+
+        increment_rounds(store.conn(), "s1", 300).unwrap();
+        increment_rounds(store.conn(), "s1", 301).unwrap();
+
+        assert_eq!(get(store.conn(), "s1").unwrap().unwrap().rounds, 2);
+    }
 
     #[test]
     fn any_session_counts_for_a_dispute_even_after_it_ended() {

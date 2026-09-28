@@ -21,7 +21,7 @@ use serbero::chat::channels::Chats;
 use serbero::config::Permission;
 use serbero::error::Result as SerberoResult;
 use serbero::mediation::eligibility::Ineligible;
-use serbero::mediation::{Mediator, Opening};
+use serbero::mediation::{MediationSettings, Mediator, Opening, ReadyJudge};
 use serbero::mostro::chat::ChannelKeys;
 use serbero::nostr::dm::DmSender;
 use serbero::notifier::Solver;
@@ -46,6 +46,41 @@ impl DmSender for Outbox {
 impl Outbox {
     fn texts(&self) -> Vec<String> {
         self.0.lock().unwrap().clone()
+    }
+}
+
+/// Opening never calls the judge; this one fails if it is called.
+struct NeverJudge;
+
+impl serbero::judge::Judge for NeverJudge {
+    fn id(&self) -> &str {
+        "test/never"
+    }
+
+    fn capabilities(&self) -> serbero::judge::Capabilities {
+        serbero::judge::Capabilities {
+            question_kinds: vec![],
+            max_choice_options: 0,
+            max_score_levels: 0,
+            max_context_tokens: None,
+        }
+    }
+
+    fn evaluate<'a>(
+        &'a self,
+        _state: &'a serde_json::Value,
+        _questions: &'a serbero::judge::QuestionSet,
+    ) -> futures_util::future::BoxFuture<
+        'a,
+        Result<serbero::judge::Judged, serbero::judge::JudgeError>,
+    > {
+        panic!("opening must not call the judge")
+    }
+
+    fn health_check(
+        &self,
+    ) -> futures_util::future::BoxFuture<'_, Result<(), serbero::judge::JudgeError>> {
+        Box::pin(async { Ok(()) })
     }
 }
 
@@ -221,16 +256,32 @@ async fn harness(
         gate: Arc::default(),
         chats,
         catalogs: Catalogs::embedded().unwrap(),
-        enabled,
-        default_language: "en".into(),
+        settings: MediationSettings {
+            enabled,
+            default_language: "en".into(),
+            languages: vec!["en".into(), "es".into(), "pt".into()],
+            max_rounds: 3,
+            max_message_chars: 2000,
+        },
         sender: outbox.clone(),
         solvers: vec![Solver {
             pubkey: Keys::generate().public_key(),
             permission: Permission::Write,
         }],
         own_takes: Arc::default(),
-        ready: ready.into(),
+        judge: Default::default(),
     };
+    if ready {
+        mediator.set_ready(ReadyJudge {
+            judge: Arc::new(NeverJudge),
+            thresholds: serde_json::from_value(serde_json::json!({
+                "guide": 0.9, "fact": 0.8, "human_request": 0.8,
+                "fraud": 0.6, "conflict": 0.75, "outside_scope": 0.8
+            }))
+            .unwrap(),
+            turn: serbero::judge::questions::TurnQuestions::new(&[]),
+        });
+    }
     Harness {
         mediator,
         serbero,

@@ -7,9 +7,11 @@
 //! parties, and a human solver can take it over at any time.
 
 pub mod eligibility;
+pub mod history;
+pub mod settle;
+pub mod turn;
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
 use mostro_core::dispute::SolverDisputeInfo;
@@ -72,6 +74,24 @@ pub async fn check_judge(
     })
 }
 
+/// The `[mediation]` settings a session needs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MediationSettings {
+    pub enabled: bool,
+    pub default_language: String,
+    /// Enabled language codes (`[mediation].languages`).
+    pub languages: Vec<String>,
+    pub max_rounds: u32,
+    pub max_message_chars: usize,
+}
+
+/// A judge that passed its startup checks, with what judging needs.
+pub struct ReadyJudge {
+    pub judge: Arc<dyn crate::judge::Judge>,
+    pub thresholds: crate::config::Thresholds,
+    pub turn: crate::judge::questions::TurnQuestions,
+}
+
 /// What mediation needs from the rest of the daemon.
 pub struct Mediator<S> {
     pub client: Client,
@@ -81,13 +101,13 @@ pub struct Mediator<S> {
     pub gate: Arc<OutboundGate>,
     pub chats: Arc<Chats>,
     pub catalogs: Catalogs,
-    pub enabled: bool,
-    pub default_language: String,
+    pub settings: MediationSettings,
     pub sender: S,
     pub solvers: Vec<Solver>,
     pub own_takes: OwnTakes,
-    /// Set once the judge passed its startup checks.
-    pub ready: AtomicBool,
+    /// Set once the judge passed its startup checks; no dispute is taken
+    /// and no turn is judged before.
+    pub judge: RwLock<Option<Arc<ReadyJudge>>>,
 }
 
 /// How an attempt to mediate a dispute ended.
@@ -105,8 +125,15 @@ pub enum Opening {
 }
 
 impl<S: DmSender> Mediator<S> {
-    pub fn set_ready(&self, ready: bool) {
-        self.ready.store(ready, Ordering::SeqCst);
+    pub fn set_ready(&self, judge: ReadyJudge) {
+        if let Ok(mut slot) = self.judge.write() {
+            *slot = Some(Arc::new(judge));
+        }
+    }
+
+    /// The judge, once it passed its startup checks.
+    pub fn ready_judge(&self) -> Option<Arc<ReadyJudge>> {
+        self.judge.read().ok().and_then(|slot| slot.clone())
     }
 
     /// Mediates the dispute if it is eligible; every outcome is logged and
@@ -160,8 +187,8 @@ impl<S: DmSender> Mediator<S> {
             .lock()
             .map_err(|_| Error::Schema("own takes lock poisoned".into()))?;
         let candidate = Candidate {
-            enabled: self.enabled,
-            ready: self.ready.load(Ordering::SeqCst),
+            enabled: self.settings.enabled,
+            ready: self.ready_judge().is_some(),
             lifecycle,
             had_session,
             taking: taking.contains(dispute_id),
@@ -305,8 +332,10 @@ impl<S: DmSender> Mediator<S> {
     async fn greet(&self, session: &Session) -> Result<()> {
         let catalog = self
             .catalogs
-            .get(&self.default_language)
-            .ok_or_else(|| Error::Catalog(format!("no catalog for {}", self.default_language)))?;
+            .get(&self.settings.default_language)
+            .ok_or_else(|| {
+                Error::Catalog(format!("no catalog for {}", self.settings.default_language))
+            })?;
         let amount = match (&session.fiat_amount, &session.fiat_code) {
             (Some(value), Some(currency)) => Some(Amount { value, currency }),
             _ => None,
@@ -323,7 +352,7 @@ impl<S: DmSender> Mediator<S> {
                     party,
                     text: &text,
                     template_id: Some(question),
-                    lang: Some(&self.default_language),
+                    lang: Some(&self.settings.default_language),
                 },
             )
             .await?;
