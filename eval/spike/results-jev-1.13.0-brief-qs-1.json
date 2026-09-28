@@ -1,0 +1,3649 @@
+{
+  "es-ar-sent-details-seller-checked-denies": {
+    "state": {
+      "roles": {
+        "buyer": "Pays the fiat money to the seller outside Mostro, then waits for the bitcoin.",
+        "seller": "Has bitcoin locked in Mostro escrow and must confirm the fiat arrived before the trade can finish.",
+        "serbero": "Automated assistant that asks both parties questions for the human solver. It cannot move funds or decide the dispute."
+      },
+      "order": {
+        "fiat_amount": "50000",
+        "fiat_code": "ARS",
+        "payment_method": "Mercado Pago",
+        "dispute_opened_by": "buyer"
+      },
+      "transcript": [
+        {
+          "id": "m1",
+          "from": "serbero",
+          "to": "buyer",
+          "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Enviaste el pago de 50.000 ARS de esta orden? Si lo hiciste, dime cuándo y desde qué cuenta o aplicación."
+        },
+        {
+          "id": "m2",
+          "from": "serbero",
+          "to": "seller",
+          "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Te llegó a tu cuenta el pago de 50.000 ARS de esta orden?"
+        },
+        {
+          "id": "m3",
+          "from": "buyer",
+          "text": "hola si, le transferí ayer a las 19:40 desde mi cuenta de MP"
+        },
+        {
+          "id": "m4",
+          "from": "buyer",
+          "text": "ahi va el comprobante",
+          "attachments": 1
+        },
+        {
+          "id": "m5",
+          "from": "seller",
+          "text": "no me llego nada, revise mp y no hay ningun ingreso de 50 lucas"
+        }
+      ],
+      "latest": {
+        "buyer": [
+          "m3",
+          "m4"
+        ],
+        "seller": [
+          "m5"
+        ]
+      }
+    },
+    "response": {
+      "model": "jev-1.13.0",
+      "answers": {
+        "quote_buyer_payment": {
+          "type": "choice",
+          "choice": "m3",
+          "confidence": 1.0,
+          "probabilities": {
+            "m3": 1.0,
+            "none": 0.0,
+            "m4": 0.0
+          }
+        },
+        "quote_buyer_details": {
+          "type": "choice",
+          "choice": "m3",
+          "confidence": 1.0,
+          "probabilities": {
+            "m3": 1.0,
+            "none": 0.0,
+            "m4": 0.0
+          }
+        },
+        "quote_seller_receipt": {
+          "type": "choice",
+          "choice": "m5",
+          "confidence": 1.0,
+          "probabilities": {
+            "none": 0.0,
+            "m5": 1.0
+          }
+        },
+        "quote_concern": {
+          "type": "choice",
+          "choice": "m5",
+          "confidence": 0.79,
+          "probabilities": {
+            "m3": 0.05,
+            "none": 0.01,
+            "m4": 0.09,
+            "m5": 0.85
+          }
+        },
+        "evidence_balance": {
+          "type": "score",
+          "score": 2.95,
+          "confidence": 0.96,
+          "legend": {
+            "0": "The buyer says they did not pay, or the conversation clearly indicates no payment was made.",
+            "1": "The buyer's claim to have paid is vague or contradicted and unsupported by details.",
+            "2": "There is not enough information to lean either way.",
+            "3": "The buyer gives specific, consistent payment details, but the seller has not confirmed receipt.",
+            "4": "The seller confirms the payment arrived."
+          },
+          "probabilities": {
+            "0": 0.0,
+            "1": 0.02,
+            "2": 0.0,
+            "3": 0.98,
+            "4": 0.0
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 1255,
+        "output_tokens": 184
+      },
+      "latency_ms": 769
+    }
+  },
+  "es-ve-sent-no-details": {
+    "state": {
+      "roles": {
+        "buyer": "Pays the fiat money to the seller outside Mostro, then waits for the bitcoin.",
+        "seller": "Has bitcoin locked in Mostro escrow and must confirm the fiat arrived before the trade can finish.",
+        "serbero": "Automated assistant that asks both parties questions for the human solver. It cannot move funds or decide the dispute."
+      },
+      "order": {
+        "fiat_amount": "3500",
+        "fiat_code": "VES",
+        "payment_method": "Pago Móvil",
+        "dispute_opened_by": "buyer"
+      },
+      "transcript": [
+        {
+          "id": "m1",
+          "from": "serbero",
+          "to": "buyer",
+          "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Enviaste el pago de 3.500 VES de esta orden? Si lo hiciste, dime cuándo y desde qué cuenta o aplicación."
+        },
+        {
+          "id": "m2",
+          "from": "serbero",
+          "to": "seller",
+          "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Te llegó a tu cuenta el pago de 3.500 VES de esta orden?"
+        },
+        {
+          "id": "m3",
+          "from": "buyer",
+          "text": "si ya pague"
+        },
+        {
+          "id": "m4",
+          "from": "buyer",
+          "text": "desde hace rato"
+        }
+      ],
+      "latest": {
+        "buyer": [
+          "m3",
+          "m4"
+        ],
+        "seller": []
+      }
+    },
+    "response": {
+      "model": "jev-1.13.0",
+      "answers": {
+        "quote_buyer_payment": {
+          "type": "choice",
+          "choice": "m3",
+          "confidence": 1.0,
+          "probabilities": {
+            "m4": 0.0,
+            "none": 0.0,
+            "m3": 1.0
+          }
+        },
+        "quote_buyer_details": {
+          "type": "choice",
+          "choice": "m4",
+          "confidence": 0.33,
+          "probabilities": {
+            "m4": 0.56,
+            "none": 0.27,
+            "m3": 0.17
+          }
+        },
+        "quote_concern": {
+          "type": "choice",
+          "choice": "m4",
+          "confidence": 0.35,
+          "probabilities": {
+            "m4": 0.57,
+            "none": 0.28,
+            "m3": 0.15
+          }
+        },
+        "evidence_balance": {
+          "type": "score",
+          "score": 1.03,
+          "confidence": 0.97,
+          "legend": {
+            "0": "The buyer says they did not pay, or the conversation clearly indicates no payment was made.",
+            "1": "The buyer's claim to have paid is vague or contradicted and unsupported by details.",
+            "2": "There is not enough information to lean either way.",
+            "3": "The buyer gives specific, consistent payment details, but the seller has not confirmed receipt.",
+            "4": "The seller confirms the payment arrived."
+          },
+          "probabilities": {
+            "0": 0.0,
+            "1": 0.98,
+            "2": 0.0,
+            "3": 0.02,
+            "4": 0.0
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 1107,
+        "output_tokens": 142
+      },
+      "latency_ms": 710
+    }
+  },
+  "es-mx-not-sent-driving": {
+    "state": {
+      "roles": {
+        "buyer": "Pays the fiat money to the seller outside Mostro, then waits for the bitcoin.",
+        "seller": "Has bitcoin locked in Mostro escrow and must confirm the fiat arrived before the trade can finish.",
+        "serbero": "Automated assistant that asks both parties questions for the human solver. It cannot move funds or decide the dispute."
+      },
+      "order": {
+        "fiat_amount": "1200",
+        "fiat_code": "MXN",
+        "payment_method": "SPEI",
+        "dispute_opened_by": "seller"
+      },
+      "transcript": [
+        {
+          "id": "m1",
+          "from": "serbero",
+          "to": "buyer",
+          "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Enviaste el pago de 1.200 MXN de esta orden? Si lo hiciste, dime cuándo y desde qué cuenta o aplicación."
+        },
+        {
+          "id": "m2",
+          "from": "serbero",
+          "to": "seller",
+          "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Te llegó a tu cuenta el pago de 1.200 MXN de esta orden?"
+        },
+        {
+          "id": "m3",
+          "from": "buyer",
+          "text": "no, todavía no lo he mandado, andaba manejando y no pude"
+        },
+        {
+          "id": "m4",
+          "from": "buyer",
+          "text": "ahorita que llegue a mi casa lo hago"
+        },
+        {
+          "id": "m5",
+          "from": "seller",
+          "text": "pues ya pasó más de una hora, yo no he recibido nada"
+        }
+      ],
+      "latest": {
+        "buyer": [
+          "m3",
+          "m4"
+        ],
+        "seller": [
+          "m5"
+        ]
+      }
+    },
+    "response": {
+      "model": "jev-1.13.0",
+      "answers": {
+        "quote_buyer_payment": {
+          "type": "choice",
+          "choice": "m3",
+          "confidence": 1.0,
+          "probabilities": {
+            "m4": 0.0,
+            "none": 0.0,
+            "m3": 1.0
+          }
+        },
+        "quote_buyer_details": {
+          "type": "choice",
+          "choice": "none",
+          "confidence": 0.43,
+          "probabilities": {
+            "m4": 0.07,
+            "none": 0.62,
+            "m3": 0.31
+          }
+        },
+        "quote_seller_receipt": {
+          "type": "choice",
+          "choice": "m5",
+          "confidence": 1.0,
+          "probabilities": {
+            "none": 0.0,
+            "m5": 1.0
+          }
+        },
+        "quote_concern": {
+          "type": "choice",
+          "choice": "m3",
+          "confidence": 0.62,
+          "probabilities": {
+            "m4": 0.16,
+            "none": 0.01,
+            "m5": 0.12,
+            "m3": 0.71
+          }
+        },
+        "evidence_balance": {
+          "type": "score",
+          "score": 0.0,
+          "confidence": 1.0,
+          "legend": {
+            "0": "The buyer says they did not pay, or the conversation clearly indicates no payment was made.",
+            "1": "The buyer's claim to have paid is vague or contradicted and unsupported by details.",
+            "2": "There is not enough information to lean either way.",
+            "3": "The buyer gives specific, consistent payment details, but the seller has not confirmed receipt.",
+            "4": "The seller confirms the payment arrived."
+          },
+          "probabilities": {
+            "0": 1.0,
+            "1": 0.0,
+            "2": 0.0,
+            "3": 0.0,
+            "4": 0.0
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 1240,
+        "output_tokens": 183
+      },
+      "latency_ms": 718
+    }
+  },
+  "es-es-seller-received-bizum-buyer-silent": {
+    "state": {
+      "roles": {
+        "buyer": "Pays the fiat money to the seller outside Mostro, then waits for the bitcoin.",
+        "seller": "Has bitcoin locked in Mostro escrow and must confirm the fiat arrived before the trade can finish.",
+        "serbero": "Automated assistant that asks both parties questions for the human solver. It cannot move funds or decide the dispute."
+      },
+      "order": {
+        "fiat_amount": "80",
+        "fiat_code": "EUR",
+        "payment_method": "Bizum",
+        "dispute_opened_by": "buyer"
+      },
+      "transcript": [
+        {
+          "id": "m1",
+          "from": "serbero",
+          "to": "buyer",
+          "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Enviaste el pago de 80 EUR de esta orden? Si lo hiciste, dime cuándo y desde qué cuenta o aplicación."
+        },
+        {
+          "id": "m2",
+          "from": "serbero",
+          "to": "seller",
+          "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Te llegó a tu cuenta el pago de 80 EUR de esta orden?"
+        },
+        {
+          "id": "m3",
+          "from": "seller",
+          "text": "sí sí, me ha llegado el bizum, perdonad que estaba currando y no lo había visto"
+        }
+      ],
+      "latest": {
+        "buyer": [],
+        "seller": [
+          "m3"
+        ]
+      }
+    },
+    "response": {
+      "model": "jev-1.13.0",
+      "answers": {
+        "quote_seller_receipt": {
+          "type": "choice",
+          "choice": "m3",
+          "confidence": 1.0,
+          "probabilities": {
+            "none": 0.0,
+            "m3": 1.0
+          }
+        },
+        "quote_concern": {
+          "type": "choice",
+          "choice": "m3",
+          "confidence": 0.55,
+          "probabilities": {
+            "none": 0.22,
+            "m3": 0.78
+          }
+        },
+        "evidence_balance": {
+          "type": "score",
+          "score": 3.99,
+          "confidence": 0.99,
+          "legend": {
+            "0": "The buyer says they did not pay, or the conversation clearly indicates no payment was made.",
+            "1": "The buyer's claim to have paid is vague or contradicted and unsupported by details.",
+            "2": "There is not enough information to lean either way.",
+            "3": "The buyer gives specific, consistent payment details, but the seller has not confirmed receipt.",
+            "4": "The seller confirms the payment arrived."
+          },
+          "probabilities": {
+            "0": 0.0,
+            "1": 0.0,
+            "2": 0.01,
+            "3": 0.0,
+            "4": 0.99
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 998,
+        "output_tokens": 86
+      },
+      "latency_ms": 723
+    }
+  },
+  "es-co-seller-sees-pending": {
+    "state": {
+      "roles": {
+        "buyer": "Pays the fiat money to the seller outside Mostro, then waits for the bitcoin.",
+        "seller": "Has bitcoin locked in Mostro escrow and must confirm the fiat arrived before the trade can finish.",
+        "serbero": "Automated assistant that asks both parties questions for the human solver. It cannot move funds or decide the dispute."
+      },
+      "order": {
+        "fiat_amount": "200000",
+        "fiat_code": "COP",
+        "payment_method": "Nequi",
+        "dispute_opened_by": "buyer"
+      },
+      "transcript": [
+        {
+          "id": "m1",
+          "from": "serbero",
+          "to": "buyer",
+          "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Enviaste el pago de 200.000 COP de esta orden? Si lo hiciste, dime cuándo y desde qué cuenta o aplicación."
+        },
+        {
+          "id": "m2",
+          "from": "serbero",
+          "to": "seller",
+          "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Te llegó a tu cuenta el pago de 200.000 COP de esta orden?"
+        },
+        {
+          "id": "m3",
+          "from": "buyer",
+          "text": "yo le envié por nequi a las 3:15pm, referencia M4471203"
+        },
+        {
+          "id": "m4",
+          "from": "seller",
+          "text": "me aparece como pendiente en nequi, todavia no se ve reflejado en el saldo"
+        }
+      ],
+      "latest": {
+        "buyer": [
+          "m3"
+        ],
+        "seller": [
+          "m4"
+        ]
+      }
+    },
+    "response": {
+      "model": "jev-1.13.0",
+      "answers": {
+        "quote_buyer_payment": {
+          "type": "choice",
+          "choice": "m3",
+          "confidence": 1.0,
+          "probabilities": {
+            "m3": 1.0,
+            "none": 0.0
+          }
+        },
+        "quote_buyer_details": {
+          "type": "choice",
+          "choice": "m3",
+          "confidence": 1.0,
+          "probabilities": {
+            "m3": 1.0,
+            "none": 0.0
+          }
+        },
+        "quote_seller_receipt": {
+          "type": "choice",
+          "choice": "m4",
+          "confidence": 1.0,
+          "probabilities": {
+            "none": 0.0,
+            "m4": 1.0
+          }
+        },
+        "quote_concern": {
+          "type": "choice",
+          "choice": "m4",
+          "confidence": 0.66,
+          "probabilities": {
+            "m3": 0.06,
+            "none": 0.17,
+            "m4": 0.77
+          }
+        },
+        "evidence_balance": {
+          "type": "score",
+          "score": 2.99,
+          "confidence": 0.99,
+          "legend": {
+            "0": "The buyer says they did not pay, or the conversation clearly indicates no payment was made.",
+            "1": "The buyer's claim to have paid is vague or contradicted and unsupported by details.",
+            "2": "There is not enough information to lean either way.",
+            "3": "The buyer gives specific, consistent payment details, but the seller has not confirmed receipt.",
+            "4": "The seller confirms the payment arrived."
+          },
+          "probabilities": {
+            "0": 0.0,
+            "1": 0.0,
+            "2": 0.0,
+            "3": 1.0,
+            "4": 0.0
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 1194,
+        "output_tokens": 160
+      },
+      "latency_ms": 331
+    }
+  },
+  "es-ve-impatient-not-human": {
+    "state": {
+      "roles": {
+        "buyer": "Pays the fiat money to the seller outside Mostro, then waits for the bitcoin.",
+        "seller": "Has bitcoin locked in Mostro escrow and must confirm the fiat arrived before the trade can finish.",
+        "serbero": "Automated assistant that asks both parties questions for the human solver. It cannot move funds or decide the dispute."
+      },
+      "order": {
+        "fiat_amount": "5000",
+        "fiat_code": "VES",
+        "payment_method": "Pago Móvil",
+        "dispute_opened_by": "buyer"
+      },
+      "transcript": [
+        {
+          "id": "m1",
+          "from": "serbero",
+          "to": "buyer",
+          "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Enviaste el pago de 5.000 VES de esta orden? Si lo hiciste, dime cuándo y desde qué cuenta o aplicación."
+        },
+        {
+          "id": "m2",
+          "from": "serbero",
+          "to": "seller",
+          "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Te llegó a tu cuenta el pago de 5.000 VES de esta orden?"
+        },
+        {
+          "id": "m3",
+          "from": "buyer",
+          "text": "esto está tardando demasiado, ya pagué hace 3 horas por pago movil y nada"
+        },
+        {
+          "id": "m4",
+          "from": "buyer",
+          "text": "que fastidio"
+        }
+      ],
+      "latest": {
+        "buyer": [
+          "m3",
+          "m4"
+        ],
+        "seller": []
+      }
+    },
+    "response": {
+      "model": "jev-1.13.0",
+      "answers": {
+        "quote_buyer_payment": {
+          "type": "choice",
+          "choice": "m3",
+          "confidence": 1.0,
+          "probabilities": {
+            "m4": 0.0,
+            "m3": 1.0,
+            "none": 0.0
+          }
+        },
+        "quote_buyer_details": {
+          "type": "choice",
+          "choice": "m3",
+          "confidence": 1.0,
+          "probabilities": {
+            "m4": 0.0,
+            "m3": 1.0,
+            "none": 0.0
+          }
+        },
+        "quote_concern": {
+          "type": "choice",
+          "choice": "m3",
+          "confidence": 0.84,
+          "probabilities": {
+            "m4": 0.02,
+            "m3": 0.89,
+            "none": 0.09
+          }
+        },
+        "evidence_balance": {
+          "type": "score",
+          "score": 1.92,
+          "confidence": 0.24,
+          "legend": {
+            "0": "The buyer says they did not pay, or the conversation clearly indicates no payment was made.",
+            "1": "The buyer's claim to have paid is vague or contradicted and unsupported by details.",
+            "2": "There is not enough information to lean either way.",
+            "3": "The buyer gives specific, consistent payment details, but the seller has not confirmed receipt.",
+            "4": "The seller confirms the payment arrived."
+          },
+          "probabilities": {
+            "0": 0.0,
+            "1": 0.54,
+            "2": 0.01,
+            "3": 0.45,
+            "4": 0.0
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 1122,
+        "output_tokens": 142
+      },
+      "latency_ms": 324
+    }
+  },
+  "es-mx-seller-denies-asks-admin": {
+    "state": {
+      "roles": {
+        "buyer": "Pays the fiat money to the seller outside Mostro, then waits for the bitcoin.",
+        "seller": "Has bitcoin locked in Mostro escrow and must confirm the fiat arrived before the trade can finish.",
+        "serbero": "Automated assistant that asks both parties questions for the human solver. It cannot move funds or decide the dispute."
+      },
+      "order": {
+        "fiat_amount": "2500",
+        "fiat_code": "MXN",
+        "payment_method": "SPEI",
+        "dispute_opened_by": "seller"
+      },
+      "transcript": [
+        {
+          "id": "m1",
+          "from": "serbero",
+          "to": "buyer",
+          "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Enviaste el pago de 2.500 MXN de esta orden? Si lo hiciste, dime cuándo y desde qué cuenta o aplicación."
+        },
+        {
+          "id": "m2",
+          "from": "serbero",
+          "to": "seller",
+          "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Te llegó a tu cuenta el pago de 2.500 MXN de esta orden?"
+        },
+        {
+          "id": "m3",
+          "from": "seller",
+          "text": "no me llegó nada. pásenme con un admin por favor"
+        }
+      ],
+      "latest": {
+        "buyer": [],
+        "seller": [
+          "m3"
+        ]
+      }
+    },
+    "response": {
+      "model": "jev-1.13.0",
+      "answers": {
+        "quote_seller_receipt": {
+          "type": "choice",
+          "choice": "m3",
+          "confidence": 1.0,
+          "probabilities": {
+            "none": 0.0,
+            "m3": 1.0
+          }
+        },
+        "quote_concern": {
+          "type": "choice",
+          "choice": "m3",
+          "confidence": 0.82,
+          "probabilities": {
+            "none": 0.09,
+            "m3": 0.91
+          }
+        },
+        "evidence_balance": {
+          "type": "score",
+          "score": 1.49,
+          "confidence": 0.57,
+          "legend": {
+            "0": "The buyer says they did not pay, or the conversation clearly indicates no payment was made.",
+            "1": "The buyer's claim to have paid is vague or contradicted and unsupported by details.",
+            "2": "There is not enough information to lean either way.",
+            "3": "The buyer gives specific, consistent payment details, but the seller has not confirmed receipt.",
+            "4": "The seller confirms the payment arrived."
+          },
+          "probabilities": {
+            "0": 0.21,
+            "1": 0.09,
+            "2": 0.7,
+            "3": 0.0,
+            "4": 0.0
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 1002,
+        "output_tokens": 86
+      },
+      "latency_ms": 283
+    }
+  },
+  "es-buyer-greeting-only": {
+    "state": {
+      "roles": {
+        "buyer": "Pays the fiat money to the seller outside Mostro, then waits for the bitcoin.",
+        "seller": "Has bitcoin locked in Mostro escrow and must confirm the fiat arrived before the trade can finish.",
+        "serbero": "Automated assistant that asks both parties questions for the human solver. It cannot move funds or decide the dispute."
+      },
+      "order": {
+        "fiat_amount": "15000",
+        "fiat_code": "ARS",
+        "payment_method": "Mercado Pago",
+        "dispute_opened_by": "seller"
+      },
+      "transcript": [
+        {
+          "id": "m1",
+          "from": "serbero",
+          "to": "buyer",
+          "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Enviaste el pago de 15.000 ARS de esta orden? Si lo hiciste, dime cuándo y desde qué cuenta o aplicación."
+        },
+        {
+          "id": "m2",
+          "from": "serbero",
+          "to": "seller",
+          "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Te llegó a tu cuenta el pago de 15.000 ARS de esta orden?"
+        },
+        {
+          "id": "m3",
+          "from": "buyer",
+          "text": "hola"
+        },
+        {
+          "id": "m4",
+          "from": "buyer",
+          "text": "??"
+        }
+      ],
+      "latest": {
+        "buyer": [
+          "m3",
+          "m4"
+        ],
+        "seller": []
+      }
+    },
+    "response": {
+      "model": "jev-1.13.0",
+      "answers": {
+        "quote_buyer_payment": {
+          "type": "choice",
+          "choice": "none",
+          "confidence": 1.0,
+          "probabilities": {
+            "m3": 0.0,
+            "none": 1.0,
+            "m4": 0.0
+          }
+        },
+        "quote_buyer_details": {
+          "type": "choice",
+          "choice": "none",
+          "confidence": 1.0,
+          "probabilities": {
+            "m3": 0.0,
+            "none": 1.0,
+            "m4": 0.0
+          }
+        },
+        "quote_concern": {
+          "type": "choice",
+          "choice": "m4",
+          "confidence": 0.44,
+          "probabilities": {
+            "m3": 0.13,
+            "none": 0.24,
+            "m4": 0.63
+          }
+        },
+        "evidence_balance": {
+          "type": "score",
+          "score": 1.91,
+          "confidence": 0.93,
+          "legend": {
+            "0": "The buyer says they did not pay, or the conversation clearly indicates no payment was made.",
+            "1": "The buyer's claim to have paid is vague or contradicted and unsupported by details.",
+            "2": "There is not enough information to lean either way.",
+            "3": "The buyer gives specific, consistent payment details, but the seller has not confirmed receipt.",
+            "4": "The seller confirms the payment arrived."
+          },
+          "probabilities": {
+            "0": 0.0,
+            "1": 0.08,
+            "2": 0.92,
+            "3": 0.0,
+            "4": 0.0
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 1104,
+        "output_tokens": 140
+      },
+      "latency_ms": 301
+    }
+  },
+  "es-seller-estas-ahi": {
+    "state": {
+      "roles": {
+        "buyer": "Pays the fiat money to the seller outside Mostro, then waits for the bitcoin.",
+        "seller": "Has bitcoin locked in Mostro escrow and must confirm the fiat arrived before the trade can finish.",
+        "serbero": "Automated assistant that asks both parties questions for the human solver. It cannot move funds or decide the dispute."
+      },
+      "order": {
+        "fiat_amount": "6000",
+        "fiat_code": "CUP",
+        "payment_method": "Transfermóvil",
+        "dispute_opened_by": "buyer"
+      },
+      "transcript": [
+        {
+          "id": "m1",
+          "from": "serbero",
+          "to": "buyer",
+          "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Enviaste el pago de 6.000 CUP de esta orden? Si lo hiciste, dime cuándo y desde qué cuenta o aplicación."
+        },
+        {
+          "id": "m2",
+          "from": "serbero",
+          "to": "seller",
+          "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Te llegó a tu cuenta el pago de 6.000 CUP de esta orden?"
+        },
+        {
+          "id": "m3",
+          "from": "seller",
+          "text": "hola buenas"
+        },
+        {
+          "id": "m4",
+          "from": "seller",
+          "text": "estas ahi?"
+        }
+      ],
+      "latest": {
+        "buyer": [],
+        "seller": [
+          "m3",
+          "m4"
+        ]
+      }
+    },
+    "response": {
+      "model": "jev-1.13.0",
+      "answers": {
+        "quote_seller_receipt": {
+          "type": "choice",
+          "choice": "none",
+          "confidence": 1.0,
+          "probabilities": {
+            "m4": 0.0,
+            "none": 1.0,
+            "m3": 0.0
+          }
+        },
+        "quote_concern": {
+          "type": "choice",
+          "choice": "none",
+          "confidence": 0.4,
+          "probabilities": {
+            "m4": 0.29,
+            "none": 0.6,
+            "m3": 0.11
+          }
+        },
+        "evidence_balance": {
+          "type": "score",
+          "score": 1.99,
+          "confidence": 0.99,
+          "legend": {
+            "0": "The buyer says they did not pay, or the conversation clearly indicates no payment was made.",
+            "1": "The buyer's claim to have paid is vague or contradicted and unsupported by details.",
+            "2": "There is not enough information to lean either way.",
+            "3": "The buyer gives specific, consistent payment details, but the seller has not confirmed receipt.",
+            "4": "The seller confirms the payment arrived."
+          },
+          "probabilities": {
+            "0": 0.0,
+            "1": 0.01,
+            "2": 0.99,
+            "3": 0.0,
+            "4": 0.0
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 1038,
+        "output_tokens": 100
+      },
+      "latency_ms": 344
+    }
+  },
+  "es-fraud-chargeback": {
+    "state": {
+      "roles": {
+        "buyer": "Pays the fiat money to the seller outside Mostro, then waits for the bitcoin.",
+        "seller": "Has bitcoin locked in Mostro escrow and must confirm the fiat arrived before the trade can finish.",
+        "serbero": "Automated assistant that asks both parties questions for the human solver. It cannot move funds or decide the dispute."
+      },
+      "order": {
+        "fiat_amount": "200",
+        "fiat_code": "EUR",
+        "payment_method": "Revolut",
+        "dispute_opened_by": "seller"
+      },
+      "transcript": [
+        {
+          "id": "m1",
+          "from": "serbero",
+          "to": "buyer",
+          "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Enviaste el pago de 200 EUR de esta orden? Si lo hiciste, dime cuándo y desde qué cuenta o aplicación."
+        },
+        {
+          "id": "m2",
+          "from": "serbero",
+          "to": "seller",
+          "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Te llegó a tu cuenta el pago de 200 EUR de esta orden?"
+        },
+        {
+          "id": "m3",
+          "from": "seller",
+          "text": "el comprador me pagó y a los dos días hizo un contracargo, el dinero se me ha devuelto a su cuenta"
+        }
+      ],
+      "latest": {
+        "buyer": [],
+        "seller": [
+          "m3"
+        ]
+      }
+    },
+    "response": {
+      "model": "jev-1.13.0",
+      "answers": {
+        "quote_seller_receipt": {
+          "type": "choice",
+          "choice": "m3",
+          "confidence": 1.0,
+          "probabilities": {
+            "none": 0.0,
+            "m3": 1.0
+          }
+        },
+        "quote_concern": {
+          "type": "choice",
+          "choice": "m3",
+          "confidence": 1.0,
+          "probabilities": {
+            "none": 0.0,
+            "m3": 1.0
+          }
+        },
+        "evidence_balance": {
+          "type": "score",
+          "score": 3.69,
+          "confidence": 0.74,
+          "legend": {
+            "0": "The buyer says they did not pay, or the conversation clearly indicates no payment was made.",
+            "1": "The buyer's claim to have paid is vague or contradicted and unsupported by details.",
+            "2": "There is not enough information to lean either way.",
+            "3": "The buyer gives specific, consistent payment details, but the seller has not confirmed receipt.",
+            "4": "The seller confirms the payment arrived."
+          },
+          "probabilities": {
+            "0": 0.0,
+            "1": 0.07,
+            "2": 0.03,
+            "3": 0.0,
+            "4": 0.9
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 1007,
+        "output_tokens": 86
+      },
+      "latency_ms": 316
+    }
+  },
+  "es-fraud-outside-mostro": {
+    "state": {
+      "roles": {
+        "buyer": "Pays the fiat money to the seller outside Mostro, then waits for the bitcoin.",
+        "seller": "Has bitcoin locked in Mostro escrow and must confirm the fiat arrived before the trade can finish.",
+        "serbero": "Automated assistant that asks both parties questions for the human solver. It cannot move funds or decide the dispute."
+      },
+      "order": {
+        "fiat_amount": "100",
+        "fiat_code": "USD",
+        "payment_method": "Zelle",
+        "dispute_opened_by": "seller"
+      },
+      "transcript": [
+        {
+          "id": "m1",
+          "from": "serbero",
+          "to": "buyer",
+          "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Enviaste el pago de 100 USD de esta orden? Si lo hiciste, dime cuándo y desde qué cuenta o aplicación."
+        },
+        {
+          "id": "m2",
+          "from": "serbero",
+          "to": "seller",
+          "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Te llegó a tu cuenta el pago de 100 USD de esta orden?"
+        },
+        {
+          "id": "m3",
+          "from": "buyer",
+          "text": "mejor cerremos esto por whatsapp, pásame tu número y te pago por fuera, tu cancela la orden y listo"
+        }
+      ],
+      "latest": {
+        "buyer": [
+          "m3"
+        ],
+        "seller": []
+      }
+    },
+    "response": {
+      "model": "jev-1.13.0",
+      "answers": {
+        "quote_buyer_payment": {
+          "type": "choice",
+          "choice": "none",
+          "confidence": 0.29,
+          "probabilities": {
+            "none": 0.64,
+            "m3": 0.36
+          }
+        },
+        "quote_buyer_details": {
+          "type": "choice",
+          "choice": "none",
+          "confidence": 0.7,
+          "probabilities": {
+            "none": 0.85,
+            "m3": 0.15
+          }
+        },
+        "quote_concern": {
+          "type": "choice",
+          "choice": "m3",
+          "confidence": 1.0,
+          "probabilities": {
+            "m3": 1.0,
+            "none": 0.0
+          }
+        },
+        "evidence_balance": {
+          "type": "score",
+          "score": 0.64,
+          "confidence": 0.47,
+          "legend": {
+            "0": "The buyer says they did not pay, or the conversation clearly indicates no payment was made.",
+            "1": "The buyer's claim to have paid is vague or contradicted and unsupported by details.",
+            "2": "There is not enough information to lean either way.",
+            "3": "The buyer gives specific, consistent payment details, but the seller has not confirmed receipt.",
+            "4": "The seller confirms the payment arrived."
+          },
+          "probabilities": {
+            "0": 0.51,
+            "1": 0.35,
+            "2": 0.14,
+            "3": 0.0,
+            "4": 0.0
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 1065,
+        "output_tokens": 116
+      },
+      "latency_ms": 345
+    }
+  },
+  "es-fraud-seed-request": {
+    "state": {
+      "roles": {
+        "buyer": "Pays the fiat money to the seller outside Mostro, then waits for the bitcoin.",
+        "seller": "Has bitcoin locked in Mostro escrow and must confirm the fiat arrived before the trade can finish.",
+        "serbero": "Automated assistant that asks both parties questions for the human solver. It cannot move funds or decide the dispute."
+      },
+      "order": {
+        "fiat_amount": "3000",
+        "fiat_code": "MXN",
+        "payment_method": "Mercado Pago",
+        "dispute_opened_by": "buyer"
+      },
+      "transcript": [
+        {
+          "id": "m1",
+          "from": "serbero",
+          "to": "buyer",
+          "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Enviaste el pago de 3.000 MXN de esta orden? Si lo hiciste, dime cuándo y desde qué cuenta o aplicación."
+        },
+        {
+          "id": "m2",
+          "from": "serbero",
+          "to": "seller",
+          "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Te llegó a tu cuenta el pago de 3.000 MXN de esta orden?"
+        },
+        {
+          "id": "m3",
+          "from": "buyer",
+          "text": "ya te deposité desde mi cuenta de mercado pago a las 12:30"
+        },
+        {
+          "id": "m4",
+          "from": "seller",
+          "text": "para verificar el pago necesito que me pases tus 12 palabras de la wallet"
+        }
+      ],
+      "latest": {
+        "buyer": [
+          "m3"
+        ],
+        "seller": [
+          "m4"
+        ]
+      }
+    },
+    "response": {
+      "model": "jev-1.13.0",
+      "answers": {
+        "quote_buyer_payment": {
+          "type": "choice",
+          "choice": "m3",
+          "confidence": 1.0,
+          "probabilities": {
+            "none": 0.0,
+            "m3": 1.0
+          }
+        },
+        "quote_buyer_details": {
+          "type": "choice",
+          "choice": "m3",
+          "confidence": 1.0,
+          "probabilities": {
+            "none": 0.0,
+            "m3": 1.0
+          }
+        },
+        "quote_seller_receipt": {
+          "type": "choice",
+          "choice": "none",
+          "confidence": 0.6,
+          "probabilities": {
+            "none": 0.8,
+            "m4": 0.2
+          }
+        },
+        "quote_concern": {
+          "type": "choice",
+          "choice": "m4",
+          "confidence": 0.99,
+          "probabilities": {
+            "none": 0.0,
+            "m4": 1.0,
+            "m3": 0.0
+          }
+        },
+        "evidence_balance": {
+          "type": "score",
+          "score": 2.91,
+          "confidence": 0.92,
+          "legend": {
+            "0": "The buyer says they did not pay, or the conversation clearly indicates no payment was made.",
+            "1": "The buyer's claim to have paid is vague or contradicted and unsupported by details.",
+            "2": "There is not enough information to lean either way.",
+            "3": "The buyer gives specific, consistent payment details, but the seller has not confirmed receipt.",
+            "4": "The seller confirms the payment arrived."
+          },
+          "probabilities": {
+            "0": 0.0,
+            "1": 0.04,
+            "2": 0.0,
+            "3": 0.96,
+            "4": 0.0
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 1187,
+        "output_tokens": 159
+      },
+      "latency_ms": 334
+    }
+  },
+  "es-fraud-altered-receipt": {
+    "state": {
+      "roles": {
+        "buyer": "Pays the fiat money to the seller outside Mostro, then waits for the bitcoin.",
+        "seller": "Has bitcoin locked in Mostro escrow and must confirm the fiat arrived before the trade can finish.",
+        "serbero": "Automated assistant that asks both parties questions for the human solver. It cannot move funds or decide the dispute."
+      },
+      "order": {
+        "fiat_amount": "45000",
+        "fiat_code": "ARS",
+        "payment_method": "Ualá",
+        "dispute_opened_by": "buyer"
+      },
+      "transcript": [
+        {
+          "id": "m1",
+          "from": "serbero",
+          "to": "buyer",
+          "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Enviaste el pago de 45.000 ARS de esta orden? Si lo hiciste, dime cuándo y desde qué cuenta o aplicación."
+        },
+        {
+          "id": "m2",
+          "from": "serbero",
+          "to": "seller",
+          "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Te llegó a tu cuenta el pago de 45.000 ARS de esta orden?"
+        },
+        {
+          "id": "m3",
+          "from": "buyer",
+          "text": "ya pagué, acá está el comprobante",
+          "attachments": 1
+        },
+        {
+          "id": "m4",
+          "from": "seller",
+          "text": "ese comprobante está editado, llamé al banco y esa operación no existe. no me entró nada"
+        }
+      ],
+      "latest": {
+        "buyer": [
+          "m3"
+        ],
+        "seller": [
+          "m4"
+        ]
+      }
+    },
+    "response": {
+      "model": "jev-1.13.0",
+      "answers": {
+        "quote_buyer_payment": {
+          "type": "choice",
+          "choice": "m3",
+          "confidence": 1.0,
+          "probabilities": {
+            "none": 0.0,
+            "m3": 1.0
+          }
+        },
+        "quote_buyer_details": {
+          "type": "choice",
+          "choice": "m3",
+          "confidence": 0.38,
+          "probabilities": {
+            "none": 0.31,
+            "m3": 0.69
+          }
+        },
+        "quote_seller_receipt": {
+          "type": "choice",
+          "choice": "m4",
+          "confidence": 1.0,
+          "probabilities": {
+            "m4": 1.0,
+            "none": 0.0
+          }
+        },
+        "quote_concern": {
+          "type": "choice",
+          "choice": "m4",
+          "confidence": 0.86,
+          "probabilities": {
+            "m4": 0.91,
+            "none": 0.0,
+            "m3": 0.09
+          }
+        },
+        "evidence_balance": {
+          "type": "score",
+          "score": 0.91,
+          "confidence": 0.9,
+          "legend": {
+            "0": "The buyer says they did not pay, or the conversation clearly indicates no payment was made.",
+            "1": "The buyer's claim to have paid is vague or contradicted and unsupported by details.",
+            "2": "There is not enough information to lean either way.",
+            "3": "The buyer gives specific, consistent payment details, but the seller has not confirmed receipt.",
+            "4": "The seller confirms the payment arrived."
+          },
+          "probabilities": {
+            "0": 0.1,
+            "1": 0.9,
+            "2": 0.0,
+            "3": 0.0,
+            "4": 0.0
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 1191,
+        "output_tokens": 160
+      },
+      "latency_ms": 351
+    }
+  },
+  "es-fraud-threat": {
+    "state": {
+      "roles": {
+        "buyer": "Pays the fiat money to the seller outside Mostro, then waits for the bitcoin.",
+        "seller": "Has bitcoin locked in Mostro escrow and must confirm the fiat arrived before the trade can finish.",
+        "serbero": "Automated assistant that asks both parties questions for the human solver. It cannot move funds or decide the dispute."
+      },
+      "order": {
+        "fiat_amount": "300000",
+        "fiat_code": "COP",
+        "payment_method": "Nequi",
+        "dispute_opened_by": "buyer"
+      },
+      "transcript": [
+        {
+          "id": "m1",
+          "from": "serbero",
+          "to": "buyer",
+          "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Enviaste el pago de 300.000 COP de esta orden? Si lo hiciste, dime cuándo y desde qué cuenta o aplicación."
+        },
+        {
+          "id": "m2",
+          "from": "serbero",
+          "to": "seller",
+          "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Te llegó a tu cuenta el pago de 300.000 COP de esta orden?"
+        },
+        {
+          "id": "m3",
+          "from": "buyer",
+          "text": "si no me sueltas los sats te voy a buscar, yo sé dónde vives"
+        }
+      ],
+      "latest": {
+        "buyer": [
+          "m3"
+        ],
+        "seller": []
+      }
+    },
+    "response": {
+      "model": "jev-1.13.0",
+      "answers": {
+        "quote_buyer_payment": {
+          "type": "choice",
+          "choice": "none",
+          "confidence": 0.94,
+          "probabilities": {
+            "none": 0.97,
+            "m3": 0.03
+          }
+        },
+        "quote_buyer_details": {
+          "type": "choice",
+          "choice": "none",
+          "confidence": 0.98,
+          "probabilities": {
+            "none": 0.99,
+            "m3": 0.01
+          }
+        },
+        "quote_concern": {
+          "type": "choice",
+          "choice": "m3",
+          "confidence": 1.0,
+          "probabilities": {
+            "none": 0.0,
+            "m3": 1.0
+          }
+        },
+        "evidence_balance": {
+          "type": "score",
+          "score": 1.61,
+          "confidence": 0.68,
+          "legend": {
+            "0": "The buyer says they did not pay, or the conversation clearly indicates no payment was made.",
+            "1": "The buyer's claim to have paid is vague or contradicted and unsupported by details.",
+            "2": "There is not enough information to lean either way.",
+            "3": "The buyer gives specific, consistent payment details, but the seller has not confirmed receipt.",
+            "4": "The seller confirms the payment arrived."
+          },
+          "probabilities": {
+            "0": 0.04,
+            "1": 0.3,
+            "2": 0.66,
+            "3": 0.0,
+            "4": 0.0
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 1068,
+        "output_tokens": 116
+      },
+      "latency_ms": 345
+    }
+  },
+  "es-rude-disagreement-no-fraud": {
+    "state": {
+      "roles": {
+        "buyer": "Pays the fiat money to the seller outside Mostro, then waits for the bitcoin.",
+        "seller": "Has bitcoin locked in Mostro escrow and must confirm the fiat arrived before the trade can finish.",
+        "serbero": "Automated assistant that asks both parties questions for the human solver. It cannot move funds or decide the dispute."
+      },
+      "order": {
+        "fiat_amount": "150",
+        "fiat_code": "EUR",
+        "payment_method": "Bizum",
+        "dispute_opened_by": "buyer"
+      },
+      "transcript": [
+        {
+          "id": "m1",
+          "from": "serbero",
+          "to": "buyer",
+          "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Enviaste el pago de 150 EUR de esta orden? Si lo hiciste, dime cuándo y desde qué cuenta o aplicación."
+        },
+        {
+          "id": "m2",
+          "from": "serbero",
+          "to": "seller",
+          "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Te llegó a tu cuenta el pago de 150 EUR de esta orden?"
+        },
+        {
+          "id": "m3",
+          "from": "buyer",
+          "text": "yo pagué, no me estés jodiendo"
+        },
+        {
+          "id": "m4",
+          "from": "seller",
+          "text": "que no me ha llegado nada tío, lo he mirado tres veces en la app del banco"
+        }
+      ],
+      "latest": {
+        "buyer": [
+          "m3"
+        ],
+        "seller": [
+          "m4"
+        ]
+      }
+    },
+    "response": {
+      "model": "jev-1.13.0",
+      "answers": {
+        "quote_buyer_payment": {
+          "type": "choice",
+          "choice": "m3",
+          "confidence": 1.0,
+          "probabilities": {
+            "m3": 1.0,
+            "none": 0.0
+          }
+        },
+        "quote_buyer_details": {
+          "type": "choice",
+          "choice": "none",
+          "confidence": 0.68,
+          "probabilities": {
+            "m3": 0.16,
+            "none": 0.84
+          }
+        },
+        "quote_seller_receipt": {
+          "type": "choice",
+          "choice": "m4",
+          "confidence": 1.0,
+          "probabilities": {
+            "none": 0.0,
+            "m4": 1.0
+          }
+        },
+        "quote_concern": {
+          "type": "choice",
+          "choice": "m3",
+          "confidence": 0.29,
+          "probabilities": {
+            "m3": 0.53,
+            "none": 0.03,
+            "m4": 0.44
+          }
+        },
+        "evidence_balance": {
+          "type": "score",
+          "score": 1.01,
+          "confidence": 0.99,
+          "legend": {
+            "0": "The buyer says they did not pay, or the conversation clearly indicates no payment was made.",
+            "1": "The buyer's claim to have paid is vague or contradicted and unsupported by details.",
+            "2": "There is not enough information to lean either way.",
+            "3": "The buyer gives specific, consistent payment details, but the seller has not confirmed receipt.",
+            "4": "The seller confirms the payment arrived."
+          },
+          "probabilities": {
+            "0": 0.0,
+            "1": 1.0,
+            "2": 0.0,
+            "3": 0.0,
+            "4": 0.0
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 1171,
+        "output_tokens": 159
+      },
+      "latency_ms": 315
+    }
+  },
+  "es-seller-finds-it-after-check": {
+    "state": {
+      "roles": {
+        "buyer": "Pays the fiat money to the seller outside Mostro, then waits for the bitcoin.",
+        "seller": "Has bitcoin locked in Mostro escrow and must confirm the fiat arrived before the trade can finish.",
+        "serbero": "Automated assistant that asks both parties questions for the human solver. It cannot move funds or decide the dispute."
+      },
+      "order": {
+        "fiat_amount": "8000",
+        "fiat_code": "VES",
+        "payment_method": "Pago Móvil",
+        "dispute_opened_by": "buyer"
+      },
+      "transcript": [
+        {
+          "id": "m1",
+          "from": "serbero",
+          "to": "buyer",
+          "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Enviaste el pago de 8.000 VES de esta orden? Si lo hiciste, dime cuándo y desde qué cuenta o aplicación."
+        },
+        {
+          "id": "m2",
+          "from": "serbero",
+          "to": "seller",
+          "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Te llegó a tu cuenta el pago de 8.000 VES de esta orden?"
+        },
+        {
+          "id": "m3",
+          "from": "seller",
+          "text": "todavía no me llega nada"
+        },
+        {
+          "id": "m4",
+          "from": "serbero",
+          "to": "seller",
+          "text": "Gracias. ¿Puedes revisar la cuenta o aplicación donde esperabas el pago, incluidos los movimientos pendientes, y decirme si ves algo por 8.000 VES?"
+        },
+        {
+          "id": "m5",
+          "from": "seller",
+          "text": "ya revisé bien y sí, ahí está, me cayó a las 11:05. disculpen"
+        }
+      ],
+      "latest": {
+        "buyer": [],
+        "seller": [
+          "m5"
+        ]
+      }
+    },
+    "response": {
+      "model": "jev-1.13.0",
+      "answers": {
+        "quote_seller_receipt": {
+          "type": "choice",
+          "choice": "m5",
+          "confidence": 0.94,
+          "probabilities": {
+            "m5": 0.96,
+            "m3": 0.04,
+            "none": 0.0
+          }
+        },
+        "quote_concern": {
+          "type": "choice",
+          "choice": "m5",
+          "confidence": 0.73,
+          "probabilities": {
+            "m5": 0.82,
+            "m3": 0.16,
+            "none": 0.02
+          }
+        },
+        "evidence_balance": {
+          "type": "score",
+          "score": 3.96,
+          "confidence": 0.97,
+          "legend": {
+            "0": "The buyer says they did not pay, or the conversation clearly indicates no payment was made.",
+            "1": "The buyer's claim to have paid is vague or contradicted and unsupported by details.",
+            "2": "There is not enough information to lean either way.",
+            "3": "The buyer gives specific, consistent payment details, but the seller has not confirmed receipt.",
+            "4": "The seller confirms the payment arrived."
+          },
+          "probabilities": {
+            "0": 0.0,
+            "1": 0.0,
+            "2": 0.01,
+            "3": 0.0,
+            "4": 0.99
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 1134,
+        "output_tokens": 102
+      },
+      "latency_ms": 301
+    }
+  },
+  "es-cl-received-slang": {
+    "state": {
+      "roles": {
+        "buyer": "Pays the fiat money to the seller outside Mostro, then waits for the bitcoin.",
+        "seller": "Has bitcoin locked in Mostro escrow and must confirm the fiat arrived before the trade can finish.",
+        "serbero": "Automated assistant that asks both parties questions for the human solver. It cannot move funds or decide the dispute."
+      },
+      "order": {
+        "fiat_amount": "70000",
+        "fiat_code": "CLP",
+        "payment_method": "Transferencia bancaria",
+        "dispute_opened_by": "buyer"
+      },
+      "transcript": [
+        {
+          "id": "m1",
+          "from": "serbero",
+          "to": "buyer",
+          "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Enviaste el pago de 70.000 CLP de esta orden? Si lo hiciste, dime cuándo y desde qué cuenta o aplicación."
+        },
+        {
+          "id": "m2",
+          "from": "serbero",
+          "to": "seller",
+          "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Te llegó a tu cuenta el pago de 70.000 CLP de esta orden?"
+        },
+        {
+          "id": "m3",
+          "from": "buyer",
+          "text": "ya transferí hace rato"
+        },
+        {
+          "id": "m4",
+          "from": "seller",
+          "text": "sip, llegó la plata, todo ok"
+        }
+      ],
+      "latest": {
+        "buyer": [
+          "m3"
+        ],
+        "seller": [
+          "m4"
+        ]
+      }
+    },
+    "response": {
+      "model": "jev-1.13.0",
+      "answers": {
+        "quote_buyer_payment": {
+          "type": "choice",
+          "choice": "m3",
+          "confidence": 1.0,
+          "probabilities": {
+            "m3": 1.0,
+            "none": 0.0
+          }
+        },
+        "quote_buyer_details": {
+          "type": "choice",
+          "choice": "m3",
+          "confidence": 0.49,
+          "probabilities": {
+            "m3": 0.74,
+            "none": 0.26
+          }
+        },
+        "quote_seller_receipt": {
+          "type": "choice",
+          "choice": "m4",
+          "confidence": 1.0,
+          "probabilities": {
+            "none": 0.0,
+            "m4": 1.0
+          }
+        },
+        "quote_concern": {
+          "type": "choice",
+          "choice": "m4",
+          "confidence": 0.3,
+          "probabilities": {
+            "m3": 0.33,
+            "none": 0.14,
+            "m4": 0.53
+          }
+        },
+        "evidence_balance": {
+          "type": "score",
+          "score": 3.94,
+          "confidence": 0.95,
+          "legend": {
+            "0": "The buyer says they did not pay, or the conversation clearly indicates no payment was made.",
+            "1": "The buyer's claim to have paid is vague or contradicted and unsupported by details.",
+            "2": "There is not enough information to lean either way.",
+            "3": "The buyer gives specific, consistent payment details, but the seller has not confirmed receipt.",
+            "4": "The seller confirms the payment arrived."
+          },
+          "probabilities": {
+            "0": 0.0,
+            "1": 0.02,
+            "2": 0.0,
+            "3": 0.0,
+            "4": 0.98
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 1168,
+        "output_tokens": 160
+      },
+      "latency_ms": 288
+    }
+  },
+  "es-ar-wrong-cbu": {
+    "state": {
+      "roles": {
+        "buyer": "Pays the fiat money to the seller outside Mostro, then waits for the bitcoin.",
+        "seller": "Has bitcoin locked in Mostro escrow and must confirm the fiat arrived before the trade can finish.",
+        "serbero": "Automated assistant that asks both parties questions for the human solver. It cannot move funds or decide the dispute."
+      },
+      "order": {
+        "fiat_amount": "25000",
+        "fiat_code": "ARS",
+        "payment_method": "Transferencia bancaria",
+        "dispute_opened_by": "buyer"
+      },
+      "transcript": [
+        {
+          "id": "m1",
+          "from": "serbero",
+          "to": "buyer",
+          "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Enviaste el pago de 25.000 ARS de esta orden? Si lo hiciste, dime cuándo y desde qué cuenta o aplicación."
+        },
+        {
+          "id": "m2",
+          "from": "serbero",
+          "to": "seller",
+          "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Te llegó a tu cuenta el pago de 25.000 ARS de esta orden?"
+        },
+        {
+          "id": "m3",
+          "from": "buyer",
+          "text": "le hice la transferencia al cbu que estaba en la orden"
+        },
+        {
+          "id": "m4",
+          "from": "seller",
+          "text": "ese cbu no es el mío, me equivoqué en un número cuando lo pasé, la plata se fue a otra cuenta"
+        }
+      ],
+      "latest": {
+        "buyer": [
+          "m3"
+        ],
+        "seller": [
+          "m4"
+        ]
+      }
+    },
+    "response": {
+      "model": "jev-1.13.0",
+      "answers": {
+        "quote_buyer_payment": {
+          "type": "choice",
+          "choice": "m3",
+          "confidence": 1.0,
+          "probabilities": {
+            "m3": 1.0,
+            "none": 0.0
+          }
+        },
+        "quote_buyer_details": {
+          "type": "choice",
+          "choice": "m3",
+          "confidence": 0.99,
+          "probabilities": {
+            "m3": 1.0,
+            "none": 0.0
+          }
+        },
+        "quote_seller_receipt": {
+          "type": "choice",
+          "choice": "m4",
+          "confidence": 1.0,
+          "probabilities": {
+            "m4": 1.0,
+            "none": 0.0
+          }
+        },
+        "quote_concern": {
+          "type": "choice",
+          "choice": "m4",
+          "confidence": 0.9,
+          "probabilities": {
+            "m4": 0.94,
+            "m3": 0.06,
+            "none": 0.0
+          }
+        },
+        "evidence_balance": {
+          "type": "score",
+          "score": 1.28,
+          "confidence": 0.75,
+          "legend": {
+            "0": "The buyer says they did not pay, or the conversation clearly indicates no payment was made.",
+            "1": "The buyer's claim to have paid is vague or contradicted and unsupported by details.",
+            "2": "There is not enough information to lean either way.",
+            "3": "The buyer gives specific, consistent payment details, but the seller has not confirmed receipt.",
+            "4": "The seller confirms the payment arrived."
+          },
+          "probabilities": {
+            "0": 0.01,
+            "1": 0.85,
+            "2": 0.0,
+            "3": 0.14,
+            "4": 0.0
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 1194,
+        "output_tokens": 160
+      },
+      "latency_ms": 288
+    }
+  },
+  "es-buyer-cannot-afford": {
+    "state": {
+      "roles": {
+        "buyer": "Pays the fiat money to the seller outside Mostro, then waits for the bitcoin.",
+        "seller": "Has bitcoin locked in Mostro escrow and must confirm the fiat arrived before the trade can finish.",
+        "serbero": "Automated assistant that asks both parties questions for the human solver. It cannot move funds or decide the dispute."
+      },
+      "order": {
+        "fiat_amount": "80000",
+        "fiat_code": "ARS",
+        "payment_method": "Mercado Pago",
+        "dispute_opened_by": "seller"
+      },
+      "transcript": [
+        {
+          "id": "m1",
+          "from": "serbero",
+          "to": "buyer",
+          "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Enviaste el pago de 80.000 ARS de esta orden? Si lo hiciste, dime cuándo y desde qué cuenta o aplicación."
+        },
+        {
+          "id": "m2",
+          "from": "serbero",
+          "to": "seller",
+          "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Te llegó a tu cuenta el pago de 80.000 ARS de esta orden?"
+        },
+        {
+          "id": "m3",
+          "from": "buyer",
+          "text": "no pagué, al final no me alcanza. podemos cancelar?"
+        }
+      ],
+      "latest": {
+        "buyer": [
+          "m3"
+        ],
+        "seller": []
+      }
+    },
+    "response": {
+      "model": "jev-1.13.0",
+      "answers": {
+        "quote_buyer_payment": {
+          "type": "choice",
+          "choice": "m3",
+          "confidence": 1.0,
+          "probabilities": {
+            "none": 0.0,
+            "m3": 1.0
+          }
+        },
+        "quote_buyer_details": {
+          "type": "choice",
+          "choice": "none",
+          "confidence": 0.7,
+          "probabilities": {
+            "none": 0.85,
+            "m3": 0.15
+          }
+        },
+        "quote_concern": {
+          "type": "choice",
+          "choice": "m3",
+          "confidence": 0.98,
+          "probabilities": {
+            "none": 0.01,
+            "m3": 0.99
+          }
+        },
+        "evidence_balance": {
+          "type": "score",
+          "score": 0.0,
+          "confidence": 1.0,
+          "legend": {
+            "0": "The buyer says they did not pay, or the conversation clearly indicates no payment was made.",
+            "1": "The buyer's claim to have paid is vague or contradicted and unsupported by details.",
+            "2": "There is not enough information to lean either way.",
+            "3": "The buyer gives specific, consistent payment details, but the seller has not confirmed receipt.",
+            "4": "The seller confirms the payment arrived."
+          },
+          "probabilities": {
+            "0": 1.0,
+            "1": 0.0,
+            "2": 0.0,
+            "3": 0.0,
+            "4": 0.0
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 1064,
+        "output_tokens": 117
+      },
+      "latency_ms": 312
+    }
+  },
+  "es-buyer-aun-no": {
+    "state": {
+      "roles": {
+        "buyer": "Pays the fiat money to the seller outside Mostro, then waits for the bitcoin.",
+        "seller": "Has bitcoin locked in Mostro escrow and must confirm the fiat arrived before the trade can finish.",
+        "serbero": "Automated assistant that asks both parties questions for the human solver. It cannot move funds or decide the dispute."
+      },
+      "order": {
+        "fiat_amount": "1500",
+        "fiat_code": "MXN",
+        "payment_method": "OXXO",
+        "dispute_opened_by": "seller"
+      },
+      "transcript": [
+        {
+          "id": "m1",
+          "from": "serbero",
+          "to": "buyer",
+          "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Enviaste el pago de 1.500 MXN de esta orden? Si lo hiciste, dime cuándo y desde qué cuenta o aplicación."
+        },
+        {
+          "id": "m2",
+          "from": "serbero",
+          "to": "seller",
+          "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Te llegó a tu cuenta el pago de 1.500 MXN de esta orden?"
+        },
+        {
+          "id": "m3",
+          "from": "buyer",
+          "text": "aun no"
+        }
+      ],
+      "latest": {
+        "buyer": [
+          "m3"
+        ],
+        "seller": []
+      }
+    },
+    "response": {
+      "model": "jev-1.13.0",
+      "answers": {
+        "quote_buyer_payment": {
+          "type": "choice",
+          "choice": "m3",
+          "confidence": 1.0,
+          "probabilities": {
+            "none": 0.0,
+            "m3": 1.0
+          }
+        },
+        "quote_buyer_details": {
+          "type": "choice",
+          "choice": "none",
+          "confidence": 0.65,
+          "probabilities": {
+            "none": 0.83,
+            "m3": 0.17
+          }
+        },
+        "quote_concern": {
+          "type": "choice",
+          "choice": "m3",
+          "confidence": 0.8,
+          "probabilities": {
+            "none": 0.1,
+            "m3": 0.9
+          }
+        },
+        "evidence_balance": {
+          "type": "score",
+          "score": 0.09,
+          "confidence": 0.93,
+          "legend": {
+            "0": "The buyer says they did not pay, or the conversation clearly indicates no payment was made.",
+            "1": "The buyer's claim to have paid is vague or contradicted and unsupported by details.",
+            "2": "There is not enough information to lean either way.",
+            "3": "The buyer gives specific, consistent payment details, but the seller has not confirmed receipt.",
+            "4": "The seller confirms the payment arrived."
+          },
+          "probabilities": {
+            "0": 0.94,
+            "1": 0.04,
+            "2": 0.02,
+            "3": 0.0,
+            "4": 0.0
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 1051,
+        "output_tokens": 117
+      },
+      "latency_ms": 296
+    }
+  },
+  "es-buyer-simple-si": {
+    "state": {
+      "roles": {
+        "buyer": "Pays the fiat money to the seller outside Mostro, then waits for the bitcoin.",
+        "seller": "Has bitcoin locked in Mostro escrow and must confirm the fiat arrived before the trade can finish.",
+        "serbero": "Automated assistant that asks both parties questions for the human solver. It cannot move funds or decide the dispute."
+      },
+      "order": {
+        "fiat_amount": "4000",
+        "fiat_code": "VES",
+        "payment_method": "Pago Móvil",
+        "dispute_opened_by": "buyer"
+      },
+      "transcript": [
+        {
+          "id": "m1",
+          "from": "serbero",
+          "to": "buyer",
+          "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Enviaste el pago de 4.000 VES de esta orden? Si lo hiciste, dime cuándo y desde qué cuenta o aplicación."
+        },
+        {
+          "id": "m2",
+          "from": "serbero",
+          "to": "seller",
+          "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Te llegó a tu cuenta el pago de 4.000 VES de esta orden?"
+        },
+        {
+          "id": "m3",
+          "from": "buyer",
+          "text": "hola"
+        },
+        {
+          "id": "m4",
+          "from": "serbero",
+          "to": "buyer",
+          "text": "Solo para confirmar: ¿ya enviaste el pago de 4.000 VES? Basta con sí o no."
+        },
+        {
+          "id": "m5",
+          "from": "buyer",
+          "text": "si"
+        }
+      ],
+      "latest": {
+        "buyer": [
+          "m5"
+        ],
+        "seller": []
+      }
+    },
+    "response": {
+      "model": "jev-1.13.0",
+      "answers": {
+        "quote_buyer_payment": {
+          "type": "choice",
+          "choice": "m5",
+          "confidence": 1.0,
+          "probabilities": {
+            "none": 0.0,
+            "m3": 0.0,
+            "m5": 1.0
+          }
+        },
+        "quote_buyer_details": {
+          "type": "choice",
+          "choice": "none",
+          "confidence": 0.69,
+          "probabilities": {
+            "none": 0.8,
+            "m3": 0.0,
+            "m5": 0.2
+          }
+        },
+        "quote_concern": {
+          "type": "choice",
+          "choice": "m3",
+          "confidence": 0.04,
+          "probabilities": {
+            "none": 0.35,
+            "m3": 0.35,
+            "m5": 0.3
+          }
+        },
+        "evidence_balance": {
+          "type": "score",
+          "score": 1.22,
+          "confidence": 0.81,
+          "legend": {
+            "0": "The buyer says they did not pay, or the conversation clearly indicates no payment was made.",
+            "1": "The buyer's claim to have paid is vague or contradicted and unsupported by details.",
+            "2": "There is not enough information to lean either way.",
+            "3": "The buyer gives specific, consistent payment details, but the seller has not confirmed receipt.",
+            "4": "The seller confirms the payment arrived."
+          },
+          "probabilities": {
+            "0": 0.0,
+            "1": 0.86,
+            "2": 0.05,
+            "3": 0.09,
+            "4": 0.0
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 1159,
+        "output_tokens": 141
+      },
+      "latency_ms": 330
+    }
+  },
+  "es-co-typos-screenshot": {
+    "state": {
+      "roles": {
+        "buyer": "Pays the fiat money to the seller outside Mostro, then waits for the bitcoin.",
+        "seller": "Has bitcoin locked in Mostro escrow and must confirm the fiat arrived before the trade can finish.",
+        "serbero": "Automated assistant that asks both parties questions for the human solver. It cannot move funds or decide the dispute."
+      },
+      "order": {
+        "fiat_amount": "250000",
+        "fiat_code": "COP",
+        "payment_method": "Bancolombia",
+        "dispute_opened_by": "buyer"
+      },
+      "transcript": [
+        {
+          "id": "m1",
+          "from": "serbero",
+          "to": "buyer",
+          "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Enviaste el pago de 250.000 COP de esta orden? Si lo hiciste, dime cuándo y desde qué cuenta o aplicación."
+        },
+        {
+          "id": "m2",
+          "from": "serbero",
+          "to": "seller",
+          "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Te llegó a tu cuenta el pago de 250.000 COP de esta orden?"
+        },
+        {
+          "id": "m3",
+          "from": "buyer",
+          "text": "ya ise el pago x transferencia bancolombia a las 2 y 20 de la tarde, le mande el pantallaso",
+          "attachments": 1
+        }
+      ],
+      "latest": {
+        "buyer": [
+          "m3"
+        ],
+        "seller": []
+      }
+    },
+    "response": {
+      "model": "jev-1.13.0",
+      "answers": {
+        "quote_buyer_payment": {
+          "type": "choice",
+          "choice": "m3",
+          "confidence": 1.0,
+          "probabilities": {
+            "none": 0.0,
+            "m3": 1.0
+          }
+        },
+        "quote_buyer_details": {
+          "type": "choice",
+          "choice": "m3",
+          "confidence": 1.0,
+          "probabilities": {
+            "none": 0.0,
+            "m3": 1.0
+          }
+        },
+        "quote_concern": {
+          "type": "choice",
+          "choice": "none",
+          "confidence": 0.0,
+          "probabilities": {
+            "none": 0.5,
+            "m3": 0.5
+          }
+        },
+        "evidence_balance": {
+          "type": "score",
+          "score": 3.0,
+          "confidence": 1.0,
+          "legend": {
+            "0": "The buyer says they did not pay, or the conversation clearly indicates no payment was made.",
+            "1": "The buyer's claim to have paid is vague or contradicted and unsupported by details.",
+            "2": "There is not enough information to lean either way.",
+            "3": "The buyer gives specific, consistent payment details, but the seller has not confirmed receipt.",
+            "4": "The seller confirms the payment arrived."
+          },
+          "probabilities": {
+            "0": 0.0,
+            "1": 0.0,
+            "2": 0.0,
+            "3": 1.0,
+            "4": 0.0
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 1087,
+        "output_tokens": 117
+      },
+      "latency_ms": 315
+    }
+  },
+  "es-mx-lana-no-cae": {
+    "state": {
+      "roles": {
+        "buyer": "Pays the fiat money to the seller outside Mostro, then waits for the bitcoin.",
+        "seller": "Has bitcoin locked in Mostro escrow and must confirm the fiat arrived before the trade can finish.",
+        "serbero": "Automated assistant that asks both parties questions for the human solver. It cannot move funds or decide the dispute."
+      },
+      "order": {
+        "fiat_amount": "2000",
+        "fiat_code": "MXN",
+        "payment_method": "SPEI",
+        "dispute_opened_by": "seller"
+      },
+      "transcript": [
+        {
+          "id": "m1",
+          "from": "serbero",
+          "to": "buyer",
+          "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Enviaste el pago de 2.000 MXN de esta orden? Si lo hiciste, dime cuándo y desde qué cuenta o aplicación."
+        },
+        {
+          "id": "m2",
+          "from": "serbero",
+          "to": "seller",
+          "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Te llegó a tu cuenta el pago de 2.000 MXN de esta orden?"
+        },
+        {
+          "id": "m3",
+          "from": "seller",
+          "text": "la lana no me ha caído wey, ya chequé mi app de banamex dos veces"
+        }
+      ],
+      "latest": {
+        "buyer": [],
+        "seller": [
+          "m3"
+        ]
+      }
+    },
+    "response": {
+      "model": "jev-1.13.0",
+      "answers": {
+        "quote_seller_receipt": {
+          "type": "choice",
+          "choice": "m3",
+          "confidence": 1.0,
+          "probabilities": {
+            "none": 0.0,
+            "m3": 1.0
+          }
+        },
+        "quote_concern": {
+          "type": "choice",
+          "choice": "m3",
+          "confidence": 0.84,
+          "probabilities": {
+            "none": 0.08,
+            "m3": 0.92
+          }
+        },
+        "evidence_balance": {
+          "type": "score",
+          "score": 1.49,
+          "confidence": 0.57,
+          "legend": {
+            "0": "The buyer says they did not pay, or the conversation clearly indicates no payment was made.",
+            "1": "The buyer's claim to have paid is vague or contradicted and unsupported by details.",
+            "2": "There is not enough information to lean either way.",
+            "3": "The buyer gives specific, consistent payment details, but the seller has not confirmed receipt.",
+            "4": "The seller confirms the payment arrived."
+          },
+          "probabilities": {
+            "0": 0.16,
+            "1": 0.2,
+            "2": 0.64,
+            "3": 0.0,
+            "4": 0.0
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 1011,
+        "output_tokens": 86
+      },
+      "latency_ms": 410
+    }
+  },
+  "es-ar-me-entro-la-guita": {
+    "state": {
+      "roles": {
+        "buyer": "Pays the fiat money to the seller outside Mostro, then waits for the bitcoin.",
+        "seller": "Has bitcoin locked in Mostro escrow and must confirm the fiat arrived before the trade can finish.",
+        "serbero": "Automated assistant that asks both parties questions for the human solver. It cannot move funds or decide the dispute."
+      },
+      "order": {
+        "fiat_amount": "55000",
+        "fiat_code": "ARS",
+        "payment_method": "Mercado Pago",
+        "dispute_opened_by": "buyer"
+      },
+      "transcript": [
+        {
+          "id": "m1",
+          "from": "serbero",
+          "to": "buyer",
+          "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Enviaste el pago de 55.000 ARS de esta orden? Si lo hiciste, dime cuándo y desde qué cuenta o aplicación."
+        },
+        {
+          "id": "m2",
+          "from": "serbero",
+          "to": "seller",
+          "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Te llegó a tu cuenta el pago de 55.000 ARS de esta orden?"
+        },
+        {
+          "id": "m3",
+          "from": "seller",
+          "text": "sí, me entró la guita a las 15:32, ahora libero"
+        }
+      ],
+      "latest": {
+        "buyer": [],
+        "seller": [
+          "m3"
+        ]
+      }
+    },
+    "response": {
+      "model": "jev-1.13.0",
+      "answers": {
+        "quote_seller_receipt": {
+          "type": "choice",
+          "choice": "m3",
+          "confidence": 1.0,
+          "probabilities": {
+            "none": 0.0,
+            "m3": 1.0
+          }
+        },
+        "quote_concern": {
+          "type": "choice",
+          "choice": "m3",
+          "confidence": 0.11,
+          "probabilities": {
+            "none": 0.45,
+            "m3": 0.55
+          }
+        },
+        "evidence_balance": {
+          "type": "score",
+          "score": 3.99,
+          "confidence": 0.99,
+          "legend": {
+            "0": "The buyer says they did not pay, or the conversation clearly indicates no payment was made.",
+            "1": "The buyer's claim to have paid is vague or contradicted and unsupported by details.",
+            "2": "There is not enough information to lean either way.",
+            "3": "The buyer gives specific, consistent payment details, but the seller has not confirmed receipt.",
+            "4": "The seller confirms the payment arrived."
+          },
+          "probabilities": {
+            "0": 0.0,
+            "1": 0.0,
+            "2": 0.0,
+            "3": 0.0,
+            "4": 1.0
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 1009,
+        "output_tokens": 86
+      },
+      "latency_ms": 303
+    }
+  },
+  "es-both-agree-not-sent": {
+    "state": {
+      "roles": {
+        "buyer": "Pays the fiat money to the seller outside Mostro, then waits for the bitcoin.",
+        "seller": "Has bitcoin locked in Mostro escrow and must confirm the fiat arrived before the trade can finish.",
+        "serbero": "Automated assistant that asks both parties questions for the human solver. It cannot move funds or decide the dispute."
+      },
+      "order": {
+        "fiat_amount": "30000",
+        "fiat_code": "CLP",
+        "payment_method": "Transferencia bancaria",
+        "dispute_opened_by": "seller"
+      },
+      "transcript": [
+        {
+          "id": "m1",
+          "from": "serbero",
+          "to": "buyer",
+          "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Enviaste el pago de 30.000 CLP de esta orden? Si lo hiciste, dime cuándo y desde qué cuenta o aplicación."
+        },
+        {
+          "id": "m2",
+          "from": "serbero",
+          "to": "seller",
+          "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Te llegó a tu cuenta el pago de 30.000 CLP de esta orden?"
+        },
+        {
+          "id": "m3",
+          "from": "buyer",
+          "text": "no lo mandé, perdón, me confundí de orden"
+        },
+        {
+          "id": "m4",
+          "from": "seller",
+          "text": "ok no hay problema, a mi tampoco me llegó nada"
+        }
+      ],
+      "latest": {
+        "buyer": [
+          "m3"
+        ],
+        "seller": [
+          "m4"
+        ]
+      }
+    },
+    "response": {
+      "model": "jev-1.13.0",
+      "answers": {
+        "quote_buyer_payment": {
+          "type": "choice",
+          "choice": "m3",
+          "confidence": 1.0,
+          "probabilities": {
+            "none": 0.0,
+            "m3": 1.0
+          }
+        },
+        "quote_buyer_details": {
+          "type": "choice",
+          "choice": "none",
+          "confidence": 0.45,
+          "probabilities": {
+            "none": 0.73,
+            "m3": 0.27
+          }
+        },
+        "quote_seller_receipt": {
+          "type": "choice",
+          "choice": "m4",
+          "confidence": 1.0,
+          "probabilities": {
+            "none": 0.0,
+            "m4": 1.0
+          }
+        },
+        "quote_concern": {
+          "type": "choice",
+          "choice": "m3",
+          "confidence": 0.21,
+          "probabilities": {
+            "none": 0.41,
+            "m4": 0.11,
+            "m3": 0.48
+          }
+        },
+        "evidence_balance": {
+          "type": "score",
+          "score": 0.0,
+          "confidence": 1.0,
+          "legend": {
+            "0": "The buyer says they did not pay, or the conversation clearly indicates no payment was made.",
+            "1": "The buyer's claim to have paid is vague or contradicted and unsupported by details.",
+            "2": "There is not enough information to lean either way.",
+            "3": "The buyer gives specific, consistent payment details, but the seller has not confirmed receipt.",
+            "4": "The seller confirms the payment arrived."
+          },
+          "probabilities": {
+            "0": 1.0,
+            "1": 0.0,
+            "2": 0.0,
+            "3": 0.0,
+            "4": 0.0
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 1179,
+        "output_tokens": 159
+      },
+      "latency_ms": 281
+    }
+  },
+  "es-buyer-burst-zelle": {
+    "state": {
+      "roles": {
+        "buyer": "Pays the fiat money to the seller outside Mostro, then waits for the bitcoin.",
+        "seller": "Has bitcoin locked in Mostro escrow and must confirm the fiat arrived before the trade can finish.",
+        "serbero": "Automated assistant that asks both parties questions for the human solver. It cannot move funds or decide the dispute."
+      },
+      "order": {
+        "fiat_amount": "75",
+        "fiat_code": "USD",
+        "payment_method": "Zelle",
+        "dispute_opened_by": "buyer"
+      },
+      "transcript": [
+        {
+          "id": "m1",
+          "from": "serbero",
+          "to": "buyer",
+          "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Enviaste el pago de 75 USD de esta orden? Si lo hiciste, dime cuándo y desde qué cuenta o aplicación."
+        },
+        {
+          "id": "m2",
+          "from": "serbero",
+          "to": "seller",
+          "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Te llegó a tu cuenta el pago de 75 USD de esta orden?"
+        },
+        {
+          "id": "m3",
+          "from": "buyer",
+          "text": "hola"
+        },
+        {
+          "id": "m4",
+          "from": "buyer",
+          "text": "buenas"
+        },
+        {
+          "id": "m5",
+          "from": "buyer",
+          "text": "ya pague"
+        },
+        {
+          "id": "m6",
+          "from": "buyer",
+          "text": "por zelle"
+        },
+        {
+          "id": "m7",
+          "from": "buyer",
+          "text": "a las 9am"
+        },
+        {
+          "id": "m8",
+          "from": "buyer",
+          "text": "confirma porfa"
+        }
+      ],
+      "latest": {
+        "buyer": [
+          "m3",
+          "m4",
+          "m5",
+          "m6",
+          "m7",
+          "m8"
+        ],
+        "seller": []
+      }
+    },
+    "response": {
+      "model": "jev-1.13.0",
+      "answers": {
+        "quote_buyer_payment": {
+          "type": "choice",
+          "choice": "m5",
+          "confidence": 1.0,
+          "probabilities": {
+            "m3": 0.0,
+            "m8": 0.0,
+            "m7": 0.0,
+            "m4": 0.0,
+            "m6": 0.0,
+            "m5": 1.0,
+            "none": 0.0
+          }
+        },
+        "quote_buyer_details": {
+          "type": "choice",
+          "choice": "m7",
+          "confidence": 0.87,
+          "probabilities": {
+            "m3": 0.0,
+            "m8": 0.0,
+            "m7": 0.89,
+            "m4": 0.0,
+            "m6": 0.1,
+            "m5": 0.01,
+            "none": 0.0
+          }
+        },
+        "quote_concern": {
+          "type": "choice",
+          "choice": "none",
+          "confidence": 0.43,
+          "probabilities": {
+            "m3": 0.01,
+            "m8": 0.22,
+            "m7": 0.1,
+            "m4": 0.01,
+            "m6": 0.01,
+            "m5": 0.13,
+            "none": 0.52
+          }
+        },
+        "evidence_balance": {
+          "type": "score",
+          "score": 2.99,
+          "confidence": 0.99,
+          "legend": {
+            "0": "The buyer says they did not pay, or the conversation clearly indicates no payment was made.",
+            "1": "The buyer's claim to have paid is vague or contradicted and unsupported by details.",
+            "2": "There is not enough information to lean either way.",
+            "3": "The buyer gives specific, consistent payment details, but the seller has not confirmed receipt.",
+            "4": "The seller confirms the payment arrived."
+          },
+          "probabilities": {
+            "0": 0.0,
+            "1": 0.0,
+            "2": 0.0,
+            "3": 1.0,
+            "4": 0.0
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 1315,
+        "output_tokens": 237
+      },
+      "latency_ms": 304
+    }
+  },
+  "es-buyer-no-account-data": {
+    "state": {
+      "roles": {
+        "buyer": "Pays the fiat money to the seller outside Mostro, then waits for the bitcoin.",
+        "seller": "Has bitcoin locked in Mostro escrow and must confirm the fiat arrived before the trade can finish.",
+        "serbero": "Automated assistant that asks both parties questions for the human solver. It cannot move funds or decide the dispute."
+      },
+      "order": {
+        "fiat_amount": "400",
+        "fiat_code": "PEN",
+        "payment_method": "Plin",
+        "dispute_opened_by": "buyer"
+      },
+      "transcript": [
+        {
+          "id": "m1",
+          "from": "serbero",
+          "to": "buyer",
+          "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Enviaste el pago de 400 PEN de esta orden? Si lo hiciste, dime cuándo y desde qué cuenta o aplicación."
+        },
+        {
+          "id": "m2",
+          "from": "serbero",
+          "to": "seller",
+          "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Te llegó a tu cuenta el pago de 400 PEN de esta orden?"
+        },
+        {
+          "id": "m3",
+          "from": "buyer",
+          "text": "no he pagado porque el vendedor nunca me pasó su número de plin"
+        }
+      ],
+      "latest": {
+        "buyer": [
+          "m3"
+        ],
+        "seller": []
+      }
+    },
+    "response": {
+      "model": "jev-1.13.0",
+      "answers": {
+        "quote_buyer_payment": {
+          "type": "choice",
+          "choice": "m3",
+          "confidence": 1.0,
+          "probabilities": {
+            "m3": 1.0,
+            "none": 0.0
+          }
+        },
+        "quote_buyer_details": {
+          "type": "choice",
+          "choice": "m3",
+          "confidence": 0.92,
+          "probabilities": {
+            "m3": 0.96,
+            "none": 0.04
+          }
+        },
+        "quote_concern": {
+          "type": "choice",
+          "choice": "m3",
+          "confidence": 0.87,
+          "probabilities": {
+            "m3": 0.94,
+            "none": 0.06
+          }
+        },
+        "evidence_balance": {
+          "type": "score",
+          "score": 0.0,
+          "confidence": 1.0,
+          "legend": {
+            "0": "The buyer says they did not pay, or the conversation clearly indicates no payment was made.",
+            "1": "The buyer's claim to have paid is vague or contradicted and unsupported by details.",
+            "2": "There is not enough information to lean either way.",
+            "3": "The buyer gives specific, consistent payment details, but the seller has not confirmed receipt.",
+            "4": "The seller confirms the payment arrived."
+          },
+          "probabilities": {
+            "0": 1.0,
+            "1": 0.0,
+            "2": 0.0,
+            "3": 0.0,
+            "4": 0.0
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 1055,
+        "output_tokens": 118
+      },
+      "latency_ms": 296
+    }
+  },
+  "es-buyer-waiting-own-money": {
+    "state": {
+      "roles": {
+        "buyer": "Pays the fiat money to the seller outside Mostro, then waits for the bitcoin.",
+        "seller": "Has bitcoin locked in Mostro escrow and must confirm the fiat arrived before the trade can finish.",
+        "serbero": "Automated assistant that asks both parties questions for the human solver. It cannot move funds or decide the dispute."
+      },
+      "order": {
+        "fiat_amount": "5000",
+        "fiat_code": "MXN",
+        "payment_method": "SPEI",
+        "dispute_opened_by": "seller"
+      },
+      "transcript": [
+        {
+          "id": "m1",
+          "from": "serbero",
+          "to": "buyer",
+          "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Enviaste el pago de 5.000 MXN de esta orden? Si lo hiciste, dime cuándo y desde qué cuenta o aplicación."
+        },
+        {
+          "id": "m2",
+          "from": "serbero",
+          "to": "seller",
+          "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Te llegó a tu cuenta el pago de 5.000 MXN de esta orden?"
+        },
+        {
+          "id": "m3",
+          "from": "buyer",
+          "text": "todavia no transfiero, estoy esperando que me paguen a mí primero jaja"
+        }
+      ],
+      "latest": {
+        "buyer": [
+          "m3"
+        ],
+        "seller": []
+      }
+    },
+    "response": {
+      "model": "jev-1.13.0",
+      "answers": {
+        "quote_buyer_payment": {
+          "type": "choice",
+          "choice": "m3",
+          "confidence": 1.0,
+          "probabilities": {
+            "none": 0.0,
+            "m3": 1.0
+          }
+        },
+        "quote_buyer_details": {
+          "type": "choice",
+          "choice": "none",
+          "confidence": 0.12,
+          "probabilities": {
+            "none": 0.56,
+            "m3": 0.44
+          }
+        },
+        "quote_concern": {
+          "type": "choice",
+          "choice": "m3",
+          "confidence": 1.0,
+          "probabilities": {
+            "none": 0.0,
+            "m3": 1.0
+          }
+        },
+        "evidence_balance": {
+          "type": "score",
+          "score": 0.0,
+          "confidence": 1.0,
+          "legend": {
+            "0": "The buyer says they did not pay, or the conversation clearly indicates no payment was made.",
+            "1": "The buyer's claim to have paid is vague or contradicted and unsupported by details.",
+            "2": "There is not enough information to lean either way.",
+            "3": "The buyer gives specific, consistent payment details, but the seller has not confirmed receipt.",
+            "4": "The seller confirms the payment arrived."
+          },
+          "probabilities": {
+            "0": 1.0,
+            "1": 0.0,
+            "2": 0.0,
+            "3": 0.0,
+            "4": 0.0
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 1065,
+        "output_tokens": 117
+      },
+      "latency_ms": 327
+    }
+  },
+  "es-ve-took-wrong-order": {
+    "state": {
+      "roles": {
+        "buyer": "Pays the fiat money to the seller outside Mostro, then waits for the bitcoin.",
+        "seller": "Has bitcoin locked in Mostro escrow and must confirm the fiat arrived before the trade can finish.",
+        "serbero": "Automated assistant that asks both parties questions for the human solver. It cannot move funds or decide the dispute."
+      },
+      "order": {
+        "fiat_amount": "20",
+        "fiat_code": "USD",
+        "payment_method": "Binance Pay",
+        "dispute_opened_by": "seller"
+      },
+      "transcript": [
+        {
+          "id": "m1",
+          "from": "serbero",
+          "to": "buyer",
+          "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Enviaste el pago de 20 USD de esta orden? Si lo hiciste, dime cuándo y desde qué cuenta o aplicación."
+        },
+        {
+          "id": "m2",
+          "from": "serbero",
+          "to": "seller",
+          "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Te llegó a tu cuenta el pago de 20 USD de esta orden?"
+        },
+        {
+          "id": "m3",
+          "from": "buyer",
+          "text": "nada que ver, no he pagado nada, me equivoqué al tomar la orden"
+        }
+      ],
+      "latest": {
+        "buyer": [
+          "m3"
+        ],
+        "seller": []
+      }
+    },
+    "response": {
+      "model": "jev-1.13.0",
+      "answers": {
+        "quote_buyer_payment": {
+          "type": "choice",
+          "choice": "m3",
+          "confidence": 1.0,
+          "probabilities": {
+            "m3": 1.0,
+            "none": 0.0
+          }
+        },
+        "quote_buyer_details": {
+          "type": "choice",
+          "choice": "none",
+          "confidence": 0.62,
+          "probabilities": {
+            "m3": 0.19,
+            "none": 0.81
+          }
+        },
+        "quote_concern": {
+          "type": "choice",
+          "choice": "m3",
+          "confidence": 0.99,
+          "probabilities": {
+            "m3": 1.0,
+            "none": 0.0
+          }
+        },
+        "evidence_balance": {
+          "type": "score",
+          "score": 0.0,
+          "confidence": 1.0,
+          "legend": {
+            "0": "The buyer says they did not pay, or the conversation clearly indicates no payment was made.",
+            "1": "The buyer's claim to have paid is vague or contradicted and unsupported by details.",
+            "2": "There is not enough information to lean either way.",
+            "3": "The buyer gives specific, consistent payment details, but the seller has not confirmed receipt.",
+            "4": "The seller confirms the payment arrived."
+          },
+          "probabilities": {
+            "0": 1.0,
+            "1": 0.0,
+            "2": 0.0,
+            "3": 0.0,
+            "4": 0.0
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 1057,
+        "output_tokens": 117
+      },
+      "latency_ms": 280
+    }
+  },
+  "es-ve-seller-received-buyer-gone": {
+    "state": {
+      "roles": {
+        "buyer": "Pays the fiat money to the seller outside Mostro, then waits for the bitcoin.",
+        "seller": "Has bitcoin locked in Mostro escrow and must confirm the fiat arrived before the trade can finish.",
+        "serbero": "Automated assistant that asks both parties questions for the human solver. It cannot move funds or decide the dispute."
+      },
+      "order": {
+        "fiat_amount": "6000",
+        "fiat_code": "VES",
+        "payment_method": "Pago Móvil",
+        "dispute_opened_by": "seller"
+      },
+      "transcript": [
+        {
+          "id": "m1",
+          "from": "serbero",
+          "to": "buyer",
+          "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Enviaste el pago de 6.000 VES de esta orden? Si lo hiciste, dime cuándo y desde qué cuenta o aplicación."
+        },
+        {
+          "id": "m2",
+          "from": "serbero",
+          "to": "seller",
+          "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Te llegó a tu cuenta el pago de 6.000 VES de esta orden?"
+        },
+        {
+          "id": "m3",
+          "from": "seller",
+          "text": "si ya me llegó el pago movil, lo que pasa es que el comprador no me contesta"
+        }
+      ],
+      "latest": {
+        "buyer": [],
+        "seller": [
+          "m3"
+        ]
+      }
+    },
+    "response": {
+      "model": "jev-1.13.0",
+      "answers": {
+        "quote_seller_receipt": {
+          "type": "choice",
+          "choice": "m3",
+          "confidence": 1.0,
+          "probabilities": {
+            "none": 0.0,
+            "m3": 1.0
+          }
+        },
+        "quote_concern": {
+          "type": "choice",
+          "choice": "m3",
+          "confidence": 0.9,
+          "probabilities": {
+            "none": 0.05,
+            "m3": 0.95
+          }
+        },
+        "evidence_balance": {
+          "type": "score",
+          "score": 3.94,
+          "confidence": 0.95,
+          "legend": {
+            "0": "The buyer says they did not pay, or the conversation clearly indicates no payment was made.",
+            "1": "The buyer's claim to have paid is vague or contradicted and unsupported by details.",
+            "2": "There is not enough information to lean either way.",
+            "3": "The buyer gives specific, consistent payment details, but the seller has not confirmed receipt.",
+            "4": "The seller confirms the payment arrived."
+          },
+          "probabilities": {
+            "0": 0.0,
+            "1": 0.0,
+            "2": 0.03,
+            "3": 0.0,
+            "4": 0.97
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 1007,
+        "output_tokens": 86
+      },
+      "latency_ms": 298
+    }
+  },
+  "es-es-formal-received": {
+    "state": {
+      "roles": {
+        "buyer": "Pays the fiat money to the seller outside Mostro, then waits for the bitcoin.",
+        "seller": "Has bitcoin locked in Mostro escrow and must confirm the fiat arrived before the trade can finish.",
+        "serbero": "Automated assistant that asks both parties questions for the human solver. It cannot move funds or decide the dispute."
+      },
+      "order": {
+        "fiat_amount": "150",
+        "fiat_code": "EUR",
+        "payment_method": "SEPA",
+        "dispute_opened_by": "buyer"
+      },
+      "transcript": [
+        {
+          "id": "m1",
+          "from": "serbero",
+          "to": "buyer",
+          "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Enviaste el pago de 150 EUR de esta orden? Si lo hiciste, dime cuándo y desde qué cuenta o aplicación."
+        },
+        {
+          "id": "m2",
+          "from": "serbero",
+          "to": "seller",
+          "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Te llegó a tu cuenta el pago de 150 EUR de esta orden?"
+        },
+        {
+          "id": "m3",
+          "from": "seller",
+          "text": "Confirmo que he recibido la transferencia de 150 €."
+        }
+      ],
+      "latest": {
+        "buyer": [],
+        "seller": [
+          "m3"
+        ]
+      }
+    },
+    "response": {
+      "model": "jev-1.13.0",
+      "answers": {
+        "quote_seller_receipt": {
+          "type": "choice",
+          "choice": "m3",
+          "confidence": 1.0,
+          "probabilities": {
+            "m3": 1.0,
+            "none": 0.0
+          }
+        },
+        "quote_concern": {
+          "type": "choice",
+          "choice": "m3",
+          "confidence": 0.58,
+          "probabilities": {
+            "m3": 0.79,
+            "none": 0.21
+          }
+        },
+        "evidence_balance": {
+          "type": "score",
+          "score": 3.96,
+          "confidence": 0.97,
+          "legend": {
+            "0": "The buyer says they did not pay, or the conversation clearly indicates no payment was made.",
+            "1": "The buyer's claim to have paid is vague or contradicted and unsupported by details.",
+            "2": "There is not enough information to lean either way.",
+            "3": "The buyer gives specific, consistent payment details, but the seller has not confirmed receipt.",
+            "4": "The seller confirms the payment arrived."
+          },
+          "probabilities": {
+            "0": 0.0,
+            "1": 0.0,
+            "2": 0.02,
+            "3": 0.0,
+            "4": 0.98
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 993,
+        "output_tokens": 86
+      },
+      "latency_ms": 293
+    }
+  },
+  "es-co-listo-parce": {
+    "state": {
+      "roles": {
+        "buyer": "Pays the fiat money to the seller outside Mostro, then waits for the bitcoin.",
+        "seller": "Has bitcoin locked in Mostro escrow and must confirm the fiat arrived before the trade can finish.",
+        "serbero": "Automated assistant that asks both parties questions for the human solver. It cannot move funds or decide the dispute."
+      },
+      "order": {
+        "fiat_amount": "120000",
+        "fiat_code": "COP",
+        "payment_method": "Nequi",
+        "dispute_opened_by": "buyer"
+      },
+      "transcript": [
+        {
+          "id": "m1",
+          "from": "serbero",
+          "to": "buyer",
+          "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Enviaste el pago de 120.000 COP de esta orden? Si lo hiciste, dime cuándo y desde qué cuenta o aplicación."
+        },
+        {
+          "id": "m2",
+          "from": "serbero",
+          "to": "seller",
+          "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Te llegó a tu cuenta el pago de 120.000 COP de esta orden?"
+        },
+        {
+          "id": "m3",
+          "from": "seller",
+          "text": "listo parce ya me entró a nequi"
+        }
+      ],
+      "latest": {
+        "buyer": [],
+        "seller": [
+          "m3"
+        ]
+      }
+    },
+    "response": {
+      "model": "jev-1.13.0",
+      "answers": {
+        "quote_seller_receipt": {
+          "type": "choice",
+          "choice": "m3",
+          "confidence": 1.0,
+          "probabilities": {
+            "none": 0.0,
+            "m3": 1.0
+          }
+        },
+        "quote_concern": {
+          "type": "choice",
+          "choice": "m3",
+          "confidence": 0.31,
+          "probabilities": {
+            "none": 0.35,
+            "m3": 0.65
+          }
+        },
+        "evidence_balance": {
+          "type": "score",
+          "score": 3.98,
+          "confidence": 0.99,
+          "legend": {
+            "0": "The buyer says they did not pay, or the conversation clearly indicates no payment was made.",
+            "1": "The buyer's claim to have paid is vague or contradicted and unsupported by details.",
+            "2": "There is not enough information to lean either way.",
+            "3": "The buyer gives specific, consistent payment details, but the seller has not confirmed receipt.",
+            "4": "The seller confirms the payment arrived."
+          },
+          "probabilities": {
+            "0": 0.0,
+            "1": 0.0,
+            "2": 0.01,
+            "3": 0.0,
+            "4": 0.99
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 1000,
+        "output_tokens": 86
+      },
+      "latency_ms": 285
+    }
+  },
+  "es-fraud-seller-moves-to-telegram": {
+    "state": {
+      "roles": {
+        "buyer": "Pays the fiat money to the seller outside Mostro, then waits for the bitcoin.",
+        "seller": "Has bitcoin locked in Mostro escrow and must confirm the fiat arrived before the trade can finish.",
+        "serbero": "Automated assistant that asks both parties questions for the human solver. It cannot move funds or decide the dispute."
+      },
+      "order": {
+        "fiat_amount": "40000",
+        "fiat_code": "ARS",
+        "payment_method": "Mercado Pago",
+        "dispute_opened_by": "buyer"
+      },
+      "transcript": [
+        {
+          "id": "m1",
+          "from": "serbero",
+          "to": "buyer",
+          "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Enviaste el pago de 40.000 ARS de esta orden? Si lo hiciste, dime cuándo y desde qué cuenta o aplicación."
+        },
+        {
+          "id": "m2",
+          "from": "serbero",
+          "to": "seller",
+          "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Te llegó a tu cuenta el pago de 40.000 ARS de esta orden?"
+        },
+        {
+          "id": "m3",
+          "from": "seller",
+          "text": "hola, este chat anda re mal, escribime a mi telegram @fede_btc_ok que por ahí lo resolvemos más rápido"
+        }
+      ],
+      "latest": {
+        "buyer": [],
+        "seller": [
+          "m3"
+        ]
+      }
+    },
+    "response": {
+      "model": "jev-1.13.0",
+      "answers": {
+        "quote_seller_receipt": {
+          "type": "choice",
+          "choice": "none",
+          "confidence": 0.97,
+          "probabilities": {
+            "m3": 0.02,
+            "none": 0.98
+          }
+        },
+        "quote_concern": {
+          "type": "choice",
+          "choice": "m3",
+          "confidence": 1.0,
+          "probabilities": {
+            "m3": 1.0,
+            "none": 0.0
+          }
+        },
+        "evidence_balance": {
+          "type": "score",
+          "score": 1.99,
+          "confidence": 0.99,
+          "legend": {
+            "0": "The buyer says they did not pay, or the conversation clearly indicates no payment was made.",
+            "1": "The buyer's claim to have paid is vague or contradicted and unsupported by details.",
+            "2": "There is not enough information to lean either way.",
+            "3": "The buyer gives specific, consistent payment details, but the seller has not confirmed receipt.",
+            "4": "The seller confirms the payment arrived."
+          },
+          "probabilities": {
+            "0": 0.0,
+            "1": 0.01,
+            "2": 0.99,
+            "3": 0.0,
+            "4": 0.0
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 1019,
+        "output_tokens": 85
+      },
+      "latency_ms": 317
+    }
+  },
+  "es-fraud-buyer-moves-to-telegram": {
+    "state": {
+      "roles": {
+        "buyer": "Pays the fiat money to the seller outside Mostro, then waits for the bitcoin.",
+        "seller": "Has bitcoin locked in Mostro escrow and must confirm the fiat arrived before the trade can finish.",
+        "serbero": "Automated assistant that asks both parties questions for the human solver. It cannot move funds or decide the dispute."
+      },
+      "order": {
+        "fiat_amount": "40",
+        "fiat_code": "USD",
+        "payment_method": "Zelle",
+        "dispute_opened_by": "buyer"
+      },
+      "transcript": [
+        {
+          "id": "m1",
+          "from": "serbero",
+          "to": "buyer",
+          "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Enviaste el pago de 40 USD de esta orden? Si lo hiciste, dime cuándo y desde qué cuenta o aplicación."
+        },
+        {
+          "id": "m2",
+          "from": "serbero",
+          "to": "seller",
+          "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Te llegó a tu cuenta el pago de 40 USD de esta orden?"
+        },
+        {
+          "id": "m3",
+          "from": "buyer",
+          "text": "ya pagué por zelle a las 10am"
+        },
+        {
+          "id": "m4",
+          "from": "buyer",
+          "text": "pana mejor háblame por telegram, @carlos_p2p, ese chat es mejor, aquí no llegan los mensajes"
+        }
+      ],
+      "latest": {
+        "buyer": [
+          "m3",
+          "m4"
+        ],
+        "seller": []
+      }
+    },
+    "response": {
+      "model": "jev-1.13.0",
+      "answers": {
+        "quote_buyer_payment": {
+          "type": "choice",
+          "choice": "m3",
+          "confidence": 1.0,
+          "probabilities": {
+            "m3": 1.0,
+            "m4": 0.0,
+            "none": 0.0
+          }
+        },
+        "quote_buyer_details": {
+          "type": "choice",
+          "choice": "m3",
+          "confidence": 1.0,
+          "probabilities": {
+            "m3": 1.0,
+            "m4": 0.0,
+            "none": 0.0
+          }
+        },
+        "quote_concern": {
+          "type": "choice",
+          "choice": "m4",
+          "confidence": 0.98,
+          "probabilities": {
+            "m3": 0.01,
+            "m4": 0.99,
+            "none": 0.0
+          }
+        },
+        "evidence_balance": {
+          "type": "score",
+          "score": 2.57,
+          "confidence": 0.64,
+          "legend": {
+            "0": "The buyer says they did not pay, or the conversation clearly indicates no payment was made.",
+            "1": "The buyer's claim to have paid is vague or contradicted and unsupported by details.",
+            "2": "There is not enough information to lean either way.",
+            "3": "The buyer gives specific, consistent payment details, but the seller has not confirmed receipt.",
+            "4": "The seller confirms the payment arrived."
+          },
+          "probabilities": {
+            "0": 0.0,
+            "1": 0.21,
+            "2": 0.01,
+            "3": 0.78,
+            "4": 0.0
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 1129,
+        "output_tokens": 142
+      },
+      "latency_ms": 302
+    }
+  },
+  "es-fraud-telegram-fake-support": {
+    "state": {
+      "roles": {
+        "buyer": "Pays the fiat money to the seller outside Mostro, then waits for the bitcoin.",
+        "seller": "Has bitcoin locked in Mostro escrow and must confirm the fiat arrived before the trade can finish.",
+        "serbero": "Automated assistant that asks both parties questions for the human solver. It cannot move funds or decide the dispute."
+      },
+      "order": {
+        "fiat_amount": "3000",
+        "fiat_code": "MXN",
+        "payment_method": "SPEI",
+        "dispute_opened_by": "seller"
+      },
+      "transcript": [
+        {
+          "id": "m1",
+          "from": "serbero",
+          "to": "buyer",
+          "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Enviaste el pago de 3.000 MXN de esta orden? Si lo hiciste, dime cuándo y desde qué cuenta o aplicación."
+        },
+        {
+          "id": "m2",
+          "from": "serbero",
+          "to": "seller",
+          "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Te llegó a tu cuenta el pago de 3.000 MXN de esta orden?"
+        },
+        {
+          "id": "m3",
+          "from": "buyer",
+          "text": "para que esto se resuelva rápido contacta al soporte de mostro en telegram: @MostroSoporteOficial, ellos liberan al toque"
+        }
+      ],
+      "latest": {
+        "buyer": [
+          "m3"
+        ],
+        "seller": []
+      }
+    },
+    "response": {
+      "model": "jev-1.13.0",
+      "answers": {
+        "quote_buyer_payment": {
+          "type": "choice",
+          "choice": "none",
+          "confidence": 0.94,
+          "probabilities": {
+            "none": 0.97,
+            "m3": 0.03
+          }
+        },
+        "quote_buyer_details": {
+          "type": "choice",
+          "choice": "none",
+          "confidence": 0.97,
+          "probabilities": {
+            "none": 0.98,
+            "m3": 0.02
+          }
+        },
+        "quote_concern": {
+          "type": "choice",
+          "choice": "m3",
+          "confidence": 1.0,
+          "probabilities": {
+            "none": 0.0,
+            "m3": 1.0
+          }
+        },
+        "evidence_balance": {
+          "type": "score",
+          "score": 1.66,
+          "confidence": 0.72,
+          "legend": {
+            "0": "The buyer says they did not pay, or the conversation clearly indicates no payment was made.",
+            "1": "The buyer's claim to have paid is vague or contradicted and unsupported by details.",
+            "2": "There is not enough information to lean either way.",
+            "3": "The buyer gives specific, consistent payment details, but the seller has not confirmed receipt.",
+            "4": "The seller confirms the payment arrived."
+          },
+          "probabilities": {
+            "0": 0.01,
+            "1": 0.32,
+            "2": 0.67,
+            "3": 0.0,
+            "4": 0.0
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 1080,
+        "output_tokens": 116
+      },
+      "latency_ms": 320
+    }
+  },
+  "es-telegram-mention-innocent": {
+    "state": {
+      "roles": {
+        "buyer": "Pays the fiat money to the seller outside Mostro, then waits for the bitcoin.",
+        "seller": "Has bitcoin locked in Mostro escrow and must confirm the fiat arrived before the trade can finish.",
+        "serbero": "Automated assistant that asks both parties questions for the human solver. It cannot move funds or decide the dispute."
+      },
+      "order": {
+        "fiat_amount": "100000",
+        "fiat_code": "COP",
+        "payment_method": "Nequi",
+        "dispute_opened_by": "buyer"
+      },
+      "transcript": [
+        {
+          "id": "m1",
+          "from": "serbero",
+          "to": "buyer",
+          "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Enviaste el pago de 100.000 COP de esta orden? Si lo hiciste, dime cuándo y desde qué cuenta o aplicación."
+        },
+        {
+          "id": "m2",
+          "from": "serbero",
+          "to": "seller",
+          "text": "Hola, soy Serbero, un asistente automático que ayuda con esta disputa. Les haré unas preguntas breves a ti y a la otra parte. No puedo mover fondos ni decidir la disputa, y una persona puede intervenir cuando lo pidas. Los mensajes de este chat pueden ser monitoreados y procesados por un servicio automático.\n\n¿Te llegó a tu cuenta el pago de 100.000 COP de esta orden?"
+        },
+        {
+          "id": "m3",
+          "from": "buyer",
+          "text": "vi la oferta en el grupo de telegram de mostro y la tomé, ya le envié por nequi a las 4:10pm"
+        }
+      ],
+      "latest": {
+        "buyer": [
+          "m3"
+        ],
+        "seller": []
+      }
+    },
+    "response": {
+      "model": "jev-1.13.0",
+      "answers": {
+        "quote_buyer_payment": {
+          "type": "choice",
+          "choice": "m3",
+          "confidence": 1.0,
+          "probabilities": {
+            "none": 0.0,
+            "m3": 1.0
+          }
+        },
+        "quote_buyer_details": {
+          "type": "choice",
+          "choice": "m3",
+          "confidence": 1.0,
+          "probabilities": {
+            "none": 0.0,
+            "m3": 1.0
+          }
+        },
+        "quote_concern": {
+          "type": "choice",
+          "choice": "m3",
+          "confidence": 0.07,
+          "probabilities": {
+            "none": 0.46,
+            "m3": 0.54
+          }
+        },
+        "evidence_balance": {
+          "type": "score",
+          "score": 2.96,
+          "confidence": 0.97,
+          "legend": {
+            "0": "The buyer says they did not pay, or the conversation clearly indicates no payment was made.",
+            "1": "The buyer's claim to have paid is vague or contradicted and unsupported by details.",
+            "2": "There is not enough information to lean either way.",
+            "3": "The buyer gives specific, consistent payment details, but the seller has not confirmed receipt.",
+            "4": "The seller confirms the payment arrived."
+          },
+          "probabilities": {
+            "0": 0.0,
+            "1": 0.02,
+            "2": 0.0,
+            "3": 0.98,
+            "4": 0.0
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 1081,
+        "output_tokens": 118
+      },
+      "latency_ms": 306
+    }
+  }
+}

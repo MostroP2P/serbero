@@ -57,7 +57,7 @@ impl TurnQuestions {
             questions.extend(per_party(party, languages));
             questions.insert(key(party, GUIDING), rejects_path(party));
         }
-        let hash = hash(&questions);
+        let hash = short_hash(&questions);
         Self {
             all: QuestionSet {
                 version: format!("{QUESTION_SET_VERSION}-{hash}"),
@@ -141,9 +141,10 @@ fn canonical_question(question: &Question) -> Value {
     }
 }
 
-/// The canonical JSON has sorted keys, so the hash does not depend on
+/// The first `HASH_CHARS` hex characters of the SHA-256 of the canonical
+/// JSON. The canonical JSON has sorted keys, so the hash does not depend on
 /// insertion order; SHA-256 keeps it stable across Rust releases.
-fn hash(questions: &BTreeMap<String, Question>) -> String {
+pub(crate) fn short_hash(questions: &BTreeMap<String, Question>) -> String {
     let digest = Sha256::digest(canonical_json(questions).to_string().as_bytes());
     digest
         .iter()

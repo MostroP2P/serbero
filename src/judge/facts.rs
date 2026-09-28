@@ -125,8 +125,7 @@ fn party_facts(
         .and_then(|answer| {
             let winner = answer.winner()?;
             let enabled = languages.iter().any(|code| code == winner);
-            (enabled && share(answer, winner) >= LANGUAGE_MIN_PROBABILITY)
-                .then(|| winner.to_owned())
+            (enabled && answer.share(winner) >= LANGUAGE_MIN_PROBABILITY).then(|| winner.to_owned())
         });
     Some(PartyFacts {
         wants_human: p_yes(answers, &format!("{party}_wants_human")) >= thresholds.human_request,
@@ -152,21 +151,7 @@ fn kind(answer: &Answer) -> MessageKind {
 }
 
 fn probability(answers: &Answers, id: &str, option: &str) -> f64 {
-    answers.get(id).map_or(0.0, |a| share(a, option))
-}
-
-/// An option's probability as a share of the choice's total. A distribution
-/// may sum to slightly more than 1 and still be accepted; normalizing keeps
-/// two options of one choice from both reaching a threshold above 0.5.
-fn share(answer: &Answer, option: &str) -> f64 {
-    let Answer::Choice { probabilities } = answer else {
-        return 0.0;
-    };
-    let total: f64 = probabilities.values().sum();
-    if total <= 0.0 {
-        return 0.0;
-    }
-    answer.probability(option) / total
+    answers.get(id).map_or(0.0, |a| a.share(option))
 }
 
 fn p_yes(answers: &Answers, id: &str) -> f64 {

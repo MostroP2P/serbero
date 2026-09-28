@@ -123,6 +123,38 @@ def build_questions(state, qs):
     return questions
 
 
+BRIEF_PARTIES = {
+    "quote_buyer_payment": ("buyer",),
+    "quote_buyer_details": ("buyer",),
+    "quote_seller_receipt": ("seller",),
+    "quote_concern": ("buyer", "seller"),
+}
+
+
+def brief_template():
+    """The brief questions of docs/judgments.md §5, read from the doc."""
+    doc = (ROOT / "docs" / "judgments.md").read_text()
+    section = doc[doc.index("\n## 5. Brief request\n") :]
+    block = section[section.index("```json\n") + len("```json\n") :]
+    return json.loads(block[: block.index("```")])
+
+
+def build_brief_questions(state, template):
+    """Quote options are the right party's message ids plus `none`; a quote
+    whose party wrote nothing is left out, as in src/judge/brief.rs."""
+    questions = {}
+    for qid, q in template.items():
+        if qid not in BRIEF_PARTIES:
+            questions[qid] = q
+            continue
+        ids = [t["id"] for t in state["transcript"] if t["from"] in BRIEF_PARTIES[qid]]
+        if ids:
+            criteria = {i: None for i in ids}
+            criteria["none"] = q["criteria"]["none"]
+            questions[qid] = {**q, "criteria": criteria}
+    return questions
+
+
 def call_judge(key, state, questions):
     body = json.dumps({"model": MODEL, "state": state, "questions": questions}).encode()
     for attempt in range(6):
@@ -256,10 +288,100 @@ def report(cases, results, rows, version):
     return "\n".join(out) + "\n"
 
 
+def run_brief(cases, catalogs, results_path):
+    key = os.environ.get("TYPESAFE_API_KEY")
+    if not key:
+        sys.exit("TYPESAFE_API_KEY is not set (source .env first)")
+    template = brief_template()
+
+    def one(case):
+        state = build_state(case, catalogs)
+        response = call_judge(key, state, build_brief_questions(state, template))
+        return case["id"], {"state": state, "response": response}
+
+    labelled = [c for c in cases if "brief_expect" in c]
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+        results = dict(pool.map(one, labelled))
+    results_path.write_text(json.dumps(results, indent=2, ensure_ascii=False) + "\n")
+    return results
+
+
+def share(answer, option):
+    total = sum(answer["probabilities"].values())
+    return answer["probabilities"].get(option, 0.0) / total if total > 0 else 0.0
+
+
+def brief_report(cases, results):
+    fact = THRESHOLDS["fact"]
+    out = [f"Model `{MODEL}`, brief questions of `qs-1`, {len(results)} cases.", ""]
+    out += [
+        "| Question | Labels | Winner correct | Kept at `fact` | Kept and correct | Wrong party |",
+        "|---|---:|---:|---:|---:|---:|",
+    ]
+    misses = []
+    for qid, parties in BRIEF_PARTIES.items():
+        labels = hits = kept = kept_ok = wrong_party = 0
+        for case in cases:
+            label = case.get("brief_expect", {}).get(qid)
+            if label is None or case["id"] not in results:
+                continue
+            state = results[case["id"]]["state"]
+            answer = results[case["id"]]["response"]["answers"].get(qid)
+            allowed = {t["id"] for t in state["transcript"] if t["from"] in parties}
+            winner = answer["choice"] if answer else "none"
+            labels += 1
+            hits += winner == label
+            if winner != "none" and winner not in allowed:
+                wrong_party += 1
+            if answer and winner != "none" and share(answer, winner) >= fact:
+                kept += 1
+                kept_ok += winner == label
+            if winner != label:
+                p = share(answer, winner) if answer else 1.0
+                misses.append(f"| `{case['id']}` | `{qid}` | `{label}` | `{winner}` ({p:.2f}) |")
+        out.append(
+            f"| `{qid}` | {labels} | {hits}/{labels} | {kept} | {kept_ok}/{kept} | {wrong_party} |"
+        )
+
+    exact = near = n = 0
+    for case in cases:
+        level = case.get("brief_expect", {}).get("evidence_level")
+        if level is None or case["id"] not in results:
+            continue
+        probs = results[case["id"]]["response"]["answers"]["evidence_balance"]["probabilities"]
+        dist = [probs[str(i)] for i in range(len(probs))]
+        top = max(range(len(dist)), key=dist.__getitem__)
+        n += 1
+        exact += top == level
+        near += abs(top - level) <= 1
+        if top != level:
+            misses.append(f"| `{case['id']}` | `evidence_balance` | level {level} | level {top} ({dist[top]:.2f}) |")
+    out += [
+        "",
+        f"`evidence_balance`: most likely level equals the label in {exact}/{n} cases, "
+        f"within one level in {near}/{n}.",
+    ]
+    latencies = [r["response"]["latency_ms"] for r in results.values()]
+    tokens = [r["response"]["usage"]["input_tokens"] for r in results.values()]
+    out += [
+        "",
+        f"Latency: median {statistics.median(latencies):.0f} ms, max {max(latencies)} ms. "
+        f"Input tokens: mean {statistics.mean(tokens):.0f}, max {max(tokens)}.",
+        "",
+        "### Every miss",
+        "",
+        "| Case | Question | Label | Answer (P) |",
+        "|---|---|---|---|",
+        *misses,
+    ]
+    return "\n".join(out) + "\n"
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--score", action="store_true", help="re-score saved answers without calling the judge")
     parser.add_argument("--questions", default="questions.json", help="question set file in this directory")
+    parser.add_argument("--brief", action="store_true", help="evaluate the brief questions instead")
     args = parser.parse_args()
 
     qs = json.loads((HERE / args.questions).read_text())
@@ -267,6 +389,14 @@ def main():
     ids = [c["id"] for c in cases]
     if len(ids) != len(set(ids)):
         sys.exit("duplicate case ids")
+    if args.brief:
+        catalogs = load_catalogs()
+        path = HERE / f"results-{MODEL}-brief-qs-1.json"
+        results = json.loads(path.read_text()) if args.score else run_brief(cases, catalogs, path)
+        text = brief_report(cases, results)
+        (HERE / "metrics-brief-qs-1.md").write_text(text)
+        print(text)
+        return
     results_path = HERE / f"results-{MODEL}-{qs['version']}.json"
     catalogs = load_catalogs()
 
