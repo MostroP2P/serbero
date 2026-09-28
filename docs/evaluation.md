@@ -129,7 +129,12 @@ precision target the chosen value is the lowest one that meets it (precision
 rises with the threshold while coverage falls). For a recall target it is the
 highest one that still meets it (recall falls with the threshold, and so do
 false positives); the lowest value would always meet a recall target and
-hand every borderline case to a human. For a given provider and model, one value covers all
+hand every borderline case to a human. `guide` is one value for both
+self-resolution paths, so the report recommends the stricter of the two
+precision cutoffs; `fact` is the lowest value at which both payment questions
+meet their accuracy and coverage targets. A replay (`--provider recorded`) is
+scored with the thresholds of the judge that made the recording. A golden case
+of a guiding turn sets `"guiding": true`, so `<party>_rejects_path` is asked. For a given provider and model, one value covers all
 enabled languages; if one language needs a stricter value, that value applies
 to all.
 

@@ -299,3 +299,24 @@ fn the_brief_fits_a_provider_with_common_limits() {
 
     assert_eq!(capabilities.check(&set), Vec::<String>::new());
 }
+
+#[test]
+fn a_long_transcript_offers_only_the_most_recent_messages() {
+    let many: Vec<(&str, Option<&str>)> = (0..300).map(|_| ("buyer", None)).collect();
+    let state = state(&many);
+
+    let set = BriefQuestions::new().for_state(&state);
+
+    let offered = options(&set, "quote_concern");
+    assert_eq!(
+        offered.len(),
+        MAX_QUOTE_OPTIONS + 1,
+        "the most recent messages and none"
+    );
+    assert_eq!(
+        offered[offered.len() - 2],
+        "m300",
+        "the newest message is offered"
+    );
+    assert!(!offered.contains(&"m1".to_owned()));
+}
