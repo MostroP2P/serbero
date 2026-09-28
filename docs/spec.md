@@ -457,7 +457,7 @@ decided and sent its response.
 
 ```rust
 enum Action {
-    Ask { buyer: Option<TemplateId>, seller: Option<TemplateId> },
+    Ask { buyer: Vec<TemplateId>, seller: Vec<TemplateId> },  // in sending order (e.g. what_happens_next, then a question)
     Guide(Path),                    // explain a self-resolution path to the parties
     Handoff(HandoffReason),         // brief to solver, notice to parties
     Wait,                           // nothing new to ask, still inside limits

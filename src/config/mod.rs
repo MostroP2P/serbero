@@ -203,8 +203,9 @@ impl JudgeConfig {
     }
 }
 
-/// Decision thresholds (`docs/judgments.md` §3).
-#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+/// Decision thresholds (`docs/judgments.md` §3), and the languages whose
+/// golden set passed for this judge (`docs/spec.md` §7.7).
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Thresholds {
     pub guide: f64,
@@ -213,6 +214,10 @@ pub struct Thresholds {
     pub fraud: f64,
     pub conflict: f64,
     pub outside_scope: f64,
+    /// Self-resolution guidance is offered only when both parties' languages
+    /// are listed here. Empty until a calibration (T3.10) fills it.
+    #[serde(default)]
+    pub validated_languages: Vec<String>,
 }
 
 impl Thresholds {
@@ -317,6 +322,16 @@ impl Config {
                         "judge.thresholds.\"{key}\".{name} = {value} must be in (0, 1]"
                     ));
                 }
+            }
+            let available = crate::catalog::embedded_codes();
+            if let Some(lang) = thresholds
+                .validated_languages
+                .iter()
+                .find(|lang| !available.contains(&lang.as_str()))
+            {
+                return invalid(format!(
+                    "judge.thresholds.\"{key}\".validated_languages: {lang:?} has no template catalog"
+                ));
             }
             // `fact` and `guide` pick one option of a choice; above one half,
             // two options of the same question can never both be known.
