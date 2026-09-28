@@ -424,3 +424,29 @@ fn the_final_report_matches_the_spec() {
          mediation: yes · outcome: superseded · rounds: 1 · duration: 10 min"
     );
 }
+
+#[test]
+fn a_message_longer_than_a_dm_is_split_not_cut() {
+    let long = format!("{}END", "x".repeat(70_000));
+    let lines = [Line {
+        attachments: 1,
+        ..line(AT_1452, Speaker::Party(Party::Buyer), &long)
+    }];
+
+    let dms = transcript("d1", &lines);
+
+    assert!(dms.len() >= 3, "{} parts", dms.len());
+    for dm in &dms {
+        assert!(dm.chars().count() <= MAX_DM_CHARS);
+    }
+    let bodies: String = dms
+        .iter()
+        .map(|dm| dm.split_once('\n').unwrap().1)
+        .collect::<Vec<_>>()
+        .join("");
+    assert_eq!(bodies.matches('x').count(), 70_000, "no character is lost");
+    assert!(
+        bodies.ends_with("END  [1 attachment]"),
+        "the attachment note survives"
+    );
+}

@@ -19,6 +19,11 @@ const EVIDENCE_BALANCE: &str = "evidence_balance";
 /// The option that quotes nothing.
 const NONE: &str = "none";
 
+/// Most messages a quote question offers: the newest ones. Keeps a long
+/// session far below provider limits (255 options for Jev); the statement a
+/// solver needs is almost always recent.
+pub const MAX_QUOTE_OPTIONS: usize = 100;
+
 /// Whose messages a quote question may choose from.
 #[derive(Clone, Copy)]
 enum Quoted {
@@ -154,15 +159,18 @@ fn evidence_question() -> Question {
     }
 }
 
-/// Ids of the transcript messages written by `quoted`, in transcript order.
+/// Ids of the newest `MAX_QUOTE_OPTIONS` transcript messages written by
+/// `quoted`, in transcript order.
 fn message_ids(state: &Value, quoted: Quoted) -> Vec<String> {
-    state["transcript"]
+    let ids: Vec<String> = state["transcript"]
         .as_array()
         .into_iter()
         .flatten()
         .filter(|m| m["from"].as_str().is_some_and(|from| quoted.includes(from)))
         .filter_map(|m| m["id"].as_str().map(str::to_owned))
-        .collect()
+        .collect();
+    let skip = ids.len().saturating_sub(MAX_QUOTE_OPTIONS);
+    ids.into_iter().skip(skip).collect()
 }
 
 /// The reading of `evidence_balance`: its value from 0 to 1 and the
