@@ -327,7 +327,7 @@ pub trait Judge: Send + Sync {
 
 | `provider` | Status | Notes |
 |---|---|---|
-| `typesafe` | v1 | Jev via `POST {api_base}/v1/systemone`. |
+| `typesafe` | v1 | Jev via `POST {api_base}/v1/systemone`; health check `GET {api_base}/v1/models` (validates the key, costs nothing). Retries 408, 429 and 5xx (including 529) and network errors with backoff from 0.5 s doubling to 5 s, honoring `retry-after`. |
 | `recorded` | v1 | Replays stored answers. Used by tests and for dry runs. |
 | *new vendor* | future | One file in `src/judge/providers/` implementing `Judge`; nothing else changes. |
 
@@ -337,7 +337,7 @@ between models, thresholds are stored per provider
 (`[judge.thresholds."<provider>/<model>"]`), and a provider or model is enabled
 only after it passes the golden set. Production configs pin a concrete model
 version rather than an alias such as `jev-latest`, so the calibrated thresholds
-always match the model that answers ([evaluation.md](evaluation.md)). Every
+always match the model that answers ([evaluation.md](evaluation.md)). An answer reporting any other model is rejected as `Malformed`, and error bodies are never kept, since they may echo party text. Every
 evaluation row records the judge id, so results from different providers are
 never mixed up.
 

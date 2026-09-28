@@ -10,7 +10,9 @@ repository = "https://github.com/MostroP2P/serbero"
 futures-util = "0.3.34"
 mostro-core = "0.15.1"
 nostr-sdk = "0.45.4"
+reqwest = { version = "0.13.5", default-features = false, features = ["json", "rustls-no-provider", "http2"] }
 rusqlite = { version = "0.40.2", features = ["bundled"] }
+rustls = { version = "0.23.45", default-features = false, features = ["ring", "std", "tls12"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 thiserror = "2.0.21"
@@ -23,6 +25,7 @@ uuid = { version = "1.26.1", features = ["v4"] }
 [dev-dependencies]
 nostr-sdk = { version = "0.45.4", features = ["local-relay"] }
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "time", "test-util", "process"] }
+wiremock = "0.6.5"
 
 [lints.rust]
 unsafe_code = "forbid"

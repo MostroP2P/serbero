@@ -14,7 +14,7 @@ Serbero makes two kinds of Jev request:
 The question set is written once in Serbero's provider-neutral types
 ([spec.md §5.2](spec.md#52-judge-providers)). The JSON in this document is its
 canonical serialization, which is also what the `typesafe` adapter sends to Jev
-(`POST https://api.typesafe.ai/v1/systemone`, `model = "jev-latest"`). Other
+(`POST https://api.typesafe.ai/v1/systemone`, with the pinned `[judge].model`). Other
 adapters translate it to their own format.
 
 ## 1. State
