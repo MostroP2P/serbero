@@ -407,7 +407,13 @@ never delays notification.
 A dispute enters mediation when all of the following hold. Every check is
 deterministic; no Jev call happens before the take.
 
-- `[mediation].enabled = true` and the judge health check passed at startup.
+- `[mediation].enabled = true` and the judge passed its startup checks: the
+  configured provider is a live one, thresholds exist for its provider and
+  model, it can express every question of the turn set, and its health check
+  succeeded. The checks run in the background; until they pass no dispute is
+  taken, and if one fails mediation stays off while notification runs as
+  usual. During a session, a judge that fails after its retries hands the
+  session off as `judge_unavailable`.
 - The dispute is `notified` and has no session and no prior handoff.
 - The dispute has not been taken by a human.
 

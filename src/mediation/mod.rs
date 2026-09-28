@@ -433,3 +433,133 @@ impl<S: DmSender> Mediator<S> {
             .map_err(|_| Error::Schema("store lock poisoned".into()))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use futures_util::future::BoxFuture;
+    use serde_json::Value;
+
+    use super::eligibility::Readiness;
+    use super::*;
+    use crate::judge::questions::{Language, TurnQuestions};
+    use crate::judge::{Capabilities, Judge, JudgeError, Judged, QuestionKind, QuestionSet};
+
+    /// A judge whose capabilities and health are set by the test.
+    struct Probe {
+        max_choice_options: usize,
+        healthy: bool,
+    }
+
+    impl Judge for Probe {
+        fn id(&self) -> &str {
+            "test/probe"
+        }
+
+        fn capabilities(&self) -> Capabilities {
+            Capabilities {
+                question_kinds: vec![
+                    QuestionKind::Noul,
+                    QuestionKind::Choice,
+                    QuestionKind::Score,
+                ],
+                max_choice_options: self.max_choice_options,
+                max_score_levels: 10,
+                max_context_tokens: None,
+            }
+        }
+
+        fn evaluate<'a>(
+            &'a self,
+            _state: &'a Value,
+            _questions: &'a QuestionSet,
+        ) -> BoxFuture<'a, std::result::Result<Judged, JudgeError>> {
+            Box::pin(async { Err(JudgeError::Unavailable("not in this test".into())) })
+        }
+
+        fn health_check(&self) -> BoxFuture<'_, std::result::Result<(), JudgeError>> {
+            let healthy = self.healthy;
+            Box::pin(async move {
+                if healthy {
+                    Ok(())
+                } else {
+                    Err(JudgeError::Unauthorized("bad key".into()))
+                }
+            })
+        }
+    }
+
+    fn turn() -> TurnQuestions {
+        TurnQuestions::new(&[Language {
+            code: "en",
+            name: "English",
+        }])
+    }
+
+    fn thresholds() -> crate::config::Thresholds {
+        serde_json::from_value(serde_json::json!({
+            "guide": 0.9, "fact": 0.8, "human_request": 0.8,
+            "fraud": 0.6, "conflict": 0.75, "outside_scope": 0.8
+        }))
+        .unwrap()
+    }
+
+    const HEALTHY: Probe = Probe {
+        max_choice_options: 255,
+        healthy: true,
+    };
+
+    #[tokio::test]
+    async fn a_healthy_capable_calibrated_judge_is_ready() {
+        let readiness = check_judge(&HEALTHY, Some(&thresholds()), &turn()).await;
+
+        assert_eq!(readiness, Readiness::Ready);
+    }
+
+    #[tokio::test]
+    async fn a_failed_health_check_keeps_mediation_off() {
+        let down = Probe {
+            healthy: false,
+            ..HEALTHY
+        };
+
+        let readiness = check_judge(&down, Some(&thresholds()), &turn()).await;
+
+        assert!(matches!(readiness, Readiness::Off(r) if r.contains("bad key")));
+    }
+
+    #[tokio::test]
+    async fn a_question_set_the_provider_cannot_express_keeps_mediation_off() {
+        // dispute_topic alone has seven options.
+        let narrow = Probe {
+            max_choice_options: 3,
+            ..HEALTHY
+        };
+
+        let readiness = check_judge(&narrow, Some(&thresholds()), &turn()).await;
+
+        assert!(matches!(readiness, Readiness::Off(r) if r.contains("dispute_topic")));
+    }
+
+    #[tokio::test]
+    async fn missing_thresholds_keep_mediation_off() {
+        let readiness = check_judge(&HEALTHY, None, &turn()).await;
+
+        assert!(matches!(readiness, Readiness::Off(r) if r.contains("no thresholds")));
+    }
+
+    #[test]
+    fn only_a_live_provider_can_mediate() {
+        let recorded = crate::config::JudgeConfig {
+            provider: "recorded".into(),
+            ..Default::default()
+        };
+        let typesafe = crate::config::JudgeConfig::default();
+
+        assert!(judge_from_config(&recorded, Some("k")).is_err());
+        assert!(
+            judge_from_config(&typesafe, None).is_err(),
+            "the key is required"
+        );
+        assert!(judge_from_config(&typesafe, Some("k")).is_ok());
+    }
+}

@@ -59,6 +59,8 @@ impl Outbox {
 struct ScriptedJudge {
     picks: BTreeMap<&'static str, (&'static str, f64)>,
     calls: AtomicUsize,
+    /// Every request fails, as after the adapter's retries.
+    down: std::sync::atomic::AtomicBool,
 }
 
 fn neutral(id: &str) -> &'static str {
@@ -127,6 +129,9 @@ impl Judge for ScriptedJudge {
         questions: &'a QuestionSet,
     ) -> BoxFuture<'a, Result<Judged, JudgeError>> {
         self.calls.fetch_add(1, Ordering::SeqCst);
+        if self.down.load(Ordering::SeqCst) {
+            return Box::pin(async { Err(JudgeError::Unavailable("overloaded".into())) });
+        }
         let answers: Answers = questions
             .questions
             .iter()
@@ -248,6 +253,7 @@ async fn script(picks: &[(&'static str, (&'static str, f64))]) -> Script {
     let judge = Arc::new(ScriptedJudge {
         picks: picks.iter().copied().collect(),
         calls: AtomicUsize::new(0),
+        down: false.into(),
     });
     let outbox = Outbox::default();
     let mostro = Keys::generate();
@@ -820,5 +826,39 @@ async fn flooding_twice_hands_off_without_judging_again() {
         script.judge.calls.load(Ordering::SeqCst),
         1,
         "the flooding turn is not judged"
+    );
+}
+
+#[tokio::test]
+async fn a_judge_that_is_down_hands_off_with_the_transcript() {
+    let script = script(&[]).await;
+    script.judge.down.store(true, Ordering::SeqCst);
+    let mut buyer = buyer_side(&script).await;
+
+    buyer.say("ya pagué").await;
+
+    assert_eq!(buyer.next_from_serbero().await, en("handoff_notice"));
+    let brief = wait_for_text(
+        &script.outbox,
+        "Dispute d1 · handed off: judge_unavailable\n",
+    )
+    .await;
+    assert!(brief.contains("Automated reading unavailable"), "{brief}");
+    let transcript = wait_for_text(&script.outbox, "Dispute d1 · transcript").await;
+    assert!(transcript.contains("buyer: ya pagué"), "{transcript}");
+    let store = script.store.lock().unwrap();
+    assert_eq!(
+        sessions::get(store.conn(), "s1")
+            .unwrap()
+            .unwrap()
+            .handoff_reason
+            .as_deref(),
+        Some("judge_unavailable")
+    );
+    assert!(
+        evaluations::list_for_session(store.conn(), "s1")
+            .unwrap()
+            .is_empty(),
+        "nothing was judged"
     );
 }

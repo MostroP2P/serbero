@@ -28,7 +28,8 @@ pub enum TurnOutcome {
     /// Nothing to judge: the session is not live, no party wrote, or the
     /// judge is not ready.
     Skipped(&'static str),
-    /// The judge failed; the evaluation was not made.
+    /// The judge failed after its retries; the session was handed off as
+    /// `judge_unavailable`.
     JudgeFailed(String),
     Decided(Action),
     /// After a handoff: this many new party messages went to the solvers.
@@ -120,7 +121,13 @@ impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
         let started = std::time::Instant::now();
         let judged = match ready.judge.evaluate(&built.value, &questions).await {
             Ok(judged) => judged,
-            Err(e) => return Ok(TurnOutcome::JudgeFailed(e.to_string())),
+            Err(e) => {
+                // The adapter already retried: the solvers take over with the
+                // transcript, and no fact is shown (`docs/spec.md` §7.6).
+                self.hand_off(&session, HandoffReason::JudgeUnavailable, None, now)
+                    .await?;
+                return Ok(TurnOutcome::JudgeFailed(e.to_string()));
+            }
         };
         let latency_ms = u32::try_from(started.elapsed().as_millis()).unwrap_or(u32::MAX);
         let facts =
