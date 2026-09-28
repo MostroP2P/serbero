@@ -206,13 +206,20 @@ fn check_distribution(probabilities: impl Iterator<Item = f64>) -> Result<(), St
     Ok(())
 }
 
+/// The peak is taken as a share of the total, so a distribution accepted
+/// within the sum tolerance gives the same confidence as its normalized form.
 fn concentration(probabilities: impl Iterator<Item = f64>) -> f64 {
-    let (n, peak) = probabilities.fold((0usize, 0.0f64), |(n, peak), p| (n + 1, peak.max(p)));
+    let (n, peak, total) = probabilities.fold((0usize, 0.0f64, 0.0f64), |(n, peak, total), p| {
+        (n + 1, peak.max(p), total + p)
+    });
     if n < 2 {
         return 1.0;
     }
+    if total <= 0.0 {
+        return 0.0;
+    }
     let n = n as f64;
-    ((n * peak - 1.0) / (n - 1.0)).clamp(0.0, 1.0)
+    ((n * peak / total - 1.0) / (n - 1.0)).clamp(0.0, 1.0)
 }
 
 /// What a provider supports. At startup Serbero checks the question set

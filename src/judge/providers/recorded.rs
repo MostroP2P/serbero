@@ -41,7 +41,7 @@ pub struct RecordedJudge {
     id: String,
     question_set: String,
     /// Keyed by `request_key`.
-    by_request: HashMap<String, Answers>,
+    by_request: HashMap<RequestKey, Answers>,
 }
 
 impl RecordedJudge {
@@ -96,10 +96,12 @@ impl RecordedJudge {
 }
 
 /// The sorted question ids and the state's JSON text (object keys are
-/// sorted, so equal states give equal text).
-fn request_key<'a>(state: &Value, question_ids: impl Iterator<Item = &'a String>) -> String {
-    let ids: Vec<&str> = question_ids.map(String::as_str).collect();
-    format!("{}\n{}", ids.join(","), state)
+/// sorted, so equal states give equal text). Kept apart, so no id can be
+/// confused with a separator.
+type RequestKey = (Vec<String>, String);
+
+fn request_key<'a>(state: &Value, question_ids: impl Iterator<Item = &'a String>) -> RequestKey {
+    (question_ids.cloned().collect(), state.to_string())
 }
 
 impl Judge for RecordedJudge {
@@ -265,6 +267,23 @@ mod tests {
 
         assert_eq!(turn["buyer_payment"].winner(), Some("says_sent"));
         assert!(brief.contains_key("evidence"));
+    }
+
+    #[test]
+    fn question_ids_containing_separators_do_not_collide() {
+        let answers = |ids: &[&str]| -> Answers {
+            ids.iter()
+                .map(|id| ((*id).to_owned(), Answer::Noul { p_yes: 0.5 }))
+                .collect()
+        };
+        let mut recording = recording();
+        recording.cases[0].answers = answers(&["a,b"]);
+        let mut split = recording.cases[0].clone();
+        split.case_id = "en-002".into();
+        split.answers = answers(&["a", "b"]);
+        recording.cases.push(split);
+
+        assert!(RecordedJudge::new(recording).is_ok());
     }
 
     #[test]

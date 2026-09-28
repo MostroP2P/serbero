@@ -94,6 +94,16 @@ fn confidence_depends_only_on_the_distribution() {
 }
 
 #[test]
+fn confidence_uses_the_normalized_peak() {
+    // Sums to 1.009, within tolerance: 0.67 / 1.009 is the real share.
+    let answer = choice(&[("a", 0.67), ("b", 0.33), ("c", 0.009)]);
+    let expected = (3.0 * 0.67 / 1.009 - 1.0) / 2.0;
+
+    assert!(close(answer.confidence().unwrap(), expected));
+    assert!(answer.confidence().unwrap() < 0.5);
+}
+
+#[test]
 fn a_noul_has_no_confidence() {
     assert_eq!(Answer::Noul { p_yes: 0.9 }.confidence(), None);
 }
