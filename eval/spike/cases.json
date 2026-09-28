@@ -1,0 +1,745 @@
+[
+  {
+    "id": "es-ar-sent-details-seller-checked-denies",
+    "region": "AR",
+    "order": {"fiat_amount": "50000", "fiat_code": "ARS", "payment_method": "Mercado Pago", "dispute_opened_by": "buyer"},
+    "msgs": [
+      "b: hola si, le transferí ayer a las 19:40 desde mi cuenta de MP",
+      "b[1]: ahi va el comprobante",
+      "s: no me llego nada, revise mp y no hay ningun ingreso de 50 lucas"
+    ],
+    "expect": {
+      "buyer_payment": "says_sent", "buyer_details": true,
+      "seller_receipt": "says_not_received", "seller_checked": true,
+      "claims_conflict": true, "fraud_signal": false, "dispute_topic": "payment_not_confirmed",
+      "buyer_message_kind": "answers", "buyer_language": "es", "buyer_wants_human": false,
+      "seller_message_kind": "answers", "seller_language": "es", "seller_wants_human": false
+    }
+  },
+  {
+    "id": "es-ve-sent-no-details",
+    "region": "VE",
+    "order": {"fiat_amount": "3500", "fiat_code": "VES", "payment_method": "Pago Móvil", "dispute_opened_by": "buyer"},
+    "msgs": [
+      "b: si ya pague",
+      "b: desde hace rato"
+    ],
+    "expect": {
+      "buyer_payment": "says_sent", "buyer_details": false,
+      "seller_receipt": "not_stated", "claims_conflict": false, "fraud_signal": false,
+      "buyer_message_kind": "answers", "buyer_language": "es", "buyer_wants_human": false
+    }
+  },
+  {
+    "id": "es-mx-not-sent-driving",
+    "region": "MX",
+    "order": {"fiat_amount": "1200", "fiat_code": "MXN", "payment_method": "SPEI", "dispute_opened_by": "seller"},
+    "msgs": [
+      "b: no, todavía no lo he mandado, andaba manejando y no pude",
+      "b: ahorita que llegue a mi casa lo hago",
+      "s: pues ya pasó más de una hora, yo no he recibido nada"
+    ],
+    "expect": {
+      "buyer_payment": "says_not_sent", "buyer_details": false,
+      "seller_receipt": "says_not_received",
+      "claims_conflict": false, "fraud_signal": false, "dispute_topic": "payment_not_confirmed",
+      "buyer_message_kind": "answers", "buyer_language": "es", "buyer_wants_human": false,
+      "seller_message_kind": "answers", "seller_language": "es", "seller_wants_human": false
+    }
+  },
+  {
+    "id": "es-es-seller-received-bizum-buyer-silent",
+    "region": "ES",
+    "order": {"fiat_amount": "80", "fiat_code": "EUR", "payment_method": "Bizum", "dispute_opened_by": "buyer"},
+    "msgs": [
+      "s: sí sí, me ha llegado el bizum, perdonad que estaba currando y no lo había visto"
+    ],
+    "expect": {
+      "buyer_payment": "not_stated", "seller_receipt": "says_received",
+      "claims_conflict": false, "fraud_signal": false,
+      "seller_message_kind": "answers", "seller_language": "es", "seller_wants_human": false
+    }
+  },
+  {
+    "id": "es-co-seller-sees-pending",
+    "region": "CO",
+    "order": {"fiat_amount": "200000", "fiat_code": "COP", "payment_method": "Nequi", "dispute_opened_by": "buyer"},
+    "msgs": [
+      "b: yo le envié por nequi a las 3:15pm, referencia M4471203",
+      "s: me aparece como pendiente en nequi, todavia no se ve reflejado en el saldo"
+    ],
+    "expect": {
+      "buyer_payment": "says_sent", "buyer_details": true,
+      "seller_receipt": "says_not_received", "seller_checked": true,
+      "fraud_signal": false,
+      "buyer_message_kind": "answers", "buyer_language": "es", "buyer_wants_human": false,
+      "seller_message_kind": "answers", "seller_language": "es", "seller_wants_human": false
+    }
+  },
+  {
+    "id": "es-ar-buyer-wants-person",
+    "region": "AR",
+    "order": {"fiat_amount": "30000", "fiat_code": "ARS", "payment_method": "Transferencia bancaria", "dispute_opened_by": "buyer"},
+    "msgs": [
+      "b: quiero hablar con una persona, no con un bot"
+    ],
+    "expect": {
+      "buyer_payment": "not_stated", "seller_receipt": "not_stated", "fraud_signal": false,
+      "buyer_language": "es", "buyer_wants_human": true
+    }
+  },
+  {
+    "id": "es-ve-impatient-not-human",
+    "region": "VE",
+    "order": {"fiat_amount": "5000", "fiat_code": "VES", "payment_method": "Pago Móvil", "dispute_opened_by": "buyer"},
+    "msgs": [
+      "b: esto está tardando demasiado, ya pagué hace 3 horas por pago movil y nada",
+      "b: que fastidio"
+    ],
+    "expect": {
+      "buyer_payment": "says_sent", "buyer_details": true, "fraud_signal": false,
+      "buyer_language": "es", "buyer_wants_human": false
+    }
+  },
+  {
+    "id": "es-mx-seller-denies-asks-admin",
+    "region": "MX",
+    "order": {"fiat_amount": "2500", "fiat_code": "MXN", "payment_method": "SPEI", "dispute_opened_by": "seller"},
+    "msgs": [
+      "s: no me llegó nada. pásenme con un admin por favor"
+    ],
+    "expect": {
+      "buyer_payment": "not_stated", "seller_receipt": "says_not_received", "fraud_signal": false,
+      "seller_language": "es", "seller_wants_human": true
+    }
+  },
+  {
+    "id": "es-buyer-greeting-only",
+    "region": "AR",
+    "order": {"fiat_amount": "15000", "fiat_code": "ARS", "payment_method": "Mercado Pago", "dispute_opened_by": "seller"},
+    "msgs": [
+      "b: hola",
+      "b: ??"
+    ],
+    "expect": {
+      "buyer_payment": "not_stated", "seller_receipt": "not_stated", "fraud_signal": false,
+      "dispute_topic": "not_yet_clear",
+      "buyer_message_kind": "greeting", "buyer_wants_human": false
+    }
+  },
+  {
+    "id": "es-seller-estas-ahi",
+    "region": "CU",
+    "order": {"fiat_amount": "6000", "fiat_code": "CUP", "payment_method": "Transfermóvil", "dispute_opened_by": "buyer"},
+    "msgs": [
+      "s: hola buenas",
+      "s: estas ahi?"
+    ],
+    "expect": {
+      "buyer_payment": "not_stated", "seller_receipt": "not_stated", "fraud_signal": false,
+      "seller_message_kind": "greeting", "seller_language": "es", "seller_wants_human": false
+    }
+  },
+  {
+    "id": "es-buyer-asks-english",
+    "region": "ES",
+    "order": {"fiat_amount": "120", "fiat_code": "EUR", "payment_method": "SEPA", "dispute_opened_by": "buyer"},
+    "msgs": [
+      "b: ¿puedes hablarme en inglés? mi español no es muy bueno"
+    ],
+    "expect": {
+      "buyer_payment": "not_stated", "fraud_signal": false,
+      "buyer_message_kind": "asks_language", "buyer_language": "en", "buyer_wants_human": false
+    }
+  },
+  {
+    "id": "es-opening-en-buyer-asks-spanish",
+    "region": "PE",
+    "opening_lang": "en",
+    "order": {"fiat_amount": "150", "fiat_code": "PEN", "payment_method": "Yape", "dispute_opened_by": "seller"},
+    "msgs": [
+      "b: hablas español?"
+    ],
+    "expect": {
+      "buyer_payment": "not_stated", "fraud_signal": false,
+      "buyer_message_kind": "asks_language", "buyer_language": "es", "buyer_wants_human": false
+    }
+  },
+  {
+    "id": "es-seller-not-understood",
+    "region": "CL",
+    "order": {"fiat_amount": "40000", "fiat_code": "CLP", "payment_method": "Transferencia bancaria", "dispute_opened_by": "buyer"},
+    "msgs": [
+      "s: no entiendo, que es esto? quien eres?"
+    ],
+    "expect": {
+      "seller_receipt": "not_stated", "fraud_signal": false,
+      "seller_message_kind": "not_understood", "seller_language": "es", "seller_wants_human": false
+    }
+  },
+  {
+    "id": "es-buyer-asks-next-step",
+    "region": "CO",
+    "order": {"fiat_amount": "150000", "fiat_code": "COP", "payment_method": "Bancolombia", "dispute_opened_by": "buyer"},
+    "msgs": [
+      "b: ok y ahora que tengo que hacer? cuanto tarda esto"
+    ],
+    "expect": {
+      "buyer_payment": "not_stated", "fraud_signal": false,
+      "buyer_message_kind": "asks_next_step", "buyer_language": "es", "buyer_wants_human": false
+    }
+  },
+  {
+    "id": "es-fraud-third-party-payer",
+    "expect_by_version": {"qs-1-draft": {"seller_receipt": null}},
+    "region": "AR",
+    "order": {"fiat_amount": "60000", "fiat_code": "ARS", "payment_method": "Transferencia bancaria", "dispute_opened_by": "seller"},
+    "msgs": [
+      "b: le pagué desde la cuenta de mi primo porque la mía está bloqueada, a las 10:20",
+      "s: me llegó una transferencia pero de otra persona, no es el titular de la orden, así no la acepto"
+    ],
+    "expect": {
+      "seller_receipt": "says_received_with_problem",
+      "buyer_payment": "says_sent", "buyer_details": true, "fraud_signal": true,
+      "buyer_language": "es", "buyer_wants_human": false,
+      "seller_language": "es", "seller_wants_human": false
+    }
+  },
+  {
+    "id": "es-fraud-chargeback",
+    "expect_by_version": {"qs-1-draft": {"seller_receipt": null}},
+    "region": "ES",
+    "order": {"fiat_amount": "200", "fiat_code": "EUR", "payment_method": "Revolut", "dispute_opened_by": "seller"},
+    "msgs": [
+      "s: el comprador me pagó y a los dos días hizo un contracargo, el dinero se me ha devuelto a su cuenta"
+    ],
+    "expect": {
+      "seller_receipt": "says_received_with_problem",
+      "fraud_signal": true,
+      "seller_message_kind": "answers", "seller_language": "es", "seller_wants_human": false
+    }
+  },
+  {
+    "id": "es-fraud-outside-mostro",
+    "region": "VE",
+    "order": {"fiat_amount": "100", "fiat_code": "USD", "payment_method": "Zelle", "dispute_opened_by": "seller"},
+    "msgs": [
+      "b: mejor cerremos esto por whatsapp, pásame tu número y te pago por fuera, tu cancela la orden y listo"
+    ],
+    "expect": {
+      "fraud_signal": true, "buyer_language": "es", "buyer_wants_human": false
+    }
+  },
+  {
+    "id": "es-fraud-seed-request",
+    "region": "MX",
+    "order": {"fiat_amount": "3000", "fiat_code": "MXN", "payment_method": "Mercado Pago", "dispute_opened_by": "buyer"},
+    "msgs": [
+      "b: ya te deposité desde mi cuenta de mercado pago a las 12:30",
+      "s: para verificar el pago necesito que me pases tus 12 palabras de la wallet"
+    ],
+    "expect": {
+      "buyer_payment": "says_sent", "buyer_details": true, "fraud_signal": true,
+      "seller_language": "es", "seller_wants_human": false
+    }
+  },
+  {
+    "id": "es-fraud-altered-receipt",
+    "region": "AR",
+    "order": {"fiat_amount": "45000", "fiat_code": "ARS", "payment_method": "Ualá", "dispute_opened_by": "buyer"},
+    "msgs": [
+      "b[1]: ya pagué, acá está el comprobante",
+      "s: ese comprobante está editado, llamé al banco y esa operación no existe. no me entró nada"
+    ],
+    "expect": {
+      "buyer_payment": "says_sent", "buyer_details": true,
+      "seller_receipt": "says_not_received", "seller_checked": true,
+      "claims_conflict": true, "fraud_signal": true,
+      "buyer_language": "es", "buyer_wants_human": false,
+      "seller_message_kind": "answers", "seller_language": "es", "seller_wants_human": false
+    }
+  },
+  {
+    "id": "es-fraud-threat",
+    "region": "CO",
+    "order": {"fiat_amount": "300000", "fiat_code": "COP", "payment_method": "Nequi", "dispute_opened_by": "buyer"},
+    "msgs": [
+      "b: si no me sueltas los sats te voy a buscar, yo sé dónde vives"
+    ],
+    "expect": {
+      "buyer_payment": "not_stated", "fraud_signal": true,
+      "buyer_language": "es", "buyer_wants_human": false
+    }
+  },
+  {
+    "id": "es-rude-disagreement-no-fraud",
+    "region": "ES",
+    "order": {"fiat_amount": "150", "fiat_code": "EUR", "payment_method": "Bizum", "dispute_opened_by": "buyer"},
+    "msgs": [
+      "b: yo pagué, no me estés jodiendo",
+      "s: que no me ha llegado nada tío, lo he mirado tres veces en la app del banco"
+    ],
+    "expect": {
+      "buyer_payment": "says_sent", "buyer_details": false,
+      "seller_receipt": "says_not_received", "seller_checked": true,
+      "claims_conflict": true, "fraud_signal": false, "dispute_topic": "payment_not_confirmed",
+      "buyer_message_kind": "answers", "buyer_language": "es", "buyer_wants_human": false,
+      "seller_message_kind": "answers", "seller_language": "es", "seller_wants_human": false
+    }
+  },
+  {
+    "id": "es-seller-finds-it-after-check",
+    "region": "VE",
+    "order": {"fiat_amount": "8000", "fiat_code": "VES", "payment_method": "Pago Móvil", "dispute_opened_by": "buyer"},
+    "msgs": [
+      "s: todavía no me llega nada",
+      "@s ask_seller_check_account",
+      "s: ya revisé bien y sí, ahí está, me cayó a las 11:05. disculpen"
+    ],
+    "expect": {
+      "seller_receipt": "says_received", "seller_checked": true, "fraud_signal": false,
+      "seller_message_kind": "answers", "seller_language": "es", "seller_wants_human": false
+    }
+  },
+  {
+    "id": "es-cl-received-slang",
+    "region": "CL",
+    "order": {"fiat_amount": "70000", "fiat_code": "CLP", "payment_method": "Transferencia bancaria", "dispute_opened_by": "buyer"},
+    "msgs": [
+      "b: ya transferí hace rato",
+      "s: sip, llegó la plata, todo ok"
+    ],
+    "expect": {
+      "buyer_payment": "says_sent", "buyer_details": false,
+      "seller_receipt": "says_received", "claims_conflict": false, "fraud_signal": false,
+      "seller_message_kind": "answers", "seller_language": "es", "seller_wants_human": false
+    }
+  },
+  {
+    "id": "es-pe-yape-short-amount",
+    "expect_by_version": {"qs-1-draft": {"seller_receipt": null}},
+    "region": "PE",
+    "order": {"fiat_amount": "250", "fiat_code": "PEN", "payment_method": "Yape", "dispute_opened_by": "seller"},
+    "msgs": [
+      "s: me llegó el yape pero incompleto, faltan 20 soles"
+    ],
+    "expect": {
+      "seller_receipt": "says_received_with_problem",
+      "fraud_signal": false, "dispute_topic": "wrong_amount",
+      "seller_message_kind": "answers", "seller_language": "es", "seller_wants_human": false
+    }
+  },
+  {
+    "id": "es-ar-wrong-cbu",
+    "region": "AR",
+    "order": {"fiat_amount": "25000", "fiat_code": "ARS", "payment_method": "Transferencia bancaria", "dispute_opened_by": "buyer"},
+    "msgs": [
+      "b: le hice la transferencia al cbu que estaba en la orden",
+      "s: ese cbu no es el mío, me equivoqué en un número cuando lo pasé, la plata se fue a otra cuenta"
+    ],
+    "expect": {
+      "buyer_payment": "says_sent", "seller_receipt": "says_not_received",
+      "fraud_signal": false, "dispute_topic": "wrong_account_or_method",
+      "buyer_language": "es", "seller_language": "es", "seller_wants_human": false
+    }
+  },
+  {
+    "id": "es-buyer-app-not-loading",
+    "region": "MX",
+    "order": {"fiat_amount": "900", "fiat_code": "MXN", "payment_method": "SPEI", "dispute_opened_by": "buyer"},
+    "msgs": [
+      "b: no pagué todavía porque la app no me muestra los datos del vendedor, se queda cargando"
+    ],
+    "expect": {
+      "buyer_payment": "says_not_sent", "fraud_signal": false, "dispute_topic": "technical_problem",
+      "buyer_message_kind": "answers", "buyer_language": "es", "buyer_wants_human": false
+    }
+  },
+  {
+    "id": "es-seller-buyer-went-silent",
+    "region": "CO",
+    "order": {"fiat_amount": "100000", "fiat_code": "COP", "payment_method": "Daviplata", "dispute_opened_by": "seller"},
+    "msgs": [
+      "s: el comprador no me contestó más por el chat, abrí la disputa porque pasaron 2 horas"
+    ],
+    "expect": {
+      "buyer_payment": "not_stated", "fraud_signal": false, "dispute_topic": "counterpart_unresponsive",
+      "seller_language": "es", "seller_wants_human": false
+    }
+  },
+  {
+    "id": "es-buyer-cannot-afford",
+    "region": "AR",
+    "order": {"fiat_amount": "80000", "fiat_code": "ARS", "payment_method": "Mercado Pago", "dispute_opened_by": "seller"},
+    "msgs": [
+      "b: no pagué, al final no me alcanza. podemos cancelar?"
+    ],
+    "expect": {
+      "buyer_payment": "says_not_sent", "buyer_details": false, "fraud_signal": false,
+      "buyer_language": "es", "buyer_wants_human": false
+    }
+  },
+  {
+    "id": "es-buyer-aun-no",
+    "region": "MX",
+    "order": {"fiat_amount": "1500", "fiat_code": "MXN", "payment_method": "OXXO", "dispute_opened_by": "seller"},
+    "msgs": [
+      "b: aun no"
+    ],
+    "expect": {
+      "buyer_payment": "says_not_sent", "fraud_signal": false,
+      "buyer_message_kind": "answers", "buyer_wants_human": false
+    }
+  },
+  {
+    "id": "es-buyer-simple-si",
+    "region": "VE",
+    "order": {"fiat_amount": "4000", "fiat_code": "VES", "payment_method": "Pago Móvil", "dispute_opened_by": "buyer"},
+    "msgs": [
+      "b: hola",
+      "@b ask_buyer_sent_simple",
+      "b: si"
+    ],
+    "expect": {
+      "buyer_payment": "says_sent", "buyer_details": false, "fraud_signal": false,
+      "buyer_message_kind": "answers", "buyer_wants_human": false
+    }
+  },
+  {
+    "id": "es-seller-simple-no",
+    "region": "ES",
+    "order": {"fiat_amount": "60", "fiat_code": "EUR", "payment_method": "Bizum", "dispute_opened_by": "buyer"},
+    "msgs": [
+      "s: no"
+    ],
+    "expect": {
+      "seller_receipt": "says_not_received", "seller_checked": false, "fraud_signal": false,
+      "seller_message_kind": "answers", "seller_wants_human": false
+    }
+  },
+  {
+    "id": "es-seller-has-not-looked",
+    "region": "AR",
+    "order": {"fiat_amount": "35000", "fiat_code": "ARS", "payment_method": "Brubank", "dispute_opened_by": "buyer"},
+    "msgs": [
+      "s: no sé, no me fijé todavía, estoy laburando. a la noche miro"
+    ],
+    "expect": {
+      "seller_receipt": "not_stated", "seller_checked": false, "fraud_signal": false,
+      "seller_language": "es", "seller_wants_human": false
+    }
+  },
+  {
+    "id": "es-seller-polite-human",
+    "region": "ES",
+    "order": {"fiat_amount": "300", "fiat_code": "EUR", "payment_method": "SEPA", "dispute_opened_by": "seller"},
+    "msgs": [
+      "s: Buenas tardes. Prefiero que esto lo revise una persona del equipo de Mostro, gracias."
+    ],
+    "expect": {
+      "seller_receipt": "not_stated", "fraud_signal": false,
+      "seller_language": "es", "seller_wants_human": true
+    }
+  },
+  {
+    "id": "es-ve-chamo-soporte",
+    "region": "VE",
+    "order": {"fiat_amount": "50", "fiat_code": "USD", "payment_method": "Zelle", "dispute_opened_by": "buyer"},
+    "msgs": [
+      "b: chamo pásame con alguien de soporte de verdad, no con una máquina"
+    ],
+    "expect": {
+      "buyer_payment": "not_stated", "fraud_signal": false,
+      "buyer_language": "es", "buyer_wants_human": true
+    }
+  },
+  {
+    "id": "es-ironic-bot",
+    "region": "AR",
+    "order": {"fiat_amount": "20000", "fiat_code": "ARS", "payment_method": "Mercado Pago", "dispute_opened_by": "buyer"},
+    "msgs": [
+      "b: genial, un bot. justo lo que necesitaba 🙄"
+    ],
+    "expect": {
+      "buyer_payment": "not_stated", "fraud_signal": false,
+      "buyer_language": "es", "buyer_wants_human": false
+    }
+  },
+  {
+    "id": "es-co-typos-screenshot",
+    "region": "CO",
+    "order": {"fiat_amount": "250000", "fiat_code": "COP", "payment_method": "Bancolombia", "dispute_opened_by": "buyer"},
+    "msgs": [
+      "b[1]: ya ise el pago x transferencia bancolombia a las 2 y 20 de la tarde, le mande el pantallaso"
+    ],
+    "expect": {
+      "buyer_payment": "says_sent", "buyer_details": true, "fraud_signal": false,
+      "buyer_message_kind": "answers", "buyer_language": "es", "buyer_wants_human": false
+    }
+  },
+  {
+    "id": "es-mx-lana-no-cae",
+    "region": "MX",
+    "order": {"fiat_amount": "2000", "fiat_code": "MXN", "payment_method": "SPEI", "dispute_opened_by": "seller"},
+    "msgs": [
+      "s: la lana no me ha caído wey, ya chequé mi app de banamex dos veces"
+    ],
+    "expect": {
+      "seller_receipt": "says_not_received", "seller_checked": true, "fraud_signal": false,
+      "seller_message_kind": "answers", "seller_language": "es", "seller_wants_human": false
+    }
+  },
+  {
+    "id": "es-ar-me-entro-la-guita",
+    "region": "AR",
+    "order": {"fiat_amount": "55000", "fiat_code": "ARS", "payment_method": "Mercado Pago", "dispute_opened_by": "buyer"},
+    "msgs": [
+      "s: sí, me entró la guita a las 15:32, ahora libero"
+    ],
+    "expect": {
+      "seller_receipt": "says_received", "seller_checked": true, "fraud_signal": false,
+      "seller_message_kind": "answers", "seller_language": "es", "seller_wants_human": false
+    }
+  },
+  {
+    "id": "es-both-agree-not-sent",
+    "region": "CL",
+    "order": {"fiat_amount": "30000", "fiat_code": "CLP", "payment_method": "Transferencia bancaria", "dispute_opened_by": "seller"},
+    "msgs": [
+      "b: no lo mandé, perdón, me confundí de orden",
+      "s: ok no hay problema, a mi tampoco me llegó nada"
+    ],
+    "expect": {
+      "buyer_payment": "says_not_sent", "seller_receipt": "says_not_received",
+      "claims_conflict": false, "fraud_signal": false,
+      "buyer_message_kind": "answers", "buyer_language": "es", "buyer_wants_human": false,
+      "seller_message_kind": "answers", "seller_language": "es", "seller_wants_human": false
+    }
+  },
+  {
+    "id": "es-double-negation-bank-held",
+    "region": "ES",
+    "order": {"fiat_amount": "500", "fiat_code": "EUR", "payment_method": "SEPA", "dispute_opened_by": "seller"},
+    "msgs": [
+      "b: no es que no haya pagado, pagué, pero el banco me lo ha retenido por seguridad"
+    ],
+    "expect": {
+      "buyer_payment": "says_sent", "fraud_signal": false,
+      "buyer_language": "es", "buyer_wants_human": false
+    }
+  },
+  {
+    "id": "es-buyer-writes-portuguese",
+    "region": "BR",
+    "order": {"fiat_amount": "300", "fiat_code": "BRL", "payment_method": "PIX", "dispute_opened_by": "buyer"},
+    "msgs": [
+      "b: olá, eu já fiz o pix às 14h, não entendo espanhol direito"
+    ],
+    "expect": {
+      "buyer_payment": "says_sent", "buyer_details": true, "fraud_signal": false,
+      "buyer_language": "pt", "buyer_wants_human": false
+    }
+  },
+  {
+    "id": "es-buyer-burst-zelle",
+    "region": "VE",
+    "order": {"fiat_amount": "75", "fiat_code": "USD", "payment_method": "Zelle", "dispute_opened_by": "buyer"},
+    "msgs": [
+      "b: hola",
+      "b: buenas",
+      "b: ya pague",
+      "b: por zelle",
+      "b: a las 9am",
+      "b: confirma porfa"
+    ],
+    "expect": {
+      "buyer_payment": "says_sent", "buyer_details": true, "fraud_signal": false,
+      "buyer_message_kind": "answers", "buyer_language": "es", "buyer_wants_human": false
+    }
+  },
+  {
+    "id": "es-buyer-bank-support-not-human",
+    "region": "AR",
+    "order": {"fiat_amount": "40000", "fiat_code": "ARS", "payment_method": "Transferencia bancaria", "dispute_opened_by": "buyer"},
+    "msgs": [
+      "b: ya hablé con soporte de mi banco y me dicen que la transferencia salió bien"
+    ],
+    "expect": {
+      "buyer_payment": "says_sent", "fraud_signal": false,
+      "buyer_language": "es", "buyer_wants_human": false
+    }
+  },
+  {
+    "id": "es-buyer-no-account-data",
+    "region": "PE",
+    "order": {"fiat_amount": "400", "fiat_code": "PEN", "payment_method": "Plin", "dispute_opened_by": "buyer"},
+    "msgs": [
+      "b: no he pagado porque el vendedor nunca me pasó su número de plin"
+    ],
+    "expect": {
+      "buyer_payment": "says_not_sent", "fraud_signal": false,
+      "buyer_message_kind": "answers", "buyer_language": "es", "buyer_wants_human": false
+    }
+  },
+  {
+    "id": "es-buyer-waiting-own-money",
+    "region": "MX",
+    "order": {"fiat_amount": "5000", "fiat_code": "MXN", "payment_method": "SPEI", "dispute_opened_by": "seller"},
+    "msgs": [
+      "b: todavia no transfiero, estoy esperando que me paguen a mí primero jaja"
+    ],
+    "expect": {
+      "buyer_payment": "says_not_sent", "buyer_details": false, "fraud_signal": false,
+      "buyer_language": "es", "buyer_wants_human": false
+    }
+  },
+  {
+    "id": "es-ve-took-wrong-order",
+    "region": "VE",
+    "order": {"fiat_amount": "20", "fiat_code": "USD", "payment_method": "Binance Pay", "dispute_opened_by": "seller"},
+    "msgs": [
+      "b: nada que ver, no he pagado nada, me equivoqué al tomar la orden"
+    ],
+    "expect": {
+      "buyer_payment": "says_not_sent", "fraud_signal": false,
+      "buyer_language": "es", "buyer_wants_human": false
+    }
+  },
+  {
+    "id": "es-ve-seller-received-buyer-gone",
+    "region": "VE",
+    "order": {"fiat_amount": "6000", "fiat_code": "VES", "payment_method": "Pago Móvil", "dispute_opened_by": "seller"},
+    "msgs": [
+      "s: si ya me llegó el pago movil, lo que pasa es que el comprador no me contesta"
+    ],
+    "expect": {
+      "seller_receipt": "says_received", "fraud_signal": false,
+      "seller_language": "es", "seller_wants_human": false
+    }
+  },
+  {
+    "id": "es-es-formal-received",
+    "region": "ES",
+    "order": {"fiat_amount": "150", "fiat_code": "EUR", "payment_method": "SEPA", "dispute_opened_by": "buyer"},
+    "msgs": [
+      "s: Confirmo que he recibido la transferencia de 150 €."
+    ],
+    "expect": {
+      "seller_receipt": "says_received", "fraud_signal": false,
+      "seller_message_kind": "answers", "seller_language": "es", "seller_wants_human": false
+    }
+  },
+  {
+    "id": "es-co-listo-parce",
+    "region": "CO",
+    "order": {"fiat_amount": "120000", "fiat_code": "COP", "payment_method": "Nequi", "dispute_opened_by": "buyer"},
+    "msgs": [
+      "s: listo parce ya me entró a nequi"
+    ],
+    "expect": {
+      "seller_receipt": "says_received", "fraud_signal": false,
+      "seller_message_kind": "answers", "seller_language": "es", "seller_wants_human": false
+    }
+  },
+  {
+    "id": "es-seller-wants-mostro-admin",
+    "region": "CU",
+    "order": {"fiat_amount": "10000", "fiat_code": "CUP", "payment_method": "Transfermóvil", "dispute_opened_by": "seller"},
+    "msgs": [
+      "s: quiero que esto lo vea un administrador de mostro, no voy a seguir con el asistente"
+    ],
+    "expect": {
+      "seller_receipt": "not_stated", "fraud_signal": false,
+      "seller_language": "es", "seller_wants_human": true
+    }
+  },
+  {
+    "id": "es-buyer-refuses-robot",
+    "region": "CL",
+    "order": {"fiat_amount": "90000", "fiat_code": "CLP", "payment_method": "Transferencia bancaria", "dispute_opened_by": "buyer"},
+    "msgs": [
+      "b: no le voy a responder preguntas a un robot, que me atienda alguien"
+    ],
+    "expect": {
+      "buyer_payment": "not_stated", "fraud_signal": false,
+      "buyer_language": "es", "buyer_wants_human": true
+    }
+  },
+  {
+    "id": "es-fraud-seller-moves-to-telegram",
+    "region": "AR",
+    "order": {
+      "fiat_amount": "40000",
+      "fiat_code": "ARS",
+      "payment_method": "Mercado Pago",
+      "dispute_opened_by": "buyer"
+    },
+    "msgs": [
+      "s: hola, este chat anda re mal, escribime a mi telegram @fede_btc_ok que por ahí lo resolvemos más rápido"
+    ],
+    "expect": {
+      "seller_receipt": "not_stated",
+      "fraud_signal": true,
+      "seller_language": "es",
+      "seller_wants_human": false
+    }
+  },
+  {
+    "id": "es-fraud-buyer-moves-to-telegram",
+    "region": "VE",
+    "order": {
+      "fiat_amount": "40",
+      "fiat_code": "USD",
+      "payment_method": "Zelle",
+      "dispute_opened_by": "buyer"
+    },
+    "msgs": [
+      "b: ya pagué por zelle a las 10am",
+      "b: pana mejor háblame por telegram, @carlos_p2p, ese chat es mejor, aquí no llegan los mensajes"
+    ],
+    "expect": {
+      "buyer_payment": "says_sent",
+      "fraud_signal": true,
+      "buyer_language": "es",
+      "buyer_wants_human": false
+    }
+  },
+  {
+    "id": "es-fraud-telegram-fake-support",
+    "region": "MX",
+    "order": {
+      "fiat_amount": "3000",
+      "fiat_code": "MXN",
+      "payment_method": "SPEI",
+      "dispute_opened_by": "seller"
+    },
+    "msgs": [
+      "b: para que esto se resuelva rápido contacta al soporte de mostro en telegram: @MostroSoporteOficial, ellos liberan al toque"
+    ],
+    "expect": {
+      "fraud_signal": true,
+      "buyer_language": "es",
+      "buyer_wants_human": false
+    }
+  },
+  {
+    "id": "es-telegram-mention-innocent",
+    "region": "CO",
+    "order": {
+      "fiat_amount": "100000",
+      "fiat_code": "COP",
+      "payment_method": "Nequi",
+      "dispute_opened_by": "buyer"
+    },
+    "msgs": [
+      "b: vi la oferta en el grupo de telegram de mostro y la tomé, ya le envié por nequi a las 4:10pm"
+    ],
+    "expect": {
+      "buyer_payment": "says_sent",
+      "buyer_details": true,
+      "fraud_signal": false,
+      "buyer_language": "es",
+      "buyer_wants_human": false
+    }
+  }
+]

@@ -1,0 +1,102 @@
+{
+  "version": "qs-1",
+  "case_facts": {
+    "buyer_payment": {
+      "type": "choice",
+      "instructions": "Across the whole `transcript`, what has the buyer said about sending the fiat payment for this order?",
+      "criteria": {
+        "says_sent": "The buyer states they already sent or completed the fiat payment.",
+        "says_not_sent": "The buyer states they have not sent the payment, or not yet.",
+        "not_stated": "The buyer has not said either way, or their messages are too vague to tell."
+      }
+    },
+    "buyer_details": {
+      "type": "noul",
+      "instructions": "Has the buyer given at least one concrete, checkable detail about the fiat payment they say they sent, such as the time, the exact amount, a transaction reference, the account or app used, or a receipt attached to their message?",
+      "criteria": {
+        "true": "At least one specific detail about the transfer is present in the buyer's messages.",
+        "false": "The buyer only claims to have paid, or has given no payment details."
+      }
+    },
+    "seller_receipt": {
+      "type": "choice",
+      "instructions": "Across the whole `transcript`, what has the seller said about receiving the fiat payment for this order?",
+      "criteria": {
+        "says_received": "The seller states the full fiat payment arrived in their account and raises no problem with it.",
+        "says_received_with_problem": "The seller states a payment arrived but objects to it, for example a different amount, a sender other than the buyer, or a payment later reversed or charged back.",
+        "says_not_received": "The seller states the fiat payment has not arrived.",
+        "not_stated": "The seller has not said either way, or their messages are too vague to tell."
+      }
+    },
+    "seller_checked": {
+      "type": "noul",
+      "instructions": "Does the seller say they checked the account or app where the payment should arrive?",
+      "criteria": {
+        "true": "The seller describes having looked at their bank account, app, or statement for this payment.",
+        "false": "The seller has not said they checked."
+      }
+    },
+    "claims_conflict": {
+      "type": "noul",
+      "instructions": "Do the buyer and the seller make factual claims about the payment that cannot both be true?",
+      "criteria": {
+        "true": "For example, the buyer says the payment was sent and completed while the seller says nothing arrived in the account.",
+        "false": "Their accounts are compatible, or at least one party has not made a claim yet."
+      }
+    },
+    "fraud_signal": {
+      "type": "noul",
+      "instructions": "Does anything in the `transcript` suggest deliberate bad faith by either party?",
+      "criteria": {
+        "true": "Signs such as an admitted or described altered receipt, a payment from a third party's account, a reversed or charged-back payment, asking to move the conversation or the trade to another app or contact (for example a Telegram or WhatsApp username, or a phone number), pointing to a supposed Mostro support or administrator outside this chat, requests for passwords, seed words or private keys, or threats.",
+        "false": "Nothing beyond an ordinary disagreement or delay."
+      }
+    },
+    "dispute_topic": {
+      "type": "choice",
+      "instructions": "What is this dispute mainly about, based on the `transcript`?",
+      "criteria": {
+        "payment_not_confirmed": "Whether the fiat payment was sent or received.",
+        "wrong_amount": "The fiat payment arrived but for a different amount.",
+        "wrong_account_or_method": "The payment was sent to a different account, person, or payment method than agreed.",
+        "counterpart_unresponsive": "One party stopped answering during the trade.",
+        "technical_problem": "An app, wallet, invoice, or Lightning problem rather than a payment disagreement.",
+        "other": "Something else.",
+        "not_yet_clear": "The parties have not said enough to tell."
+      }
+    }
+  },
+  "per_party": {
+    "<party>_message_kind": {
+      "type": "choice",
+      "instructions": "Look only at the <party>'s messages listed in `latest.<party>`. What are they mainly doing?",
+      "criteria": {
+        "answers": "Giving information about the trade or the payment.",
+        "greeting": "Only greeting, saying hello, or calling for attention.",
+        "asks_language": "Asking whether Serbero speaks a particular language, or asking to switch language.",
+        "not_understood": "Saying they do not understand the question or the situation.",
+        "asks_next_step": "Asking what they should do or what happens next.",
+        "other": "Anything else."
+      }
+    },
+    "<party>_language": {
+      "type": "choice",
+      "instructions": "Which language does the <party> want to be addressed in? Use the language they write in, unless they explicitly ask for another one.",
+      "criteria": {
+        "en": "English",
+        "es": "Spanish",
+        "pt": "Portuguese",
+        "other": "Another language",
+        "unknown": "The messages are too short or mixed to tell."
+      }
+    },
+    "<party>_wants_human": {
+      "type": "noul",
+      "instructions": "In the messages listed in `latest.<party>`, does the <party> explicitly ask to talk to a human person, a solver, an administrator, or support staff instead of the automated assistant?",
+      "criteria": {
+        "true": "A direct request for a person, such as 'I want a human' or 'quiero hablar con una persona'.",
+        "false": "No such request. Impatience or frustration alone is not a request."
+      }
+    }
+  }
+}
