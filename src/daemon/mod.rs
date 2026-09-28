@@ -137,6 +137,7 @@ fn start_mediation(
         solvers: solvers.to_vec(),
         own_takes: notifier.own_takes(),
         judge: Default::default(),
+        finishing: Default::default(),
     });
     // Party messages reach the turn task through the chat channels.
     let (forward, received) = tokio::sync::mpsc::unbounded_channel();
@@ -156,6 +157,20 @@ fn start_mediation(
                 tracing::error!(dispute_id, error = %e, "cannot close the mediation");
             }
         });
+    }));
+    // Closings the last run did not complete, and resolutions the first
+    // backlog sync applied before the hook above was installed.
+    let pending = Arc::clone(&mediator);
+    let mut synced = background.synced();
+    background.push(tokio::spawn(async move {
+        let _ = synced.wait_for(|done| *done).await;
+        let now = now();
+        let finished = pending
+            .finish_pending(now - crate::mediation::guide::FINISH_LOOKBACK_SECS, now)
+            .await;
+        if finished > 0 {
+            tracing::info!(finished, "completed closings of resolved disputes");
+        }
     }));
     let hook = Arc::clone(&mediator);
     notifier.on_new_dispute(Box::new(move |dispute_id| {
@@ -177,6 +192,7 @@ fn start_mediation(
         settings.secrets.judge_api_key.as_ref().map(|k| k.expose()),
     );
     let thresholds = config.judge.active_thresholds().cloned();
+    let started = now();
     background.push(tokio::spawn(async move {
         let judge = match judge {
             Ok(judge) => judge,
@@ -204,6 +220,14 @@ fn start_mediation(
                     thresholds,
                     turn,
                 });
+                // Disputes that arrived while the checks ran were skipped.
+                let opened = mediator.reconsider(started, now()).await;
+                if opened > 0 {
+                    tracing::info!(
+                        opened,
+                        "mediated disputes that arrived before the judge was ready"
+                    );
+                }
             }
             (crate::mediation::eligibility::Readiness::Off(reason), _) => {
                 tracing::warn!(reason, "mediation off");
@@ -232,6 +256,11 @@ impl Background {
     /// Adds a task that stops with the others.
     pub fn push(&mut self, task: JoinHandle<()>) {
         self.tasks.push(task);
+    }
+
+    /// Watches whether the first backlog sync has been applied.
+    pub fn synced(&self) -> watch::Receiver<bool> {
+        self.synced.clone()
     }
 
     /// Waits until the first backlog sync has been applied.
