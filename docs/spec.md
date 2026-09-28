@@ -504,14 +504,18 @@ Rules for the paths:
 - A path starts only from the statement of the party it depends on (P3). A
   buyer saying "I paid" never starts `PaymentArrived`; that case keeps
   gathering facts or goes to a human.
-- Guidance is sent once per path. After it, Serbero watches the dispute status
+- Guidance is sent once per path. A party whose guidance did not reach a
+  relay gets it on the next turn. After it, Serbero watches the dispute status
   and keeps judging turns; it still answers requests for a human and still
   escalates on fraud or contradiction.
 - The session ends by itself when Mostro publishes the dispute as `released`
   (the seller released) or `cooperatively-canceled` (both parties cancelled).
   Mostro closes the dispute and publishes the updated dispute event in both
   cases. Serbero then sends `resolved_thanks`
-  and the final report.
+  and the final report. Each goes out on its own, so a failed thanks never
+  holds back the report; a closing is recorded as `finished` once all of it
+  was delivered, and startup completes closings from the last 7 days that
+  were not.
 - If the dispute is not resolved within `self_resolution_timeout`, or a party
   rejects the path ("I did not receive anything", "I don't agree to cancel"),
   Serbero hands off with `self_resolution_stalled`.
@@ -554,6 +558,11 @@ Every handoff sends the parties the `handoff_notice` template and the solver
 the brief ([messages.md §3](messages.md#3-solver-messages)). The recipient is
 the assigned human solver if there is one, otherwise every `write` solver,
 otherwise every solver.
+
+The session is marked `handed_off` before anything is sent, so a session is
+handed off once and never after it ended. A brief no solver received is
+recorded as a `brief_pending` event, and messages from an update no solver
+received are sent again with the next update.
 
 ### 7.7 Languages
 

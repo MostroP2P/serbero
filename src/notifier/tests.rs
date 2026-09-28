@@ -330,6 +330,29 @@ async fn every_final_status_resolves_the_dispute() {
 }
 
 #[tokio::test]
+async fn the_new_dispute_hook_waits_until_a_solver_was_notified() {
+    let mostro = Keys::generate();
+    let sender = FakeSender {
+        fail_first: 1.into(),
+        ..Default::default()
+    };
+    let n = notifier_with(&mostro, sender, vec![solver()]);
+    let seen = Arc::new(Mutex::new(Vec::<String>::new()));
+    let log = Arc::clone(&seen);
+    n.on_new_dispute(Box::new(move |id| log.lock().unwrap().push(id.to_owned())));
+
+    n.handle_event(&dispute_event(&mostro, "d1", "initiated", 100), 1_000)
+        .await
+        .unwrap();
+    assert!(seen.lock().unwrap().is_empty(), "every first DM failed");
+
+    n.remind(0, 1_100).await.unwrap();
+
+    assert_eq!(*seen.lock().unwrap(), ["d1"], "the retry notified a solver");
+    assert_eq!(lifecycle(&n, "d1"), Lifecycle::Notified);
+}
+
+#[tokio::test]
 async fn serberos_own_take_is_announced_as_serberos() {
     let mostro = Keys::generate();
     let n = notifier(&mostro);
