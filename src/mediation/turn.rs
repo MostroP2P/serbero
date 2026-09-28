@@ -7,9 +7,8 @@ use serde_json::json;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::time::Instant;
 
+use super::handoff::TurnReading;
 use super::{Mediator, ReadyJudge, history, settle::Settle};
-use crate::catalog::Amount;
-use crate::chat::{Outbound, send_to_party};
 use crate::error::{Error, Result};
 use crate::judge::facts::{self, Facts};
 use crate::judge::state;
@@ -29,6 +28,8 @@ pub enum TurnOutcome {
     /// The judge failed; the evaluation was not made.
     JudgeFailed(String),
     Decided(Action),
+    /// After a handoff: this many new party messages went to the solvers.
+    Forwarded(usize),
 }
 
 impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
@@ -62,6 +63,9 @@ impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
                 tracing::info!(session_id, action = %json!(action), "turn decided")
             }
             Ok(TurnOutcome::Skipped(why)) => tracing::debug!(session_id, why, "turn skipped"),
+            Ok(TurnOutcome::Forwarded(count)) => {
+                tracing::info!(session_id, count, "party messages forwarded to the solvers")
+            }
             Ok(TurnOutcome::JudgeFailed(error)) => {
                 tracing::warn!(session_id, error, "judge failed")
             }
@@ -80,6 +84,11 @@ impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
         let phase = match session.state {
             SessionState::Active => Phase::Gathering,
             SessionState::Guiding => Phase::Guiding,
+            SessionState::HandedOff => {
+                return Ok(TurnOutcome::Forwarded(
+                    self.forward_updates(&session, now).await?,
+                ));
+            }
             _ => return Ok(TurnOutcome::Skipped("session not live")),
         };
         let built = state::build(
@@ -138,10 +147,22 @@ impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
         self.record_evaluation(
             &ready, &session, &messages, &judged, &action, latency_ms, now,
         )?;
-        if let Action::Ask { buyer, seller } = &action {
-            self.ask(&session, Party::Buyer, buyer).await?;
-            self.ask(&session, Party::Seller, seller).await?;
-            self.count_round(&session, &next, now)?;
+        match &action {
+            Action::Ask { buyer, seller } => {
+                self.ask(&session, Party::Buyer, buyer).await?;
+                self.ask(&session, Party::Seller, seller).await?;
+                self.count_round(&session, &next, now)?;
+            }
+            Action::Handoff(reason) => {
+                let reading = TurnReading {
+                    state: &built.value,
+                    answers: &judged.answers,
+                    facts: &facts,
+                };
+                self.hand_off(&session, *reason, Some(reading), now).await?;
+            }
+            // Guidance is carried out in T5.4; until then it is recorded.
+            Action::Guide(_) | Action::Wait => {}
         }
         Ok(TurnOutcome::Decided(action))
     }
@@ -188,31 +209,8 @@ impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
 
     /// Sends a party its templates, in its language, in order.
     async fn ask(&self, session: &Session, party: Party, templates: &[&str]) -> Result<()> {
-        let lang = session.language(party, &self.settings.default_language);
-        let catalog = self
-            .catalogs
-            .get(lang)
-            .ok_or_else(|| Error::Catalog(format!("no catalog for {lang}")))?;
-        let amount = match (&session.fiat_amount, &session.fiat_code) {
-            (Some(value), Some(currency)) => Some(Amount { value, currency }),
-            _ => None,
-        };
         for template in templates {
-            let text = catalog.render(template, amount)?;
-            send_to_party(
-                &self.client,
-                &self.gate,
-                &self.store,
-                &self.keys,
-                session,
-                &Outbound {
-                    party,
-                    text: &text,
-                    template_id: Some(template),
-                    lang: Some(lang),
-                },
-            )
-            .await?;
+            self.send_template(session, party, template).await?;
         }
         Ok(())
     }

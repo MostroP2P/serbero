@@ -36,12 +36,20 @@ use serbero::store::{Store, evaluations};
 const WAIT: Duration = Duration::from_secs(10);
 const QUIET: Duration = Duration::from_millis(400);
 
+/// Solver DMs, kept instead of sent.
 #[derive(Clone, Default)]
-struct Outbox;
+struct Outbox(Arc<Mutex<Vec<String>>>);
 
 impl DmSender for Outbox {
-    async fn send_dm(&self, _to: PublicKey, _text: &str) -> SerberoResult<()> {
+    async fn send_dm(&self, _to: PublicKey, text: &str) -> SerberoResult<()> {
+        self.0.lock().unwrap().push(text.to_owned());
         Ok(())
+    }
+}
+
+impl Outbox {
+    fn texts(&self) -> Vec<String> {
+        self.0.lock().unwrap().clone()
     }
 }
 
@@ -56,6 +64,7 @@ fn neutral(id: &str) -> &'static str {
     match id {
         "buyer_payment" | "seller_receipt" => "not_stated",
         "dispute_topic" => "not_yet_clear",
+        _ if id.starts_with("quote_") => "none",
         _ if id.ends_with("_message_kind") => "answers",
         _ => "unknown",
     }
@@ -86,7 +95,9 @@ impl ScriptedJudge {
                         .collect(),
                 }
             }
-            Question::Score { .. } => panic!("no score in a turn"),
+            Question::Score { levels, .. } => Answer::Score {
+                probabilities: vec![1.0 / levels.len() as f64; levels.len()],
+            },
         }
     }
 }
@@ -147,6 +158,7 @@ struct Script {
     buyer: Keys,
     url: String,
     judge: Arc<ScriptedJudge>,
+    outbox: Outbox,
     _relay: MockRelay,
     _tasks: Vec<tokio::task::JoinHandle<()>>,
 }
@@ -231,6 +243,7 @@ async fn script(picks: &[(&'static str, (&'static str, f64))]) -> Script {
         picks: picks.iter().copied().collect(),
         calls: AtomicUsize::new(0),
     });
+    let outbox = Outbox::default();
     let catalogs = Catalogs::embedded().unwrap();
     let languages = [
         Language {
@@ -261,7 +274,7 @@ async fn script(picks: &[(&'static str, (&'static str, f64))]) -> Script {
             max_rounds: 3,
             max_message_chars: 2000,
         },
-        sender: Outbox,
+        sender: outbox.clone(),
         solvers: vec![Solver {
             pubkey: Keys::generate().public_key(),
             permission: Permission::Write,
@@ -293,6 +306,7 @@ async fn script(picks: &[(&'static str, (&'static str, f64))]) -> Script {
         buyer,
         url,
         judge,
+        outbox,
         _relay: relay,
         _tasks: tasks,
     }
@@ -451,5 +465,83 @@ async fn asking_for_spanish_switches_the_language_and_resends_the_question() {
     assert_eq!(
         (last.template_id.as_deref(), last.lang.as_deref()),
         (Some("ask_buyer_sent"), Some("es"))
+    );
+}
+
+#[tokio::test]
+async fn a_request_for_a_person_hands_off_and_later_messages_are_forwarded() {
+    let script = script(&[("buyer_wants_human", ("yes", 0.95))]).await;
+    let mut buyer = buyer_side(&script).await;
+
+    buyer.say("quiero hablar con una persona").await;
+    let notice = buyer.next_from_serbero().await;
+
+    assert_eq!(notice, en("handoff_notice"));
+    let texts = script.outbox.texts();
+    assert!(
+        texts[0].starts_with("Dispute d1 · handed off: human_requested\n"),
+        "{}",
+        texts[0]
+    );
+    assert!(texts[0].contains("human requested: yes"), "{}", texts[0]);
+    assert!(
+        texts[1].starts_with("Dispute d1 · transcript (3 messages, times UTC)\n"),
+        "{}",
+        texts[1]
+    );
+    assert!(
+        texts[1].contains("buyer: quiero hablar con una persona"),
+        "{}",
+        texts[1]
+    );
+    {
+        let store = script.store.lock().unwrap();
+        let session = sessions::get(store.conn(), "s1").unwrap().unwrap();
+        assert_eq!(session.state, SessionState::HandedOff);
+        assert_eq!(session.handoff_reason.as_deref(), Some("human_requested"));
+        let evaluations = evaluations::list_for_session(store.conn(), "s1").unwrap();
+        assert_eq!(evaluations.len(), 2, "the turn and the brief");
+        assert_ne!(
+            evaluations[0].question_set_version, evaluations[1].question_set_version,
+            "the brief has its own question set"
+        );
+    }
+    let notices = || {
+        messages::list_for_session(script.store.lock().unwrap().conn(), "s1")
+            .unwrap()
+            .into_iter()
+            .filter(|m| m.template_id.as_deref() == Some("handoff_notice"))
+            .count()
+    };
+    tokio::time::timeout(WAIT, async {
+        while notices() < 2 {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("both parties are told");
+    let judged = script.judge.calls.load(Ordering::SeqCst);
+
+    buyer.say("hola? sigue alguien?").await;
+    let update = tokio::time::timeout(WAIT, async {
+        loop {
+            if let Some(text) = script.outbox.texts().get(2).cloned() {
+                return text;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .unwrap();
+
+    assert!(
+        update.starts_with("Dispute d1 · new messages since handoff (1)\n"),
+        "{update}"
+    );
+    assert!(update.ends_with("buyer: hola? sigue alguien?"), "{update}");
+    assert_eq!(
+        script.judge.calls.load(Ordering::SeqCst),
+        judged,
+        "no judging after a handoff"
     );
 }

@@ -659,7 +659,7 @@ messages (
   attachments     INTEGER NOT NULL DEFAULT 0,
   inner_event_id  TEXT NOT NULL,
   created_at      INTEGER NOT NULL,
-  UNIQUE (session_id, inner_event_id)
+  UNIQUE (session_id, direction, party, inner_event_id)   -- a chat inner event names no recipient
 );
 
 evaluations (
