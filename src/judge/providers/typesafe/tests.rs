@@ -425,6 +425,14 @@ fn retry_after_headers_are_parsed_and_capped() {
         retry_after(&headers(&[("retry-after", "3600")])),
         Some(MAX_RETRY_AFTER)
     );
+    assert_eq!(
+        retry_after(&headers(&[("retry-after", "1e300")])),
+        Some(MAX_RETRY_AFTER)
+    );
+    assert_eq!(
+        retry_after(&headers(&[("retry-after-ms", "1e300")])),
+        Some(MAX_RETRY_AFTER)
+    );
     assert_eq!(retry_after(&headers(&[("retry-after", "soon")])), None);
     assert_eq!(retry_after(&HeaderMap::new()), None);
 }

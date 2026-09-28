@@ -248,10 +248,14 @@ fn retry_after(headers: &HeaderMap) -> Option<Duration> {
             .and_then(|v| v.trim().parse::<f64>().ok())
             .filter(|v| v.is_finite() && *v >= 0.0)
     };
-    let wait = header("retry-after-ms")
-        .map(|ms| Duration::from_secs_f64(ms / 1_000.0))
-        .or_else(|| header("retry-after").map(Duration::from_secs_f64))?;
-    Some(wait.min(MAX_RETRY_AFTER))
+    // Capped before conversion: a huge value (remote input) would make
+    // `Duration::from_secs_f64` panic.
+    let seconds = header("retry-after-ms")
+        .map(|ms| ms / 1_000.0)
+        .or_else(|| header("retry-after"))?;
+    Some(Duration::from_secs_f64(
+        seconds.min(MAX_RETRY_AFTER.as_secs_f64()),
+    ))
 }
 
 #[derive(Serialize)]
