@@ -310,5 +310,38 @@ pub fn recommended_threshold(
     }
 }
 
+/// The single `guide` value both self-resolution precision targets allow
+/// (`docs/evaluation.md` §3): the stricter of the two, since the
+/// configuration has one `guide` for both.
+pub fn recommended_guide(items: &[Scored]) -> Option<f64> {
+    let seller = recommended_threshold(
+        items,
+        "seller_receipt",
+        &option("says_received"),
+        Goal::Precision,
+        0.98,
+    )?;
+    let buyer = recommended_threshold(
+        items,
+        "buyer_payment",
+        &option("says_not_sent"),
+        Goal::Precision,
+        0.98,
+    )?;
+    Some(seller.max(buyer))
+}
+
+/// The lowest swept `fact` value at which both payment questions meet the
+/// accuracy (0.95) and coverage (0.70) targets.
+pub fn recommended_fact(items: &[Scored]) -> Option<f64> {
+    let meets = |t: f64| {
+        ["buyer_payment", "seller_receipt"].into_iter().all(|base| {
+            accuracy_above(items, base, t).is_some_and(|(v, _)| v >= 0.95)
+                && coverage(items, base, t).is_some_and(|(v, _)| v >= 0.70)
+        })
+    };
+    sweep_values().find(|&t| meets(t))
+}
+
 #[cfg(test)]
 mod tests;

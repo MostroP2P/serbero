@@ -165,53 +165,44 @@ fn metric_name(metric: &Metric) -> String {
     }
 }
 
-/// The thresholds §3 would choose from this run.
+/// The thresholds §3 would choose from this run: one value for each
+/// configured threshold.
 fn recommended_section(items: &[Scored]) -> Vec<String> {
-    let rows: [(&str, &str, Label, Goal, f64); 4] = [
+    let show = |t: Option<f64>| t.map_or("none".into(), |t| format!("{t:.2}"));
+    let recall = |base, target| {
+        metrics::recommended_threshold(items, base, &Label::Yes(true), Goal::Recall, target)
+    };
+    let rows = [
         (
             "guide",
-            "seller_receipt",
-            Label::Option("says_received".into()),
-            Goal::Precision,
-            0.98,
+            "lowest meeting precision ≥ 0.98 for both `seller_receipt = says_received` and `buyer_payment = says_not_sent`",
+            show(metrics::recommended_guide(items)),
         ),
         (
-            "guide",
-            "buyer_payment",
-            Label::Option("says_not_sent".into()),
-            Goal::Precision,
-            0.98,
+            "fact",
+            "lowest meeting accuracy ≥ 0.95 and coverage ≥ 0.70 for both `buyer_payment` and `seller_receipt`",
+            show(metrics::recommended_fact(items)),
         ),
         (
             "human_request",
-            "<party>_wants_human",
-            Label::Yes(true),
-            Goal::Recall,
-            0.90,
+            "highest keeping `<party>_wants_human` recall ≥ 0.90",
+            show(recall("<party>_wants_human", 0.90)),
         ),
         (
             "fraud",
-            "fraud_signal",
-            Label::Yes(true),
-            Goal::Recall,
-            0.85,
+            "highest keeping `fraud_signal` recall ≥ 0.85",
+            show(recall("fraud_signal", 0.85)),
         ),
     ];
     let mut out = vec![
         String::new(),
         "## Recommended thresholds (evaluation.md §3)".into(),
         String::new(),
-        "| Threshold | From | Rule | Value |".into(),
-        "|---|---|---|---:|".into(),
+        "| Threshold | Rule | Value |".into(),
+        "|---|---|---:|".into(),
     ];
-    for (name, base, positive, goal, target) in rows {
-        let rule = match goal {
-            Goal::Precision => format!("lowest with precision ≥ {target}"),
-            Goal::Recall => format!("highest with recall ≥ {target}"),
-        };
-        let value = metrics::recommended_threshold(items, base, &positive, goal, target)
-            .map_or("none".into(), |t| format!("{t:.2}"));
-        out.push(format!("| `{name}` | `{base}` | {rule} | {value} |"));
+    for (name, rule, value) in rows {
+        out.push(format!("| `{name}` | {rule} | {value} |"));
     }
     out.push(String::new());
     out.push("Values are swept from 0.50 to 0.95 in steps of 0.05.".into());
