@@ -80,7 +80,8 @@ At the default thresholds of [judgments.md §3](../../docs/judgments.md#3-from-a
 every fact the policy uses fired on every labelled positive and on nothing
 else: precision and recall 1.00 for `says_sent`, `says_not_sent` (at `fact`
 and `guide`), `says_received` (at `fact` and `guide`), `says_not_received`,
-`wants_human`, `fraud` and `conflict`.
+`says_received_with_problem` (at `outside_scope`), `wants_human`, `fraud`
+and `conflict`.
 
 Latency: median 334 ms, max 459 ms. Input tokens: mean 2,062, max 2,456,
 in line with the estimate of [judgments.md §2.3](../../docs/judgments.md#23-size).
@@ -142,6 +143,12 @@ protect.
 
 With the new wording, all three cases give `says_received_with_problem` at
 1.00, and all 51 cases keep every other answer.
+
+The change keeps the name `qs-1`. The question set is frozen, with
+`QUESTION_SET_VERSION` and its snapshot test, only when T3.5 implements it;
+T0.7 exists to fold such findings in before that. No recording under the
+name `qs-1` predates the change: the spike's run on the old wording is kept
+as `qs-1-draft`.
 
 ### 2. Minor, no change
 

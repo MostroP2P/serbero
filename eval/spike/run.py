@@ -38,13 +38,15 @@ ROLES = {
     "serbero": "Automated assistant that asks both parties questions for the human solver. It cannot move funds or decide the dispute.",
 }
 # Default thresholds from docs/judgments.md §3, used for the at-threshold view.
-THRESHOLDS = {"guide": 0.90, "fact": 0.80, "human_request": 0.80, "fraud": 0.60, "conflict": 0.75}
-LANGUAGES = ("en", "es", "pt")
+THRESHOLDS = {
+    "guide": 0.90, "fact": 0.80, "human_request": 0.80, "fraud": 0.60, "conflict": 0.75, "outside_scope": 0.80,
+}
 SHORT = {"b": "buyer", "s": "seller"}
 
 
 def load_catalogs():
-    return {code: tomllib.loads((ROOT / "messages" / f"{code}.toml").read_text()) for code in LANGUAGES}
+    """Every catalog in messages/, keyed by language code; no code names a language."""
+    return {path.stem: tomllib.loads(path.read_text()) for path in sorted((ROOT / "messages").glob("*.toml"))}
 
 
 def format_amount(catalog, value, currency):
@@ -217,6 +219,7 @@ def report(cases, results, rows, version):
         ("seller_receipt", "says_received", "fact"),
         ("seller_receipt", "says_received", "guide"),
         ("seller_receipt", "says_not_received", "fact"),
+        ("seller_receipt", "says_received_with_problem", "outside_scope"),
         ("<party>_wants_human", True, "human_request"),
         ("fraud_signal", True, "fraud"),
         ("claims_conflict", True, "conflict"),

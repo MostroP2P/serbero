@@ -23,6 +23,7 @@ Model `jev-1.13.0`, question set `qs-1`, 51 cases.
 | `seller_receipt = says_received` | `fact` 0.8 | 7 | 7 | 7 | 0 | 1.00 | 1.00 |
 | `seller_receipt = says_received` | `guide` 0.9 | 7 | 7 | 7 | 0 | 1.00 | 1.00 |
 | `seller_receipt = says_not_received` | `fact` 0.8 | 10 | 10 | 10 | 0 | 1.00 | 1.00 |
+| `seller_receipt = says_received_with_problem` | `outside_scope` 0.8 | 3 | 3 | 3 | 0 | 1.00 | 1.00 |
 | `<party>_wants_human = true` | `human_request` 0.8 | 6 | 6 | 6 | 0 | 1.00 | 1.00 |
 | `fraud_signal = true` | `fraud` 0.6 | 6 | 6 | 6 | 0 | 1.00 | 1.00 |
 | `claims_conflict = true` | `conflict` 0.75 | 3 | 3 | 3 | 0 | 1.00 | 1.00 |
