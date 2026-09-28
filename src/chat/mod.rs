@@ -19,10 +19,11 @@ use crate::store::Store;
 use crate::store::messages::{self, Direction, NewMessage};
 use crate::store::sessions::{self, Party, Session, SessionState};
 
-/// Serializes party messages with session-ending revisions: senders hold it
-/// shared from the state check until the message is recorded, and the
-/// notifier holds it exclusively while applying a revision. A session that
-/// ended can therefore never receive a message sent after the fact.
+/// Orders party messages with session-ending revisions: senders hold it
+/// shared while they check the session state, and the notifier holds it
+/// exclusively while applying a revision. No message starts after its
+/// session ended. The relay round trip happens outside it, so a slow or
+/// silent relay never holds back dispute events (AGENTS.md, relays rule 1).
 pub type OutboundGate = tokio::sync::RwLock<()>;
 
 /// The channel between Serbero and one party of a session.
@@ -58,6 +59,25 @@ pub async fn send_to_party(
     .await
 }
 
+/// Sends a mediation message (a question, reminder or guidance): only while
+/// Serbero mediates the session, never once it was handed to a person.
+pub async fn send_while_mediating(
+    client: &Client,
+    gate: &OutboundGate,
+    store: &Mutex<Store>,
+    serbero: &Keys,
+    session: &Session,
+    message: &Outbound<'_>,
+) -> Result<EventId> {
+    send_when(client, gate, store, serbero, session, message, |state| {
+        matches!(
+            state,
+            SessionState::Opening | SessionState::Active | SessionState::Guiding
+        )
+    })
+    .await
+}
+
 /// Sends the closing message of a session the parties resolved
 /// themselves (`resolved_thanks`, `docs/spec.md` §7.4): the session is
 /// already `closed`, and nothing is ever sent to a `superseded` one.
@@ -84,19 +104,6 @@ async fn send_when(
     message: &Outbound<'_>,
     allowed: impl Fn(SessionState) -> bool,
 ) -> Result<EventId> {
-    let _sending = gate.read().await;
-    // A human may have taken over since the caller read the session: re-read
-    // it and send nothing once it ended (`docs/spec.md` §6, step 4).
-    let current = {
-        let store = store
-            .lock()
-            .map_err(|_| Error::Schema("store lock poisoned".into()))?;
-        sessions::get(store.conn(), &session.session_id)?
-    };
-    match current {
-        Some(current) if allowed(current.state) => {}
-        _ => return Err(Error::SessionEnded(session.session_id.clone())),
-    }
     let keys = channel(serbero, session, message.party)?;
     let event = wrap_chat_message(serbero, keys.conv(), keys.sign(), message.text)
         .await
@@ -110,6 +117,24 @@ async fn send_when(
         Timestamp::now(),
     )
     .map_err(|e| Error::Nostr(format!("cannot read own chat message: {e}")))?;
+    // Checked last, right before the relay send, so a revision that ended
+    // the session while the message was prepared stops it.
+    {
+        let _checking = gate.read().await;
+        // A human may have taken over since the caller read the session:
+        // re-read it and send nothing once it ended (`docs/spec.md` §6,
+        // step 4).
+        let current = {
+            let store = store
+                .lock()
+                .map_err(|_| Error::Schema("store lock poisoned".into()))?;
+            sessions::get(store.conn(), &session.session_id)?
+        };
+        match current {
+            Some(current) if allowed(current.state) => {}
+            _ => return Err(Error::SessionEnded(session.session_id.clone())),
+        }
+    }
     let output = client
         .send_event(&event)
         .await

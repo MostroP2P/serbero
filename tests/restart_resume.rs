@@ -132,3 +132,66 @@ async fn messages_sent_while_down_arrive_after_restart_without_duplicates() {
     task.abort();
     client.shutdown().await;
 }
+
+#[tokio::test]
+async fn a_session_that_cannot_be_resumed_does_not_block_the_others() {
+    let relay = MockRelay::run().await.unwrap();
+    let url = relay.url().await.to_string();
+    let (serbero, buyer, seller) = (Keys::generate(), Keys::generate(), Keys::generate());
+    let store = store_with_live_session(&buyer, &seller);
+    {
+        // Listed first, and its stored trade pubkey is not a key.
+        let store = store.lock().unwrap();
+        disputes::insert_if_new(
+            store.conn(),
+            &NewDispute {
+                dispute_id: "d0",
+                initiator: Initiator::Buyer,
+                status: "in-progress",
+                status_at: 1,
+                now: 1,
+            },
+        )
+        .unwrap();
+        sessions::insert(
+            store.conn(),
+            &NewSession {
+                session_id: "s0",
+                dispute_id: "d0",
+                buyer_trade_pubkey: "not-a-key",
+                seller_trade_pubkey: "not-a-key",
+                fiat_amount: None,
+                fiat_code: None,
+                payment_method: None,
+                order_published_at: None,
+                now: 1,
+            },
+        )
+        .unwrap();
+        sessions::set_state(store.conn(), "s0", SessionState::Active, 1).unwrap();
+    }
+    let client = serbero::nostr::connect(std::slice::from_ref(&url), WAIT)
+        .await
+        .unwrap();
+    let chats = Arc::new(Chats::new(
+        client.clone(),
+        serbero.clone(),
+        Arc::clone(&store),
+        2_000,
+        Default::default(),
+    ));
+    let notifications = client.notifications();
+
+    assert_eq!(chats.resume().await.unwrap(), 1, "s1 still opened");
+
+    let task = tokio::spawn(async move { chats.run(notifications).await });
+    let channel = ChannelKeys::derive(&buyer, &serbero.public_key()).unwrap();
+    let event = wrap_chat_message(&buyer, channel.conv(), channel.sign(), "hola")
+        .await
+        .unwrap();
+    let buyer_client = serbero::nostr::connect(&[url], WAIT).await.unwrap();
+    buyer_client.send_event(&event).await.unwrap();
+    wait_for(&store, 1).await;
+    task.abort();
+    client.shutdown().await;
+}

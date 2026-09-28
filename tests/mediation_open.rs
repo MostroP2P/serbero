@@ -262,6 +262,9 @@ async fn harness(
             languages: vec!["en".into(), "es".into(), "pt".into()],
             max_rounds: 3,
             max_message_chars: 2000,
+            max_messages_per_turn: 10,
+            response_timeout: Duration::from_secs(1800),
+            self_resolution_timeout: Duration::from_secs(7200),
         },
         sender: outbox.clone(),
         solvers: vec![Solver {

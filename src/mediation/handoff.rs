@@ -5,7 +5,7 @@
 use serde_json::{Value, json};
 
 use super::{Mediator, ReadyJudge};
-use crate::chat::{Outbound, send_to_party};
+use crate::chat::{Outbound, send_to_party, send_while_mediating};
 use crate::config::Permission;
 use crate::error::{Error, Result};
 use crate::judge::Answers;
@@ -20,7 +20,7 @@ use crate::store::sessions::{self, Party, Session};
 use crate::store::{disputes, evaluations, events};
 
 /// The party notice sent on every handoff (`docs/messages.md` §2).
-const HANDOFF_NOTICE: &str = "handoff_notice";
+pub(super) const HANDOFF_NOTICE: &str = "handoff_notice";
 
 /// Event kinds that record the last party message the solvers have seen.
 const HANDOFF_EVENT: &str = "handoff";
@@ -124,6 +124,10 @@ impl<S: DmSender> Mediator<S> {
             self.brief_delivered(session, pending, now)?;
         }
         for party in [Party::Buyer, Party::Seller] {
+            // The timer may have sent it while the brief went out.
+            if self.received(session, party, HANDOFF_NOTICE)? {
+                continue;
+            }
             if let Err(e) = self.send_template(session, party, HANDOFF_NOTICE).await {
                 tracing::warn!(session_id = %session.session_id, %party, error = %e, "handoff notice not sent; the timer retries it");
             }
@@ -245,16 +249,26 @@ impl<S: DmSender> Mediator<S> {
     ) -> Brief {
         let state = reading.state;
         let questions = BriefQuestions::new().for_state(state);
+        let action = match subject {
+            Subject::Handoff(reason) => Action::Handoff(reason),
+            Subject::Guide(path) => Action::Guide(path),
+        };
+        // A retry of an undelivered brief reuses the judgment made for it:
+        // one brief request per handoff or guidance, however long delivery
+        // takes.
+        match self.stored_brief(session, &questions.version, &action) {
+            Ok(Some(answers)) => return brief::from_answers(state, &answers, &ready.thresholds),
+            Ok(None) => {}
+            Err(e) => {
+                tracing::warn!(session_id = %session.session_id, error = %e, "cannot read the stored brief")
+            }
+        }
         let judged = match ready.judge.evaluate(state, &questions).await {
             Ok(judged) => judged,
             Err(e) => {
                 tracing::warn!(session_id = %session.session_id, error = %e, "brief request failed");
                 return Brief::default();
             }
-        };
-        let action = match subject {
-            Subject::Handoff(reason) => Action::Handoff(reason),
-            Subject::Guide(path) => Action::Guide(path),
         };
         let judged_state = JudgedState {
             question_set: &questions.version,
@@ -264,6 +278,39 @@ impl<S: DmSender> Mediator<S> {
             tracing::error!(session_id = %session.session_id, error = %e, "cannot record the brief evaluation");
         }
         brief::from_answers(state, &judged.answers, &ready.thresholds)
+    }
+
+    /// The answers of the brief already judged for the session's current
+    /// pending brief, if any: a brief evaluation for the same action made
+    /// since that brief was recorded as pending.
+    fn stored_brief(
+        &self,
+        session: &Session,
+        question_set: &str,
+        action: &Action,
+    ) -> Result<Option<crate::judge::Answers>> {
+        let action = serde_json::to_value(action)
+            .map_err(|e| Error::Schema(format!("action does not serialize: {e}")))?;
+        let store = self.lock_store()?;
+        let since = events::list_for_dispute(store.conn(), &session.dispute_id)?
+            .into_iter()
+            .rev()
+            .find(|e| {
+                e.kind == BRIEF_PENDING && e.session_id.as_deref() == Some(&session.session_id)
+            })
+            .map(|e| e.created_at);
+        let Some(since) = since else {
+            return Ok(None);
+        };
+        let stored = evaluations::list_for_session(store.conn(), &session.session_id)?
+            .into_iter()
+            .rev()
+            .find(|e| {
+                e.question_set_version == question_set
+                    && e.action == action
+                    && e.created_at >= since
+            });
+        Ok(stored.and_then(|e| serde_json::from_value(e.answers).ok()))
     }
 
     fn record_brief(
@@ -384,20 +431,35 @@ impl<S: DmSender> Mediator<S> {
         template: &str,
     ) -> Result<()> {
         let (text, lang) = self.render_for(session, party, template)?;
-        send_to_party(
-            &self.client,
-            &self.gate,
-            &self.store,
-            &self.keys,
-            session,
-            &Outbound {
-                party,
-                text: &text,
-                template_id: Some(template),
-                lang: Some(&lang),
-            },
-        )
-        .await?;
+        let message = Outbound {
+            party,
+            text: &text,
+            template_id: Some(template),
+            lang: Some(&lang),
+        };
+        // Only the notice may follow a handoff: a turn or timer that read
+        // the session earlier must not ask anything after it.
+        if template == HANDOFF_NOTICE {
+            send_to_party(
+                &self.client,
+                &self.gate,
+                &self.store,
+                &self.keys,
+                session,
+                &message,
+            )
+            .await?;
+        } else {
+            send_while_mediating(
+                &self.client,
+                &self.gate,
+                &self.store,
+                &self.keys,
+                session,
+                &message,
+            )
+            .await?;
+        }
         Ok(())
     }
 }

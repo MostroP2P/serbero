@@ -12,14 +12,18 @@ use tokio::time::Instant;
 use super::handoff::{TurnReading, last_seen};
 use super::{Mediator, ReadyJudge, history, settle::Settle};
 use crate::error::{Error, Result};
+use crate::judge::brief::BriefQuestions;
 use crate::judge::facts::{self, Facts};
 use crate::judge::state;
 use crate::nostr::dm::DmSender;
 use crate::policy::next::{History, next_questions};
-use crate::policy::{Action, NextQuestions, Phase, Turn, decide};
+use crate::policy::{Action, HandoffReason, NextQuestions, Phase, Turn, decide, timers};
 use crate::store::messages::{self, Direction, Message};
 use crate::store::sessions::{self, Party, Session, SessionState};
 use crate::store::{disputes, evaluations, events};
+
+/// Event recording a turn in which a party sent too many messages.
+const FLOOD_STRIKE: &str = "flood_strike";
 
 /// How a turn ended.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -196,6 +200,20 @@ impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
         if wrote.is_empty() {
             return Ok(TurnOutcome::Skipped("no new party messages"));
         }
+        if self.flooded(&session, &messages, now)? {
+            // The flooding turn is not judged; the solvers get the last
+            // judged turn's reading, as timer handoffs do.
+            let last = self.last_reading(&session, &messages)?;
+            let reading = last.as_ref().map(|l| TurnReading {
+                state: &l.state,
+                answers: &l.answers,
+                facts: &l.facts,
+                last_message_id: l.last_message_id,
+            });
+            self.hand_off(&session, HandoffReason::Flood, reading, now)
+                .await?;
+            return Ok(TurnOutcome::Decided(Action::Handoff(HandoffReason::Flood)));
+        }
         let questions = ready.turn.for_turn(&wrote, phase == Phase::Guiding);
         let started = std::time::Instant::now();
         let judged = match ready.judge.evaluate(&built.value, &questions).await {
@@ -207,6 +225,11 @@ impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
             // The party wrote again while the judge worked: acting now would
             // answer an outdated state. The next turn judges everything.
             return Ok(TurnOutcome::Deferred("newer party messages arrived"));
+        }
+        if self.moved_on(&session)? {
+            // A timer or the notifier handed off or ended the session while
+            // the judge worked.
+            return Ok(TurnOutcome::Skipped("session changed while judging"));
         }
         let facts =
             facts::from_answers(&judged.answers, &ready.thresholds, &self.settings.languages);
@@ -267,6 +290,76 @@ impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
             Action::Wait => {}
         }
         Ok(TurnOutcome::Decided(action))
+    }
+
+    /// Records a flood strike for each party over `max_messages_per_turn`
+    /// in this turn; a party with `FLOOD_STRIKES` strikes floods the session
+    /// (`docs/judgments.md` §4.2). Checked before the judge is called.
+    ///
+    /// A turn's messages are those after the last judged turn or strike, in
+    /// arrival order: messages already counted never count again, even when
+    /// Serbero sent nothing in between (a guiding `Wait`).
+    fn flooded(&self, session: &Session, messages: &[Message], now: i64) -> Result<bool> {
+        let store = self.lock_store()?;
+        let history = events::list_for_dispute(store.conn(), &session.dispute_id)?;
+        let strikes: Vec<_> = history
+            .iter()
+            .filter(|e| e.session_id.as_deref() == Some(&session.session_id))
+            .filter(|e| e.kind == FLOOD_STRIKE)
+            .collect();
+        // Turn evaluations only: a brief is not a settled turn.
+        let brief_set = BriefQuestions::new();
+        let judged = evaluations::list_for_session(store.conn(), &session.session_id)?
+            .iter()
+            .filter(|e| e.question_set_version != brief_set.id())
+            .map(|e| e.last_message_id)
+            .max()
+            .unwrap_or(0);
+        let counted = strikes
+            .iter()
+            .filter_map(|e| e.payload["last_message_id"].as_i64())
+            .max()
+            .unwrap_or(0)
+            .max(judged);
+        let last_message_id = messages.iter().map(|m| m.id).max().unwrap_or(0);
+        let mut flooded = false;
+        for party in [Party::Buyer, Party::Seller] {
+            let count = messages
+                .iter()
+                .filter(|m| m.direction == Direction::In && m.party == party && m.id > counted)
+                .count();
+            let count = u32::try_from(count).unwrap_or(u32::MAX);
+            if !timers::over_limit(count, self.settings.max_messages_per_turn) {
+                continue;
+            }
+            events::append(
+                store.conn(),
+                &events::NewEvent {
+                    dispute_id: &session.dispute_id,
+                    session_id: Some(&session.session_id),
+                    kind: FLOOD_STRIKE,
+                    payload: json!({
+                        "party": party.to_string(),
+                        "messages": count,
+                        "last_message_id": last_message_id,
+                    }),
+                    now,
+                },
+            )?;
+            let earlier = strikes
+                .iter()
+                .filter(|e| e.payload["party"] == party.to_string())
+                .count();
+            flooded |= timers::is_flood(u32::try_from(earlier + 1).unwrap_or(u32::MAX));
+        }
+        Ok(flooded)
+    }
+
+    /// Whether the session left the state this turn read it in.
+    fn moved_on(&self, session: &Session) -> Result<bool> {
+        let store = self.lock_store()?;
+        Ok(sessions::get(store.conn(), &session.session_id)?
+            .is_none_or(|current| current.state != session.state))
     }
 
     /// Whether a party message arrived after `messages` was read.

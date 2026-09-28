@@ -60,19 +60,28 @@ impl Chats {
         }
     }
 
-    /// Re-opens every live session's channels. Returns how many sessions.
+    /// Re-opens every live session's channels, logging and skipping one
+    /// that cannot be opened. Returns how many were opened.
     pub async fn resume(&self) -> Result<usize> {
         let live = {
             let store = self.store.lock().map_err(|_| poisoned())?;
             sessions::list_live(store.conn())?
         };
+        // One session that cannot be opened must not leave the others
+        // unsubscribed: the timers start once this returns.
+        let mut opened = 0;
         for session in &live {
-            self.open(session).await?;
+            match self.open(session).await {
+                Ok(()) => opened += 1,
+                Err(e) => {
+                    tracing::error!(session_id = %session.session_id, error = %e, "cannot resume chat channel")
+                }
+            }
         }
         if !live.is_empty() {
-            tracing::info!(sessions = live.len(), "resumed chat channels");
+            tracing::info!(sessions = opened, of = live.len(), "resumed chat channels");
         }
-        Ok(live.len())
+        Ok(opened)
     }
 
     /// Registers a session's two channels and subscribes to them from the
@@ -91,6 +100,13 @@ impl Chats {
             .await
             .map_err(|e| Error::Nostr(format!("cannot subscribe to session chat: {e}")))?;
         Ok(())
+    }
+
+    /// Whether the session's channels are open, so replies reach it.
+    pub fn is_open(&self, session_id: &str) -> bool {
+        self.inbox
+            .lock()
+            .is_ok_and(|inbox| inbox.has_session(session_id))
     }
 
     /// Forgets a session's channels and closes its subscription.

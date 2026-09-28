@@ -338,8 +338,27 @@ Timers never call Jev. They are pure functions in `src/policy/timers.rs`:
   unanswered hands off with `unresponsive` at its own `response_timeout`.
 - While guiding, no question awaits an answer, so only
   `self_resolution_timeout` applies.
-- A party message in the same second as the question counts as its answer.
-- "Twice" for `flood` is `FLOOD_STRIKES = 2` turns over the limit.
+- A reply is a party message stored after the question, in arrival order;
+  the timestamp the party's client set is not used.
+- "Twice" for `flood` is `FLOOD_STRIKES = 2` turns over the limit. A turn's
+  messages are those stored after the last judged turn or strike, so a
+  message is counted once, even while guiding, when Serbero sends nothing
+  in between.
+- The timer task starts one tick after the chat subscriptions were resumed,
+  so replies relays replay after a restart are stored before any reminder or
+  handoff. A session whose channels cannot be reopened is logged and skipped;
+  the others still resume. A live session whose chat cannot be opened is
+  never timed: no reply could reach it, so it is handed off as
+  `opening_failed`. Each tick also resends what did not reach its
+  recipient: a brief (`brief_pending`, reusing the brief already judged
+  for it), the handoff notice to each party on its own, guidance (not
+  within 2 minutes of the handoff or guidance, which may still be sending
+  them), and a resolved dispute's closing.
+- A `flood` handoff shows the solvers the last judged turn's reading; the
+  flooding turn itself is not judged.
+- A turn whose session was handed off or ended while the judge worked is
+  dropped. Questions, reminders and guidance are only ever sent while
+  Serbero mediates; after a handoff only the notice goes out.
 
 ## 5. Brief request
 

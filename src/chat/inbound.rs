@@ -135,6 +135,11 @@ impl Inbox {
     }
 
     /// Forgets a session's channels.
+    /// Whether the session's channels are registered.
+    pub fn has_session(&self, session_id: &str) -> bool {
+        self.channels.values().any(|c| c.session_id == session_id)
+    }
+
     pub fn remove_session(&mut self, session_id: &str) {
         self.channels.retain(|_, c| c.session_id != session_id);
     }
