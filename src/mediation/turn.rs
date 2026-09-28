@@ -161,8 +161,15 @@ impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
                 };
                 self.hand_off(&session, *reason, Some(reading), now).await?;
             }
-            // Guidance is carried out in T5.4; until then it is recorded.
-            Action::Guide(_) | Action::Wait => {}
+            Action::Guide(path) => {
+                let reading = TurnReading {
+                    state: &built.value,
+                    answers: &judged.answers,
+                    facts: &facts,
+                };
+                self.guide(&session, *path, reading, now).await?;
+            }
+            Action::Wait => {}
         }
         Ok(TurnOutcome::Decided(action))
     }

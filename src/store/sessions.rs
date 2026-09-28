@@ -189,6 +189,20 @@ pub fn increment_rounds(conn: &Connection, session_id: &str, now: i64) -> Result
     Ok(())
 }
 
+/// The dispute's most recent session, live or ended.
+pub fn latest_for_dispute(conn: &Connection, dispute_id: &str) -> Result<Option<Session>> {
+    conn.query_row(
+        &format!(
+            "SELECT {COLUMNS} FROM sessions WHERE dispute_id = ?1
+             ORDER BY opened_at DESC, rowid DESC LIMIT 1"
+        ),
+        [dispute_id],
+        from_row,
+    )
+    .optional()?
+    .transpose()
+}
+
 /// Whether the dispute ever had a session, live or ended. Mediation opens
 /// at most once per dispute (`docs/spec.md` §7.1).
 pub fn exists_for_dispute(conn: &Connection, dispute_id: &str) -> Result<bool> {
@@ -395,6 +409,18 @@ mod tests {
         increment_rounds(store.conn(), "s1", 301).unwrap();
 
         assert_eq!(get(store.conn(), "s1").unwrap().unwrap().rounds, 2);
+    }
+
+    #[test]
+    fn the_latest_session_is_found_even_after_it_ended() {
+        let store = store_with_session();
+        set_state(store.conn(), "s1", SessionState::Closed, 300).unwrap();
+
+        let latest = latest_for_dispute(store.conn(), "d1").unwrap().unwrap();
+
+        assert_eq!(latest.session_id, "s1");
+        assert_eq!(latest.state, SessionState::Closed);
+        assert!(latest_for_dispute(store.conn(), "d2").unwrap().is_none());
     }
 
     #[test]

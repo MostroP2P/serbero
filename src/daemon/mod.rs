@@ -144,6 +144,19 @@ fn start_mediation(
     background.push(tokio::spawn(
         Arc::clone(&mediator).run_turns(received, config.mediation.quiet_period),
     ));
+    let closing = Arc::clone(&mediator);
+    notifier.on_resolved(Box::new(move |dispute_id, status, by_parties| {
+        let mediator = Arc::clone(&closing);
+        let (dispute_id, status) = (dispute_id.to_owned(), status.to_owned());
+        tokio::spawn(async move {
+            if let Err(e) = mediator
+                .finish(&dispute_id, &status, by_parties, now())
+                .await
+            {
+                tracing::error!(dispute_id, error = %e, "cannot close the mediation");
+            }
+        });
+    }));
     let hook = Arc::clone(&mediator);
     notifier.on_new_dispute(Box::new(move |dispute_id| {
         let mediator = Arc::clone(&hook);

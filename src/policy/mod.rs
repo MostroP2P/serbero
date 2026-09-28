@@ -129,6 +129,26 @@ impl Path {
 }
 
 impl HandoffReason {
+    pub const ALL: [Self; 12] = [
+        Self::SelfResolutionStalled,
+        Self::FactsGathered,
+        Self::ConflictingClaims,
+        Self::FraudSignal,
+        Self::HumanRequested,
+        Self::OutsideScope,
+        Self::Unresponsive,
+        Self::RoundLimit,
+        Self::Uncertain,
+        Self::JudgeUnavailable,
+        Self::Flood,
+        Self::OpeningFailed,
+    ];
+
+    /// The reason stored under `name`, if it is one.
+    pub fn parse(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|reason| reason.as_str() == name)
+    }
+
     /// The name in `docs/spec.md` §7.6, used in solver messages and the
     /// store.
     pub fn as_str(self) -> &'static str {
@@ -266,7 +286,17 @@ pub fn decide(turn: &Turn<'_>) -> Action {
     if !facts.buyer_payment_unknown() && !facts.seller_receipt_unknown() {
         return Action::Handoff(HandoffReason::FactsGathered);
     }
-    Action::Wait
+    // Row 13: nothing to ask, but a party who answered everything is still
+    // told so (`thanks_waiting`, `what_happens_next`) while the other one
+    // is awaited.
+    if next.buyer.is_empty() && next.seller.is_empty() {
+        Action::Wait
+    } else {
+        Action::Ask {
+            buyer: next.buyer.clone(),
+            seller: next.seller.clone(),
+        }
+    }
 }
 
 /// Guidance mentions a fund action, so it needs both parties' languages to

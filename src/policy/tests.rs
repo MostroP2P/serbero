@@ -339,6 +339,25 @@ fn row_12_needs_both_facts() {
 }
 
 #[test]
+fn row_13_still_sends_courtesy_templates_while_waiting() {
+    // The buyer answered everything; the seller still owes an answer.
+    let case = Case::new()
+        .with(|c| {
+            c.facts.buyer_sent = true;
+            c.facts.buyer_has_details = true;
+        })
+        .with(|c| c.next.buyer = vec![THANKS_WAITING]);
+
+    assert_eq!(
+        case.decide(),
+        Action::Ask {
+            buyer: vec![THANKS_WAITING],
+            seller: vec![],
+        }
+    );
+}
+
+#[test]
 fn row_13_otherwise_waits() {
     assert_eq!(Case::new().decide(), Action::Wait);
 }
@@ -497,4 +516,12 @@ fn actions_serialize_with_the_spec_names() {
             serde_json::json!(reason.as_str())
         );
     }
+}
+
+#[test]
+fn every_handoff_reason_parses_back_from_its_name() {
+    for reason in HandoffReason::ALL {
+        assert_eq!(HandoffReason::parse(reason.as_str()), Some(reason));
+    }
+    assert_eq!(HandoffReason::parse("nope"), None);
 }

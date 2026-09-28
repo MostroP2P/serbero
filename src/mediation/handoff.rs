@@ -287,13 +287,13 @@ impl<S: DmSender> Mediator<S> {
         Ok(fresh.len())
     }
 
-    /// Renders a template for a party in its language and sends it.
-    pub(super) async fn send_template(
+    /// A template rendered for a party, in its language.
+    pub(super) fn render_for(
         &self,
         session: &Session,
         party: Party,
         template: &str,
-    ) -> Result<()> {
+    ) -> Result<(String, String)> {
         let lang = session.language(party, &self.settings.default_language);
         let catalog = self
             .catalogs
@@ -303,7 +303,17 @@ impl<S: DmSender> Mediator<S> {
             (Some(value), Some(currency)) => Some(crate::catalog::Amount { value, currency }),
             _ => None,
         };
-        let text = catalog.render(template, amount)?;
+        Ok((catalog.render(template, amount)?, lang.to_owned()))
+    }
+
+    /// Renders a template for a party in its language and sends it.
+    pub(super) async fn send_template(
+        &self,
+        session: &Session,
+        party: Party,
+        template: &str,
+    ) -> Result<()> {
+        let (text, lang) = self.render_for(session, party, template)?;
         send_to_party(
             &self.client,
             &self.gate,
@@ -314,7 +324,7 @@ impl<S: DmSender> Mediator<S> {
                 party,
                 text: &text,
                 template_id: Some(template),
-                lang: Some(lang),
+                lang: Some(&lang),
             },
         )
         .await?;
