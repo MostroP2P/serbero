@@ -5,7 +5,8 @@
 //! network failures or timeouts → `Unavailable`; other 4xx such as 422 →
 //! `InvalidRequest`). Retryable failures are retried with exponential
 //! backoff, honoring `retry-after` / `retry-after-ms` when the response
-//! carries one, as TypeSafe's own SDKs do.
+//! carries one, as TypeSafe's own SDKs do. Error bodies are dropped, and
+//! answers from a model other than the pinned one are `Malformed`.
 
 use std::collections::BTreeMap;
 use std::time::Duration;
@@ -28,9 +29,6 @@ const MAX_CONTEXT_TOKENS: u32 = 64_000;
 
 /// Longest wait a `retry-after` header can impose.
 const MAX_RETRY_AFTER: Duration = Duration::from_secs(30);
-
-/// How much of an error body is kept in the error message.
-const ERROR_BODY_CHARS: usize = 300;
 
 /// Retries of retryable failures.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -105,12 +103,15 @@ impl TypeSafeJudge {
         let text = success_body(response).await?;
         let wire: WireResponse = serde_json::from_str(&text)
             .map_err(|e| Failure::from(JudgeError::Malformed(format!("response body: {e}"))))?;
+        // Thresholds are calibrated per model: answers from any other model
+        // (a fallback, or an alias that moved) must not be used under this
+        // judge's id.
         if wire.model != self.model {
-            tracing::warn!(
-                configured = %self.model,
-                answered = %wire.model,
-                "the judge answered with another model; thresholds may not match"
-            );
+            return Err(JudgeError::Malformed(format!(
+                "answered by model {}, configured {}",
+                wire.model, self.model
+            ))
+            .into());
         }
         let answers = wire
             .answers
@@ -225,15 +226,12 @@ impl Failure {
 async fn success_body(response: reqwest::Response) -> Result<String, Failure> {
     let status = response.status();
     let retry_after = retry_after(response.headers());
-    let text = response.text().await.map_err(Failure::network)?;
     if status.is_success() {
-        return Ok(text);
+        return response.text().await.map_err(Failure::network);
     }
-    let detail = format!(
-        "HTTP {}: {}",
-        status.as_u16(),
-        text.chars().take(ERROR_BODY_CHARS).collect::<String>()
-    );
+    // The error body is never kept: it may echo the state, which holds party
+    // text, and errors are logged (AGENTS.md, privacy).
+    let detail = format!("HTTP {status}");
     let error = match status.as_u16() {
         401 | 403 => JudgeError::Unauthorized(detail),
         408 | 429 | 500..=599 => JudgeError::Unavailable(detail),

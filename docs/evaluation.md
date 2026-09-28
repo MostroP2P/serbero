@@ -77,7 +77,7 @@ least 5.
 ## 2. Metrics and targets
 
 Run with `cargo run --bin eval -- --lang es` against the judge configured in
-`[judge]` (or `--provider typesafe --model jev-latest`). It sends each case, compares the answers with the labels, and writes a report.
+`[judge]` (or `--provider typesafe --model jev-1.13.0`; pin a version, since answers from any other model are rejected). It sends each case, compares the answers with the labels, and writes a report.
 
 | Question | Metric | Target to validate a language |
 |---|---|---|

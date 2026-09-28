@@ -181,6 +181,10 @@ async fn status_codes_map_onto_provider_neutral_errors() {
 
         assert!(expected(&err), "{status} gave {err:?}");
         assert!(err.to_string().contains(&format!("HTTP {status}")), "{err}");
+        assert!(
+            !err.to_string().contains("nope"),
+            "error keeps the body: {err}"
+        );
     }
 }
 
@@ -324,6 +328,8 @@ async fn bodies_that_do_not_fit_are_malformed() {
         .as_object_mut()
         .unwrap()
         .remove("payment");
+    let mut other_model = answers_body();
+    other_model["model"] = json!("jev-1.14.0");
     let mut wrong_option = answers_body();
     wrong_option["answers"]["payment"]["probabilities"] = json!({ "says_sent": 0.9, "x": 0.1 });
     let cases = [
@@ -331,6 +337,7 @@ async fn bodies_that_do_not_fit_are_malformed() {
         ResponseTemplate::new(200).set_body_json(missing_level),
         ResponseTemplate::new(200).set_body_json(missing_answer),
         ResponseTemplate::new(200).set_body_json(wrong_option),
+        ResponseTemplate::new(200).set_body_json(other_model),
     ];
     for template in cases {
         let server = MockServer::start().await;

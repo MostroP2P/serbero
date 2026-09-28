@@ -336,7 +336,7 @@ between models, thresholds are stored per provider
 (`[judge.thresholds."<provider>/<model>"]`), and a provider or model is enabled
 only after it passes the golden set. Production configs pin a concrete model
 version rather than an alias such as `jev-latest`, so the calibrated thresholds
-always match the model that answers ([evaluation.md](evaluation.md)). Every
+always match the model that answers ([evaluation.md](evaluation.md)). An answer reporting any other model is rejected as `Malformed`, and error bodies are never kept, since they may echo party text. Every
 evaluation row records the judge id, so results from different providers are
 never mixed up.
 
