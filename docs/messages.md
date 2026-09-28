@@ -305,7 +305,8 @@ mediation: yes · outcome: handed_off (conflicting_claims) · rounds: 2 · durat
 
 Enforced by tests over every `messages/<code>.toml`:
 
-1. Every language file has every template id that `en.toml` has, and a
+1. Every language file, English included, has every template id of the fixed
+   list in code (`catalog::TEMPLATE_IDS`, the templates of §2) and no other, and a
    non-empty name and word lists.
 2. The only placeholder is `{amount}`; every template that uses it has a
    `_noamount` form.

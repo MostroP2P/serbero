@@ -24,6 +24,28 @@ pub const NO_AMOUNT_SUFFIX: &str = "_noamount";
 /// The template sent before a party's first question.
 pub const INTRO: &str = "intro";
 
+/// Every party template id (`docs/messages.md` §2). Every catalog, English
+/// included, must define each of them, plus a `_noamount` form for each one
+/// that uses `{amount}`; nothing else.
+pub const TEMPLATE_IDS: &[&str] = &[
+    INTRO,
+    "ask_buyer_sent",
+    "ask_buyer_sent_simple",
+    "ask_buyer_details",
+    "ask_seller_received",
+    "ask_seller_received_simple",
+    "ask_seller_check_account",
+    "what_happens_next",
+    "thanks_waiting",
+    "reminder",
+    "guide_arrived_seller",
+    "guide_arrived_buyer",
+    "guide_not_sent_buyer",
+    "guide_not_sent_seller",
+    "resolved_thanks",
+    "handoff_notice",
+];
+
 /// The codes of every embedded catalog, sorted.
 pub fn embedded_codes() -> Vec<&'static str> {
     EMBEDDED.iter().map(|(code, _)| *code).collect()
