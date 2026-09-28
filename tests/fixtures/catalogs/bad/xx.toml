@@ -1,0 +1,54 @@
+# Deliberately broken catalog for the rule tests (src/catalog/rules.rs).
+# It breaks each checkable rule of docs/messages.md §4 once:
+# a missing template (ask_buyer_details), a fund-action word outside
+# guidance, a verdict word, and a template over 450 characters.
+
+name = "Broken"
+
+[format]
+thousands_separator = ","
+decimal_separator = "."
+
+[words]
+# Allowed only in guide_* templates (docs/messages.md §4).
+fund_action = ["release"]
+# Allowed in no template.
+verdict = ["guilty"]
+
+[templates]
+intro = "Hi, I'm Serbero, an automated assistant helping with this dispute. I'll ask you and the other party a few short questions. I can't move funds or decide the dispute, and a person can take over whenever you ask. Messages in this chat may be monitored and processed by an automated service."
+
+ask_buyer_sent = "Did you send the {amount} payment for this order? If you did, please tell me when and from which account or app."
+ask_buyer_sent_noamount = "Did you send the payment for this order? If you did, please tell me when and from which account or app."
+
+ask_buyer_sent_simple = "Just to confirm: have you sent the {amount} payment? Yes or no is enough."
+ask_buyer_sent_simple_noamount = "Just to confirm: have you sent the payment? Yes or no is enough."
+
+
+ask_seller_received = "Has the {amount} arrived? Then release it."
+ask_seller_received_noamount = "Has the payment for this order arrived in your account?"
+
+ask_seller_received_simple = "Just to confirm: have you received the {amount} payment? Yes or no is enough."
+ask_seller_received_simple_noamount = "Just to confirm: have you received the payment? Yes or no is enough."
+
+ask_seller_check_account = "Thanks. Could you check the account or app where you expected the payment, including pending movements, and tell me if you see anything for {amount}?"
+ask_seller_check_account_noamount = "Thanks. Could you check the account or app where you expected the payment, including pending movements, and tell me if you see it?"
+
+what_happens_next = "I'm collecting what each of you says so the assigned solver can review the case quickly. Answering my question is the best way to help right now."
+
+thanks_waiting = "Thank you, that's all I need from you for now. I'll let you know if anything else is needed."
+
+reminder = "Still waiting. xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+
+guide_arrived_seller = "Thanks for confirming. If you have checked that the {amount} is in your account, you can complete the trade yourself by releasing it from your Mostro app; that also closes this dispute. If anything doesn't add up, tell me here and a person will review it."
+guide_arrived_seller_noamount = "Thanks for confirming. If you have checked that the payment is in your account, you can complete the trade yourself by releasing it from your Mostro app; that also closes this dispute. If anything doesn't add up, tell me here and a person will review it."
+
+guide_arrived_buyer = "The seller is not guilty of anything."
+
+guide_not_sent_buyer = "Thanks for being clear. Since the payment hasn't been sent, you and the seller can agree how to continue: you can both request a cooperative cancellation from the Mostro app, or, if the seller agrees, you can still complete the payment. If you can't agree, tell me here and a person will review it."
+
+guide_not_sent_seller = "The buyer reports the payment has not been sent. You can agree together how to continue: you can both request a cooperative cancellation from the Mostro app, or wait for the payment if you both agree. If you can't agree, tell me here and a person will review it."
+
+resolved_thanks = "The dispute is now closed. Thank you both for resolving it."
+
+handoff_notice = "Thank you both. I've passed everything you said to the assigned solver, who will continue with the case. They may contact you here."
