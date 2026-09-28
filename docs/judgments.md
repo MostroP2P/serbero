@@ -344,8 +344,9 @@ Timers never call Jev. They are pure functions in `src/policy/timers.rs`:
 Sent once, when the action is `Handoff` or `Guide`, on the same
 state as the last turn. Options are message ids from `transcript` plus `none`,
 so every quote in the brief is a message a party actually wrote. Options are
-limited to the relevant party's messages; criteria are `null` because the text
-lives in the state.
+limited to the relevant party's messages, at most the newest 100 of them (so a
+long session stays below provider option limits); criteria are `null` because
+the text lives in the state.
 
 ```json
 {
