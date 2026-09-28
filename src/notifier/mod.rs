@@ -48,6 +48,10 @@ pub type OwnTakes = Arc<Mutex<HashSet<String>>>;
 /// Called with the id of each new dispute once solvers were notified.
 pub type NewDisputeHook = Box<dyn Fn(&str) + Send + Sync>;
 
+/// Called with a dispute's id, its final status, and whether the parties
+/// resolved it themselves, once it resolved.
+pub type ResolvedHook = Box<dyn Fn(&str, &str, bool) + Send + Sync>;
+
 pub struct Notifier<S> {
     store: Arc<Mutex<Store>>,
     gate: Arc<crate::chat::OutboundGate>,
@@ -56,6 +60,7 @@ pub struct Notifier<S> {
     mostro: PublicKey,
     own_takes: OwnTakes,
     on_new_dispute: OnceLock<NewDisputeHook>,
+    on_resolved: OnceLock<ResolvedHook>,
 }
 
 impl<S: DmSender> Notifier<S> {
@@ -78,6 +83,7 @@ impl<S: DmSender> Notifier<S> {
             mostro,
             own_takes: OwnTakes::default(),
             on_new_dispute: OnceLock::new(),
+            on_resolved: OnceLock::new(),
         }
     }
 
@@ -92,6 +98,15 @@ impl<S: DmSender> Notifier<S> {
     pub fn on_new_dispute(&self, hook: NewDisputeHook) {
         if self.on_new_dispute.set(hook).is_err() {
             tracing::warn!("a new-dispute hook is already installed");
+        }
+    }
+
+    /// Installs the hook called once a dispute reached its final status
+    /// (its live session, if any, is already closed). Only the first hook
+    /// is kept.
+    pub fn on_resolved(&self, hook: ResolvedHook) {
+        if self.on_resolved.set(hook).is_err() {
+            tracing::warn!("a resolution hook is already installed");
         }
     }
 
@@ -148,6 +163,12 @@ impl<S: DmSender> Notifier<S> {
                     now,
                 )
                 .await?;
+            }
+            Change::Resolved(status) => {
+                if let Some(hook) = self.on_resolved.get() {
+                    let by_parties = dispute_event::resolved_by_parties(status);
+                    hook(&dispute.dispute_id, &status.to_string(), by_parties);
+                }
             }
             _ => {}
         }

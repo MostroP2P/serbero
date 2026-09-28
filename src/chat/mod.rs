@@ -17,7 +17,7 @@ use crate::error::{Error, Result};
 use crate::mostro::chat::ChannelKeys;
 use crate::store::Store;
 use crate::store::messages::{self, Direction, NewMessage};
-use crate::store::sessions::{self, Party, Session};
+use crate::store::sessions::{self, Party, Session, SessionState};
 
 /// Serializes party messages with session-ending revisions: senders hold it
 /// shared from the state check until the message is recorded, and the
@@ -52,6 +52,38 @@ pub async fn send_to_party(
     session: &Session,
     message: &Outbound<'_>,
 ) -> Result<EventId> {
+    send_when(client, gate, store, serbero, session, message, |state| {
+        !state.is_terminal()
+    })
+    .await
+}
+
+/// Sends the closing message of a session the parties resolved
+/// themselves (`resolved_thanks`, `docs/spec.md` §7.4): the session is
+/// already `closed`, and nothing is ever sent to a `superseded` one.
+pub async fn send_after_close(
+    client: &Client,
+    gate: &OutboundGate,
+    store: &Mutex<Store>,
+    serbero: &Keys,
+    session: &Session,
+    message: &Outbound<'_>,
+) -> Result<EventId> {
+    send_when(client, gate, store, serbero, session, message, |state| {
+        state == SessionState::Closed
+    })
+    .await
+}
+
+async fn send_when(
+    client: &Client,
+    gate: &OutboundGate,
+    store: &Mutex<Store>,
+    serbero: &Keys,
+    session: &Session,
+    message: &Outbound<'_>,
+    allowed: impl Fn(SessionState) -> bool,
+) -> Result<EventId> {
     let _sending = gate.read().await;
     // A human may have taken over since the caller read the session: re-read
     // it and send nothing once it ended (`docs/spec.md` §6, step 4).
@@ -62,7 +94,7 @@ pub async fn send_to_party(
         sessions::get(store.conn(), &session.session_id)?
     };
     match current {
-        Some(current) if !current.state.is_terminal() => {}
+        Some(current) if allowed(current.state) => {}
         _ => return Err(Error::SessionEnded(session.session_id.clone())),
     }
     let keys = channel(serbero, session, message.party)?;

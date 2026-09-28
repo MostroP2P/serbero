@@ -178,7 +178,8 @@ impl Judge for ScriptedJudge {
 fn thresholds() -> Thresholds {
     serde_json::from_value(serde_json::json!({
         "guide": 0.9, "fact": 0.8, "human_request": 0.8,
-        "fraud": 0.6, "conflict": 0.75, "outside_scope": 0.8
+        "fraud": 0.6, "conflict": 0.75, "outside_scope": 0.8,
+        "validated_languages": ["en", "es"]
     }))
     .unwrap()
 }
@@ -188,6 +189,8 @@ struct Script {
     serbero: Keys,
     buyer: Keys,
     seller: Keys,
+    mostro: Keys,
+    notifier: Arc<serbero::notifier::Notifier<Outbox>>,
     second_buyer: Option<Keys>,
     url: String,
     judge: Arc<ScriptedJudge>,
@@ -312,6 +315,7 @@ async fn script_with(picks: &[(&'static str, (&'static str, f64))], options: Opt
         delay: options.judge_delay,
     });
     let outbox = Outbox::default();
+    let mostro = Keys::generate();
     let catalogs = Catalogs::embedded().unwrap();
     let languages = [
         Language {
@@ -330,7 +334,7 @@ async fn script_with(picks: &[(&'static str, (&'static str, f64))], options: Opt
     let mediator = Arc::new(Mediator {
         client: client.clone(),
         keys: serbero.clone(),
-        mostro: Keys::generate().public_key(),
+        mostro: mostro.public_key(),
         store: Arc::clone(&store),
         gate: Arc::default(),
         chats: Arc::clone(&chats),
@@ -353,6 +357,7 @@ async fn script_with(picks: &[(&'static str, (&'static str, f64))], options: Opt
         },
         own_takes: Arc::default(),
         judge: Default::default(),
+        finishing: Default::default(),
     });
     if !options.not_ready {
         mediator.set_ready(ReadyJudge {
@@ -417,6 +422,26 @@ async fn script_with(picks: &[(&'static str, (&'static str, f64))], options: Opt
         .unwrap();
     }
 
+    let notifier = Arc::new(serbero::notifier::Notifier::new(
+        Arc::clone(&store),
+        outbox.clone(),
+        vec![],
+        mostro.public_key(),
+    ));
+    let closing = Arc::clone(&mediator);
+    notifier.on_resolved(Box::new(move |dispute_id, status, by_parties| {
+        let (mediator, dispute_id, status) = (
+            Arc::clone(&closing),
+            dispute_id.to_owned(),
+            status.to_owned(),
+        );
+        tokio::spawn(async move {
+            mediator
+                .finish(&dispute_id, &status, by_parties, 10_000)
+                .await
+                .unwrap();
+        });
+    }));
     let notifications = client.notifications();
     let session = sessions::get(store.lock().unwrap().conn(), "s1")
         .unwrap()
@@ -440,6 +465,8 @@ async fn script_with(picks: &[(&'static str, (&'static str, f64))], options: Opt
         serbero,
         buyer,
         seller,
+        mostro,
+        notifier,
         second_buyer,
         url,
         judge,
@@ -462,6 +489,10 @@ struct PartySide {
 
 async fn buyer_side(script: &Script) -> PartySide {
     party_side(script, &script.buyer).await
+}
+
+async fn seller_side(script: &Script) -> PartySide {
+    party_side(script, &script.seller).await
 }
 
 async fn party_side(script: &Script, party: &Keys) -> PartySide {
@@ -706,6 +737,308 @@ async fn a_request_for_a_person_hands_off_and_later_messages_are_forwarded() {
     );
 }
 
+fn dispute_event(mostro: &Keys, status: &str) -> Event {
+    let tags = [
+        vec!["d", "d1"],
+        vec!["s", status],
+        vec!["initiator", "buyer"],
+        vec!["y", "mostro"],
+        vec!["z", "dispute"],
+    ]
+    .into_iter()
+    .map(|t| Tag::parse(t).unwrap());
+    EventBuilder::new(Kind::Custom(38386), "")
+        .tags(tags)
+        .custom_created_at(Timestamp::from_secs(9_000))
+        .finalize(mostro)
+        .unwrap()
+}
+
+async fn wait_for_text(outbox: &Outbox, prefix: &str) -> String {
+    tokio::time::timeout(WAIT, async {
+        loop {
+            if let Some(text) = outbox.texts().into_iter().find(|t| t.starts_with(prefix)) {
+                return text;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("no solver DM starting {prefix:?}"))
+}
+
+#[tokio::test]
+async fn payment_arrived_is_guided_and_closed_when_the_seller_releases() {
+    let script = script(&[("seller_receipt", ("says_received", 0.97))]).await;
+    let mut buyer = buyer_side(&script).await;
+    let mut seller = seller_side(&script).await;
+
+    seller.say("sí, me llegó el pago").await;
+
+    assert_eq!(
+        seller.next_from_serbero().await,
+        en("guide_arrived_seller"),
+        "the seller, who releases, first"
+    );
+    assert_eq!(buyer.next_from_serbero().await, en("guide_arrived_buyer"));
+    let brief = wait_for_text(
+        &script.outbox,
+        "Dispute d1 · guidance sent: payment_arrived\n",
+    )
+    .await;
+    assert!(brief.contains("Seller — says received (0.97)"), "{brief}");
+    assert_eq!(
+        sessions::get(script.store.lock().unwrap().conn(), "s1")
+            .unwrap()
+            .unwrap()
+            .state,
+        SessionState::Guiding
+    );
+
+    script
+        .notifier
+        .handle_event(&dispute_event(&script.mostro, "released"), 9_001)
+        .await
+        .unwrap();
+
+    assert_eq!(seller.next_from_serbero().await, en("resolved_thanks"));
+    assert_eq!(buyer.next_from_serbero().await, en("resolved_thanks"));
+    let report = wait_for_text(&script.outbox, "Dispute d1 resolved: released\n").await;
+    assert!(report.contains("outcome: self_resolved"), "{report}");
+    assert_eq!(
+        sessions::get(script.store.lock().unwrap().conn(), "s1")
+            .unwrap()
+            .unwrap()
+            .state,
+        SessionState::Closed
+    );
+}
+
+#[tokio::test]
+async fn payment_not_sent_is_guided_and_closed_by_a_cooperative_cancel() {
+    let script = script(&[("buyer_payment", ("says_not_sent", 0.97))]).await;
+    let mut buyer = buyer_side(&script).await;
+    let mut seller = seller_side(&script).await;
+
+    buyer.say("no pagué, me confundí de orden").await;
+
+    assert_eq!(buyer.next_from_serbero().await, en("guide_not_sent_buyer"));
+    assert_eq!(
+        seller.next_from_serbero().await,
+        en("guide_not_sent_seller")
+    );
+
+    script
+        .notifier
+        .handle_event(
+            &dispute_event(&script.mostro, "cooperatively-canceled"),
+            9_001,
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(buyer.next_from_serbero().await, en("resolved_thanks"));
+    let report = wait_for_text(
+        &script.outbox,
+        "Dispute d1 resolved: cooperatively-canceled\n",
+    )
+    .await;
+    assert!(report.contains("outcome: self_resolved"), "{report}");
+}
+
+#[tokio::test]
+async fn a_buyers_claim_alone_never_guides() {
+    let script = script(&[
+        ("buyer_payment", ("says_sent", 0.99)),
+        ("buyer_details", ("yes", 0.99)),
+    ])
+    .await;
+    let mut buyer = buyer_side(&script).await;
+
+    buyer
+        .say("ya pagué a las 14:10 por mercado pago, ref 8841")
+        .await;
+
+    assert_eq!(buyer.next_from_serbero().await, en("thanks_waiting"));
+    let store = script.store.lock().unwrap();
+    assert_eq!(
+        sessions::get(store.conn(), "s1").unwrap().unwrap().state,
+        SessionState::Active
+    );
+    let sent = messages::list_for_session(store.conn(), "s1").unwrap();
+    assert!(
+        !sent.iter().any(|m| m
+            .template_id
+            .as_deref()
+            .is_some_and(|t| t.starts_with("guide_"))),
+        "no guidance from the buyer's word alone"
+    );
+}
+
+#[tokio::test]
+async fn a_handed_off_dispute_resolved_later_gets_no_thanks() {
+    let script = script(&[("buyer_wants_human", ("yes", 0.95))]).await;
+    let mut buyer = buyer_side(&script).await;
+    buyer.say("quiero hablar con una persona").await;
+    assert_eq!(buyer.next_from_serbero().await, en("handoff_notice"));
+
+    script
+        .notifier
+        .handle_event(&dispute_event(&script.mostro, "released"), 9_001)
+        .await
+        .unwrap();
+
+    let report = wait_for_text(&script.outbox, "Dispute d1 resolved: released\n").await;
+    assert!(
+        report.contains("outcome: handed_off (human_requested)"),
+        "{report}"
+    );
+    let thanks = messages::list_for_session(script.store.lock().unwrap().conn(), "s1")
+        .unwrap()
+        .into_iter()
+        .filter(|m| m.template_id.as_deref() == Some("resolved_thanks"))
+        .count();
+    assert_eq!(thanks, 0, "the parties already know a person took over");
+}
+
+fn sent_count(script: &Script, template: &str) -> usize {
+    messages::list_for_session(script.store.lock().unwrap().conn(), "s1")
+        .unwrap()
+        .into_iter()
+        .filter(|m| m.template_id.as_deref() == Some(template))
+        .count()
+}
+
+#[tokio::test]
+async fn a_closing_whose_report_failed_is_completed_later_without_thanking_twice() {
+    let script = script(&[("seller_receipt", ("says_received", 0.97))]).await;
+    let mut buyer = buyer_side(&script).await;
+    let mut seller = seller_side(&script).await;
+    seller.say("sí, me llegó el pago").await;
+    seller.next_from_serbero().await;
+    buyer.next_from_serbero().await;
+    script.outbox.fail(true);
+
+    script
+        .notifier
+        .handle_event(&dispute_event(&script.mostro, "released"), 9_001)
+        .await
+        .unwrap();
+    assert_eq!(seller.next_from_serbero().await, en("resolved_thanks"));
+    assert_eq!(buyer.next_from_serbero().await, en("resolved_thanks"));
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    assert!(!event_kinds(&script).contains(&"finished".to_owned()));
+    script.outbox.fail(false);
+    assert_eq!(script.mediator.finish_pending(0, 9_100).await, 1);
+
+    let report = wait_for_text(&script.outbox, "Dispute d1 resolved: released\n").await;
+    assert!(report.contains("outcome: self_resolved"), "{report}");
+    assert_eq!(sent_count(&script, "resolved_thanks"), 2, "one per party");
+    assert_eq!(seller.next_within(QUIET).await, None, "not thanked twice");
+    assert!(event_kinds(&script).contains(&"finished".to_owned()));
+    assert_eq!(script.mediator.finish_pending(0, 9_200).await, 0);
+    let reports = script
+        .outbox
+        .texts()
+        .iter()
+        .filter(|t| t.starts_with("Dispute d1 resolved:"))
+        .count();
+    assert_eq!(reports, 1);
+    assert_eq!(
+        script
+            .mediator
+            .finish("d1", "released", true, 9_300)
+            .await
+            .unwrap(),
+        None,
+        "a finished closing is not repeated"
+    );
+    assert_eq!(seller.next_within(QUIET).await, None);
+}
+
+#[tokio::test]
+async fn guidance_with_no_solver_configured_records_the_brief_as_pending() {
+    let script = script_with(
+        &[("seller_receipt", ("says_received", 0.97))],
+        Options {
+            no_solvers: true,
+            ..Options::default()
+        },
+    )
+    .await;
+    let mut seller = seller_side(&script).await;
+
+    seller.say("sí, me llegó el pago").await;
+
+    assert_eq!(seller.next_from_serbero().await, en("guide_arrived_seller"));
+    let pending = events::list_for_dispute(script.store.lock().unwrap().conn(), "d1")
+        .unwrap()
+        .into_iter()
+        .find(|e| e.kind == "brief_pending")
+        .expect("a pending brief");
+    assert_eq!(pending.payload["path"], "payment_arrived");
+}
+
+#[tokio::test]
+async fn a_closing_with_no_solver_configured_stays_unfinished() {
+    let script = script_with(
+        &[("seller_receipt", ("says_received", 0.97))],
+        Options {
+            no_solvers: true,
+            ..Options::default()
+        },
+    )
+    .await;
+    let mut seller = seller_side(&script).await;
+    seller.say("sí, me llegó el pago").await;
+    seller.next_from_serbero().await;
+
+    script
+        .notifier
+        .handle_event(&dispute_event(&script.mostro, "released"), 9_001)
+        .await
+        .unwrap();
+    assert_eq!(seller.next_from_serbero().await, en("resolved_thanks"));
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    assert!(
+        !event_kinds(&script).contains(&"finished".to_owned()),
+        "the final report still has to reach a solver"
+    );
+    assert_eq!(script.mediator.finish_pending(0, 9_100).await, 1);
+}
+
+#[tokio::test]
+async fn guidance_a_party_missed_is_sent_again() {
+    let script = script(&[("seller_receipt", ("says_received", 0.97))]).await;
+    let mut buyer = buyer_side(&script).await;
+    let mut seller = seller_side(&script).await;
+    seller.say("sí, me llegó el pago").await;
+    seller.next_from_serbero().await;
+    buyer.next_from_serbero().await;
+    // As if the buyer's guidance had not reached any relay.
+    script
+        .store
+        .lock()
+        .unwrap()
+        .conn()
+        .execute(
+            "DELETE FROM messages WHERE template_id = 'guide_arrived_buyer'",
+            [],
+        )
+        .unwrap();
+    let session = sessions::get(script.store.lock().unwrap().conn(), "s1")
+        .unwrap()
+        .unwrap();
+
+    let missing = script.mediator.resend_guides(&session).await.unwrap();
+
+    assert_eq!(missing, 0);
+    assert_eq!(buyer.next_from_serbero().await, en("guide_arrived_buyer"));
+    assert_eq!(seller.next_within(QUIET).await, None, "not resent");
+}
+
 /// Briefs recorded as pending and not yet delivered.
 fn open_briefs(script: &Script) -> usize {
     let history = events::list_for_dispute(script.store.lock().unwrap().conn(), "d1").unwrap();
@@ -791,19 +1124,6 @@ async fn an_update_no_solver_received_is_sent_with_the_next_one() {
         "{update}"
     );
     assert!(update.contains("buyer: hola?"), "{update}");
-}
-
-async fn wait_for_text(outbox: &Outbox, prefix: &str) -> String {
-    tokio::time::timeout(WAIT, async {
-        loop {
-            if let Some(text) = outbox.texts().into_iter().find(|t| t.starts_with(prefix)) {
-                return text;
-            }
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-    })
-    .await
-    .unwrap_or_else(|_| panic!("no solver DM starting {prefix:?}"))
 }
 
 #[tokio::test]

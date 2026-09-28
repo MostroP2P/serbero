@@ -7,6 +7,7 @@
 //! parties, and a human solver can take it over at any time.
 
 pub mod eligibility;
+pub mod guide;
 pub mod handoff;
 pub mod history;
 pub mod settle;
@@ -109,6 +110,8 @@ pub struct Mediator<S> {
     /// Set once the judge passed its startup checks; no dispute is taken
     /// and no turn is judged before.
     pub judge: RwLock<Option<Arc<ReadyJudge>>>,
+    /// Held while a resolved dispute's closing runs (`guide::finish`).
+    pub finishing: tokio::sync::Mutex<()>,
 }
 
 /// How an attempt to mediate a dispute ended.

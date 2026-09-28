@@ -165,6 +165,12 @@ impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
                 self.forward_updates(&session, now).await?,
             ));
         }
+        if session.state == SessionState::Guiding {
+            // Guidance that did not reach a party goes out now.
+            if let Err(e) = self.resend_guides(&session).await {
+                tracing::warn!(session_id, error = %e, "cannot resend guidance");
+            }
+        }
         let Some(ready) = self.ready_judge() else {
             return Ok(TurnOutcome::Deferred("judge not ready"));
         };
@@ -249,8 +255,16 @@ impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
                 };
                 self.hand_off(&session, *reason, Some(reading), now).await?;
             }
-            // Guidance is carried out in T5.4; until then it is recorded.
-            Action::Guide(_) | Action::Wait => {}
+            Action::Guide(path) => {
+                let reading = TurnReading {
+                    state: &built.value,
+                    answers: &judged.answers,
+                    facts: &facts,
+                    last_message_id: messages.iter().map(|m| m.id).max().unwrap_or(0),
+                };
+                self.guide(&session, *path, reading, now).await?;
+            }
+            Action::Wait => {}
         }
         Ok(TurnOutcome::Decided(action))
     }

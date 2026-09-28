@@ -189,6 +189,20 @@ pub fn increment_rounds(conn: &Connection, session_id: &str, now: i64) -> Result
     Ok(())
 }
 
+/// The dispute's most recent session, live or ended.
+pub fn latest_for_dispute(conn: &Connection, dispute_id: &str) -> Result<Option<Session>> {
+    conn.query_row(
+        &format!(
+            "SELECT {COLUMNS} FROM sessions WHERE dispute_id = ?1
+             ORDER BY opened_at DESC, rowid DESC LIMIT 1"
+        ),
+        [dispute_id],
+        from_row,
+    )
+    .optional()?
+    .transpose()
+}
+
 /// Whether the dispute ever had a session, live or ended. Mediation opens
 /// at most once per dispute (`docs/spec.md` §7.1).
 pub fn exists_for_dispute(conn: &Connection, dispute_id: &str) -> Result<bool> {
@@ -224,6 +238,17 @@ pub fn set_state(
         "UPDATE sessions SET state = ?2, updated_at = ?3
          WHERE session_id = ?1 AND state NOT IN ('closed', 'superseded')",
         params![session_id, state.to_string(), now],
+    )?;
+    Ok(updated == 1)
+}
+
+/// Moves an active session to `guiding`. Returns false when it is no longer
+/// active, so guidance is sent once and never after the session moved on.
+pub fn start_guiding(conn: &Connection, session_id: &str, now: i64) -> Result<bool> {
+    let updated = conn.execute(
+        "UPDATE sessions SET state = 'guiding', updated_at = ?2
+         WHERE session_id = ?1 AND state = 'active'",
+        params![session_id, now],
     )?;
     Ok(updated == 1)
 }
@@ -400,6 +425,18 @@ mod tests {
     }
 
     #[test]
+    fn the_latest_session_is_found_even_after_it_ended() {
+        let store = store_with_session();
+        set_state(store.conn(), "s1", SessionState::Closed, 300).unwrap();
+
+        let latest = latest_for_dispute(store.conn(), "d1").unwrap().unwrap();
+
+        assert_eq!(latest.session_id, "s1");
+        assert_eq!(latest.state, SessionState::Closed);
+        assert!(latest_for_dispute(store.conn(), "d2").unwrap().is_none());
+    }
+
+    #[test]
     fn any_session_counts_for_a_dispute_even_after_it_ended() {
         let store = store_with_session();
 
@@ -433,6 +470,20 @@ mod tests {
             session.handoff_reason.as_deref(),
             Some("uncertain"),
             "the first claim stands"
+        );
+    }
+
+    #[test]
+    fn only_an_active_session_starts_guiding() {
+        let store = store_with_session();
+        assert!(!start_guiding(store.conn(), "s1", 200).unwrap(), "opening");
+        set_state(store.conn(), "s1", SessionState::Active, 250).unwrap();
+
+        assert!(start_guiding(store.conn(), "s1", 300).unwrap());
+        assert!(!start_guiding(store.conn(), "s1", 400).unwrap(), "once");
+        assert_eq!(
+            get(store.conn(), "s1").unwrap().unwrap().state,
+            SessionState::Guiding
         );
     }
 

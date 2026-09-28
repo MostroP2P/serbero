@@ -137,6 +137,7 @@ fn start_mediation(
         solvers: solvers.to_vec(),
         own_takes: notifier.own_takes(),
         judge: Default::default(),
+        finishing: Default::default(),
     });
     // Party messages reach the turn task through the chat channels.
     let (forward, received) = tokio::sync::mpsc::unbounded_channel();
@@ -144,6 +145,33 @@ fn start_mediation(
     background.push(tokio::spawn(
         Arc::clone(&mediator).run_turns(received, config.mediation.quiet_period),
     ));
+    let closing = Arc::clone(&mediator);
+    notifier.on_resolved(Box::new(move |dispute_id, status, by_parties| {
+        let mediator = Arc::clone(&closing);
+        let (dispute_id, status) = (dispute_id.to_owned(), status.to_owned());
+        tokio::spawn(async move {
+            if let Err(e) = mediator
+                .finish(&dispute_id, &status, by_parties, now())
+                .await
+            {
+                tracing::error!(dispute_id, error = %e, "cannot close the mediation");
+            }
+        });
+    }));
+    // Closings the last run did not complete, and resolutions the first
+    // backlog sync applied before the hook above was installed.
+    let pending = Arc::clone(&mediator);
+    let mut synced = background.synced();
+    background.push(tokio::spawn(async move {
+        let _ = synced.wait_for(|done| *done).await;
+        let now = now();
+        let finished = pending
+            .finish_pending(now - crate::mediation::guide::FINISH_LOOKBACK_SECS, now)
+            .await;
+        if finished > 0 {
+            tracing::info!(finished, "completed closings of resolved disputes");
+        }
+    }));
     let hook = Arc::clone(&mediator);
     notifier.on_new_dispute(Box::new(move |dispute_id| {
         let mediator = Arc::clone(&hook);
@@ -228,6 +256,11 @@ impl Background {
     /// Adds a task that stops with the others.
     pub fn push(&mut self, task: JoinHandle<()>) {
         self.tasks.push(task);
+    }
+
+    /// Watches whether the first backlog sync has been applied.
+    pub fn synced(&self) -> watch::Receiver<bool> {
+        self.synced.clone()
     }
 
     /// Waits until the first backlog sync has been applied.

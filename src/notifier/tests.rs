@@ -394,6 +394,31 @@ async fn the_new_dispute_hook_runs_once_per_new_dispute() {
 }
 
 #[tokio::test]
+async fn the_resolution_hook_gets_the_final_status_once() {
+    let mostro = Keys::generate();
+    let n = notifier(&mostro);
+    let seen = Arc::new(Mutex::new(Vec::<(String, String, bool)>::new()));
+    let log = Arc::clone(&seen);
+    n.on_resolved(Box::new(move |id, status, by_parties| {
+        log.lock()
+            .unwrap()
+            .push((id.to_owned(), status.to_owned(), by_parties))
+    }));
+    n.handle_event(&dispute_event(&mostro, "d1", "initiated", 100), 1_000)
+        .await
+        .unwrap();
+    let released = dispute_event(&mostro, "d1", "released", 200);
+
+    n.handle_event(&released, 1_100).await.unwrap();
+    n.handle_event(&released, 1_101).await.unwrap();
+
+    assert_eq!(
+        *seen.lock().unwrap(),
+        [("d1".to_owned(), "released".to_owned(), true)]
+    );
+}
+
+#[tokio::test]
 async fn dispute_resolved_before_being_taken_is_resolved() {
     let mostro = Keys::generate();
     let n = notifier(&mostro);
