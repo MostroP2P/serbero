@@ -78,7 +78,11 @@ fn minimal_config_uses_spec_defaults() {
 
     let config = &settings.config;
     assert_eq!(config.serbero.db_path, PathBuf::from("serbero.db"));
-    assert_eq!(config.mediation.languages, ["en", "es", "pt"]);
+    assert_eq!(
+        config.mediation.languages,
+        serbero_catalog_codes(),
+        "defaults to every language with a catalog file"
+    );
     assert_eq!(config.mediation.default_language, "en");
     assert_eq!(config.judge.judge_key(), "typesafe/jev-1.13.0");
     assert!(config.solvers.is_empty());
@@ -308,4 +312,11 @@ fn pubkey_off_the_curve_is_rejected() {
     let err = error_of(&text, base_env());
 
     assert!(err.contains("mostro.pubkey"), "{err}");
+}
+
+fn serbero_catalog_codes() -> Vec<String> {
+    crate::catalog::embedded_codes()
+        .into_iter()
+        .map(str::to_owned)
+        .collect()
 }
