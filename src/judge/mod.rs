@@ -12,6 +12,7 @@ use futures_util::future::BoxFuture;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+pub mod facts;
 pub mod providers;
 pub mod questions;
 pub mod state;

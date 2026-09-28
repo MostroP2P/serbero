@@ -255,6 +255,18 @@ fn threshold_out_of_range_is_rejected() {
 }
 
 #[test]
+fn choice_thresholds_at_or_below_one_half_are_rejected() {
+    let text = minimal(
+        "[judge.thresholds.\"typesafe/jev-1.13.0\"]\n\
+         guide = 0.9\nfact = 0.5\nhuman_request = 0.8\nfraud = 0.4\nconflict = 0.75\noutside_scope = 0.8\n",
+    );
+
+    let err = error_of(&text, base_env());
+
+    assert!(err.contains("fact = 0.5 must be above 0.5"), "{err}");
+}
+
+#[test]
 fn thresholds_for_another_model_are_not_active() {
     let text = minimal(
         "[judge.thresholds.\"typesafe/jev-0.9\"]\n\

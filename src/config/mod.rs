@@ -318,6 +318,15 @@ impl Config {
                     ));
                 }
             }
+            // `fact` and `guide` pick one option of a choice; above one half,
+            // two options of the same question can never both be known.
+            for (name, value) in [("guide", thresholds.guide), ("fact", thresholds.fact)] {
+                if value <= 0.5 {
+                    return invalid(format!(
+                        "judge.thresholds.\"{key}\".{name} = {value} must be above 0.5"
+                    ));
+                }
+            }
         }
         Ok(())
     }
