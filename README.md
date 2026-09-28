@@ -36,6 +36,9 @@ SHA-256 checksum:
 ```sh
 shasum -a 256 -c serbero-v1.0.0-x86_64-unknown-linux-gnu.tar.gz.sha256
 tar -xzf serbero-v1.0.0-x86_64-unknown-linux-gnu.tar.gz
+cd serbero-v1.0.0-x86_64-unknown-linux-gnu
+# the binary is ./serbero, next to config.sample.toml; run it as ./serbero
+# wherever the steps below say ./target/release/serbero
 ```
 
 To build from source, Serbero needs the latest stable Rust toolchain.
