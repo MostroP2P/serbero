@@ -22,6 +22,10 @@ pub const MIGRATIONS: &[Migration] = &[
         name: "sessions_and_messages",
         sql: include_str!("sql/0002_sessions_and_messages.sql"),
     },
+    Migration {
+        name: "evaluations",
+        sql: include_str!("sql/0003_evaluations.sql"),
+    },
 ];
 
 /// Brings `conn` up to the latest version in `migrations`. Each migration
