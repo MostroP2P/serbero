@@ -94,7 +94,8 @@ with an empty `latest` list are omitted.
     "type": "choice",
     "instructions": "Across the whole `transcript`, what has the seller said about receiving the fiat payment for this order?",
     "criteria": {
-      "says_received": "The seller states the fiat payment arrived.",
+      "says_received": "The seller states the full fiat payment arrived in their account and raises no problem with it.",
+      "says_received_with_problem": "The seller states a payment arrived but objects to it, for example a different amount, a sender other than the buyer, or a payment later reversed or charged back.",
       "says_not_received": "The seller states the fiat payment has not arrived.",
       "not_stated": "The seller has not said either way, or their messages are too vague to tell."
     }
@@ -222,13 +223,13 @@ the probability of the specific option it cares about, not just the winner.
 | `seller_received` | `P(says_received) ≥ fact` | — |
 | `seller_received_for_guide` | `P(says_received) ≥ guide` | — |
 | `seller_not_received` | `P(says_not_received) ≥ fact` | — |
-| `seller_receipt_unknown` | neither of the above | ask the seller |
+| `seller_receipt_unknown` | neither of the above, and not `outside_scope` | ask the seller |
 | `seller_has_checked` | `noul ≥ fact` | ask to check if `seller_not_received` |
 | `conflict` | `noul ≥ conflict` | — |
 | `fraud` | `noul ≥ fraud` | — |
 | `wants_human(p)` | `noul ≥ human_request` | — |
 | `rejects_path(p)` | `noul ≥ conflict` (only while `guiding`) | — |
-| `outside_scope` | `P(topic ∈ {wrong_amount, wrong_account_or_method, technical_problem, other}) ≥ outside_scope` | — |
+| `outside_scope` | `P(topic ∈ {wrong_amount, wrong_account_or_method, technical_problem, other}) ≥ outside_scope`, or `P(says_received_with_problem) ≥ outside_scope` | — |
 | `language(p)` | winner ∈ `languages` and `P ≥ 0.7` | keep the current language |
 | `message_kind(p)` | winner, if Serbero's computed `confidence ≥ 0.5` | treat as `answers` |
 

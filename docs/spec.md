@@ -527,7 +527,7 @@ opening ─▶ active ─┬─▶ guiding ─┬─▶ closed          (parties
 | `conflicting_claims` | The parties' accounts contradict each other with both sides answered. |
 | `fraud_signal` | Fraud signal above threshold. |
 | `human_requested` | A party explicitly asks for a person. Honored at any point. |
-| `outside_scope` | The dispute is not about payment confirmation. |
+| `outside_scope` | The dispute is not about payment confirmation, or the seller objects to a payment that arrived (wrong amount, another sender, reversed). |
 | `unresponsive` | A party did not answer the question and the reminder within `response_timeout`. |
 | `round_limit` | `max_rounds` question rounds sent without reaching a decision. |
 | `uncertain` | The same fact stayed below threshold after its follow-up question. |
