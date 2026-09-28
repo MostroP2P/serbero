@@ -9,15 +9,24 @@ fn main() {
     println!("cargo:rerun-if-changed=messages");
     let manifest = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".into());
     let dir = Path::new(&manifest).join("messages");
-    let mut codes: Vec<String> = std::fs::read_dir(&dir)
-        .map(|entries| {
-            entries
-                .filter_map(|entry| entry.ok().map(|e| e.path()))
-                .filter(|path| path.extension().is_some_and(|ext| ext == "toml"))
-                .filter_map(|path| Some(path.file_stem()?.to_str()?.to_owned()))
-                .collect()
+    // A build without catalogs would compile a Serbero that cannot talk to
+    // anyone; fail here instead.
+    let entries =
+        std::fs::read_dir(&dir).unwrap_or_else(|e| panic!("cannot read {}: {e}", dir.display()));
+    let mut codes: Vec<String> = entries
+        .map(|entry| {
+            entry
+                .unwrap_or_else(|e| panic!("cannot read {}: {e}", dir.display()))
+                .path()
         })
-        .unwrap_or_default();
+        .filter(|path| path.extension().is_some_and(|ext| ext == "toml"))
+        .filter_map(|path| Some(path.file_stem()?.to_str()?.to_owned()))
+        .collect();
+    assert!(
+        !codes.is_empty(),
+        "no message catalog (messages/<code>.toml) in {}",
+        dir.display()
+    );
     codes.sort();
 
     let mut out = String::from("/// `(code, file contents)` for every embedded catalog.\n");
