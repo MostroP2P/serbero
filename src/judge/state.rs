@@ -2,13 +2,14 @@
 //! session and its messages.
 //!
 //! It never contains pubkeys, event ids, or anything a party did not write,
-//! apart from the order facts. Identifiers Serbero knows (the parties' trade
-//! pubkeys and the messages' event ids, as hex, `npub` or `note`) are
-//! redacted even from party text, in case a party pastes one. Messages get short ids (`m1`, `m2`, …) in
+//! apart from the order facts. Nostr identifiers are redacted even from
+//! party text, in case a party pastes one: any 64-character hex word (a key
+//! or event id) and any word that parses as NIP-19 (`npub`, `nsec`, `note`,
+//! `nprofile`, `nevent`, `naddr`), from this session or any other. Messages get short ids (`m1`, `m2`, …) in
 //! transcript order; they are the only link between answers and text, and
 //! `State::message_id` maps them back to stored rows.
 
-use nostr_sdk::prelude::{EventId, PublicKey, ToBech32};
+use nostr_sdk::prelude::{FromBech32, Nip19};
 use serde_json::{Map, Value, json};
 
 use crate::store::disputes::Initiator;
@@ -47,7 +48,6 @@ pub fn build(
     messages: &[Message],
     max_chars: usize,
 ) -> State {
-    let known_ids = known_identifiers(session, messages);
     let mut transcript = Vec::with_capacity(messages.len());
     let mut latest_buyer = Vec::new();
     let mut latest_seller = Vec::new();
@@ -64,7 +64,7 @@ pub fn build(
                 entry.insert("from".into(), json!(message.party.to_string()));
             }
         }
-        let text = redact(&message.content, &known_ids);
+        let text = redact(&message.content);
         entry.insert("text".into(), json!(truncate(&text, max_chars)));
         if message.attachments > 0 {
             entry.insert("attachments".into(), json!(message.attachments));
@@ -120,35 +120,41 @@ fn order(session: &Session, opened_by: Initiator) -> Value {
 /// Placeholder for a redacted identifier.
 const REDACTED: &str = "[redacted]";
 
-/// Every form of the identifiers this session knows, lowercase.
-fn known_identifiers(session: &Session, messages: &[Message]) -> Vec<String> {
-    let mut ids = Vec::new();
-    for key in [&session.buyer_trade_pubkey, &session.seller_trade_pubkey] {
-        ids.push(key.to_ascii_lowercase());
-        ids.extend(PublicKey::parse(key).ok().and_then(|k| k.to_bech32().ok()));
-    }
-    for message in messages {
-        ids.push(message.inner_event_id.to_ascii_lowercase());
-        ids.extend(
-            EventId::parse(&message.inner_event_id)
-                .ok()
-                .and_then(|id| id.to_bech32().ok()),
-        );
-    }
-    ids.retain(|id| !id.is_empty());
-    ids
-}
-
-/// Replaces every occurrence of a known identifier, ignoring ASCII case.
-fn redact(text: &str, identifiers: &[String]) -> String {
-    let mut text = text.to_owned();
-    for id in identifiers {
-        // Identifiers are ASCII, so lowercasing keeps byte offsets.
-        while let Some(start) = text.to_ascii_lowercase().find(id.as_str()) {
-            text.replace_range(start..start + id.len(), REDACTED);
+/// Replaces every word that is a Nostr identifier. A word is a maximal run
+/// of ASCII letters and digits, so `nostr:npub1…` and `(note1…)` are found.
+fn redact(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut word_start = None;
+    for (i, c) in text
+        .char_indices()
+        .chain(std::iter::once((text.len(), ' ')))
+    {
+        if c.is_ascii_alphanumeric() && i < text.len() {
+            word_start.get_or_insert(i);
+            continue;
+        }
+        if let Some(start) = word_start.take() {
+            let word = &text[start..i];
+            out.push_str(if is_nostr_identifier(word) {
+                REDACTED
+            } else {
+                word
+            });
+        }
+        if i < text.len() {
+            out.push(c);
         }
     }
-    text
+    out
+}
+
+fn is_nostr_identifier(word: &str) -> bool {
+    if word.len() == 64 && word.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return true;
+    }
+    // Bech32 may be all uppercase; NIP-19 parses the lowercase form.
+    let lower = word.to_ascii_lowercase();
+    lower.starts_with('n') && Nip19::from_bech32(&lower).is_ok()
 }
 
 fn truncate(text: &str, max: usize) -> &str {

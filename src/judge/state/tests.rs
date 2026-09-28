@@ -1,5 +1,6 @@
 #![allow(clippy::unwrap_used)] // test helpers
 
+use nostr_sdk::prelude::{EventId, Keys, Nip19Event, Nip19Profile, PublicKey, ToBech32};
 use serde_json::json;
 
 use super::*;
@@ -180,13 +181,21 @@ fn no_pubkey_or_event_id_can_appear_in_the_state() {
 
 #[test]
 fn identifiers_pasted_by_a_party_are_redacted() {
+    let other = Keys::generate();
     let event_id = format!("{:064x}", 11);
     let npub = PublicKey::parse(SELLER_KEY).unwrap().to_bech32().unwrap();
     let note = EventId::parse(&event_id).unwrap().to_bech32().unwrap();
+    let nsec = other.secret_key().to_bech32().unwrap();
+    let nprofile = Nip19Profile::new(other.public_key(), [])
+        .to_bech32()
+        .unwrap();
+    let nevent = Nip19Event::new(EventId::parse(&event_id).unwrap())
+        .to_bech32()
+        .unwrap();
     let pasted = format!(
-        "my key {} or {npub}, see {} and {note}",
+        "key {} or nostr:{npub}, see {event_id} ({note}); {nsec} {nprofile}, {}",
         BUYER_KEY.to_uppercase(),
-        event_id
+        nevent.to_uppercase()
     );
     let mut messages = conversation();
     messages.push(message(15, Direction::In, Party::Buyer, &pasted));
@@ -195,6 +204,18 @@ fn identifiers_pasted_by_a_party_are_redacted() {
 
     assert_eq!(
         state.value["transcript"][4]["text"],
-        json!("my key [redacted] or [redacted], see [redacted] and [redacted]")
+        json!(
+            "key [redacted] or nostr:[redacted], see [redacted] ([redacted]); [redacted] [redacted], [redacted]"
+        )
     );
+}
+
+#[test]
+fn ordinary_text_is_kept() {
+    let text = "Pagué 50.000 ARS por Mercado Pago, ref 12345678, nombre Nicolás";
+    let messages = [message(1, Direction::In, Party::Buyer, text)];
+
+    let state = build(&session(), Initiator::Buyer, &messages, 2_000);
+
+    assert_eq!(state.value["transcript"][0]["text"], json!(text));
 }
