@@ -1,7 +1,7 @@
 //! The append-only `events` table: the audit trail of everything Serbero
 //! observed or did (`docs/spec.md` §8).
 
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::Value;
 
 use crate::error::{Error, Result};
@@ -44,6 +44,32 @@ pub fn append(conn: &Connection, event: &NewEvent<'_>) -> Result<i64> {
         ],
     )?;
     Ok(conn.last_insert_rowid())
+}
+
+/// The newest `notification_sent` event of one kind to one solver (hex
+/// pubkey), across disputes: what a solver's reply most likely answers.
+pub fn last_notification_to(
+    conn: &Connection,
+    solver: &str,
+    notification: &str,
+) -> Result<Option<Event>> {
+    let id: Option<(i64, String)> = conn
+        .query_row(
+            "SELECT id, dispute_id FROM events
+             WHERE kind = 'notification_sent'
+               AND json_extract(payload_json, '$.solver') = ?1
+               AND json_extract(payload_json, '$.notification') = ?2
+             ORDER BY id DESC LIMIT 1",
+            [solver, notification],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?;
+    let Some((id, dispute_id)) = id else {
+        return Ok(None);
+    };
+    Ok(list_for_dispute(conn, &dispute_id)?
+        .into_iter()
+        .find(|event| event.id == id))
 }
 
 /// Events for one dispute, oldest first.
@@ -93,6 +119,39 @@ mod tests {
             payload: json!({ "solver": "abc", "ok": true }),
             now,
         }
+    }
+
+    #[test]
+    fn the_last_notification_of_a_kind_to_a_solver_is_found() {
+        let store = Store::open_in_memory().unwrap();
+        let sent = |dispute: &str, notification: &str, solver: &str, at: i64| {
+            append(
+                store.conn(),
+                &NewEvent {
+                    dispute_id: dispute,
+                    session_id: None,
+                    kind: "notification_sent",
+                    payload: json!({ "notification": notification, "solver": solver }),
+                    now: at,
+                },
+            )
+            .unwrap();
+        };
+        sent("d1", "brief", "aa", 10);
+        sent("d2", "brief", "aa", 20);
+        sent("d3", "update", "aa", 30);
+        sent("d4", "brief", "bb", 40);
+
+        let last = last_notification_to(store.conn(), "aa", "brief")
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(last.dispute_id, "d2");
+        assert!(
+            last_notification_to(store.conn(), "cc", "brief")
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]

@@ -175,9 +175,12 @@ subset and is not part of the default CI run.
 - **Every evaluation is stored** with the question-set version, answers,
   action, tokens, and latency. Any turn can be replayed against a new version
   with the eval binary.
-- **Solver feedback.** A solver may reply to a brief with `wrong <fact>` (for
-  example `wrong seller_receipt`). Serbero records it as an event and the turn
-  becomes a candidate golden case.
+- **Solver feedback.** A solver may reply to a brief with `wrong <question>`
+  (for example `wrong seller_receipt`), optionally followed by the dispute id.
+  Without one, the reply is about the last brief that solver got. Serbero
+  records a `solver_feedback` event linked to the session's newest turn
+  evaluation that asked the question, and the turn becomes a candidate golden
+  case. Only DMs from configured solvers naming a turn question are read.
 - **Outcome signal.** When a dispute resolves, its final status (for example
   `settled` or `seller-refunded`) is stored next to the last
   `evidence_balance`. Over time this measures how well the advisory reading
