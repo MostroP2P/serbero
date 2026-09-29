@@ -75,6 +75,26 @@ pub fn last_notification_to(
         .find(|event| event.id == id))
 }
 
+/// Disputes with a `pending` event since `since` that no later `done` event
+/// closed, oldest first: work to retry, such as an undelivered notice.
+pub fn still_pending(
+    conn: &Connection,
+    pending: &str,
+    done: &str,
+    since: i64,
+) -> Result<Vec<String>> {
+    let mut stmt = conn.prepare(
+        "SELECT p.dispute_id FROM events p
+         WHERE p.kind = ?1 AND p.created_at >= ?3
+           AND NOT EXISTS (SELECT 1 FROM events d
+                           WHERE d.dispute_id = p.dispute_id AND d.kind = ?2 AND d.id > p.id)
+         GROUP BY p.dispute_id
+         ORDER BY min(p.id)",
+    )?;
+    let rows = stmt.query_map(params![pending, done, since], |row| row.get(0))?;
+    rows.map(|r| r.map_err(Into::into)).collect()
+}
+
 /// A mediated dispute that reached its final status.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Resolution {
@@ -247,6 +267,30 @@ mod tests {
             unfinished_resolutions(store.conn(), 400)
                 .unwrap()
                 .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_pending_event_stays_pending_until_a_later_done_event() {
+        let store = Store::open_in_memory().unwrap();
+        append(store.conn(), &event("d1", "notice_pending", 10)).unwrap();
+        append(store.conn(), &event("d2", "notice_pending", 11)).unwrap();
+        append(store.conn(), &event("d3", "notice_pending", 1)).unwrap();
+
+        assert_eq!(
+            still_pending(store.conn(), "notice_pending", "notice_sent", 5).unwrap(),
+            ["d1", "d2"],
+            "d3 is too old"
+        );
+
+        append(store.conn(), &event("d1", "notice_sent", 12)).unwrap();
+        append(store.conn(), &event("d2", "notice_sent", 12)).unwrap();
+        append(store.conn(), &event("d2", "notice_pending", 13)).unwrap();
+
+        assert_eq!(
+            still_pending(store.conn(), "notice_pending", "notice_sent", 5).unwrap(),
+            ["d2"],
+            "pending again after the last notice"
         );
     }
 

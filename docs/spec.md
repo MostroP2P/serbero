@@ -450,7 +450,9 @@ never delays notification. A take that fails or is refused creates no session
 and changes nothing for the solvers. A take that succeeds but cannot open the
 session (no trade keys, or an opening message that no relay accepts) hands the
 dispute off with `opening_failed`: the solvers are asked to take it over and
-Serbero writes nothing more to the parties. The `in-progress` revision of
+Serbero writes nothing more to the parties, not even the handoff notice. If
+no solver received that request, the timer task sends it again until one
+does or the dispute is resolved. The `in-progress` revision of
 Serbero's own take is announced to solvers as `taken by: Serbero`, even when it
 arrives before the session exists.
 
@@ -771,6 +773,7 @@ Serbero logs an operator-actionable error and runs notification only.
 |---|---|
 | A relay drops | `nostr-sdk` reconnects; other relays keep serving. On reconnect the dispute subscription is re-sent to it and the backlog is re-synced. |
 | A relay is slow or silent | It never delays startup or live disputes; the backlog sync gives up on it after 15 s and the periodic resync picks up what it held back. |
+| A relay rate-limits Serbero | Its sends are rejected. Public relays often limit events per IP, and a Serbero on the same host as `mostrod` shares that limit with it; list several relays so one limit never blocks the chat. |
 | A relay does not store `kind 14` | Offline party messages are lost on that relay. Operators must use relays verified to store them ([§5.1](#51-mostro-protocol)). |
 | Chat flood from a party | Per-conversation rate limit drops excess before decryption; sustained flooding hands off with `flood`. |
 | All relays drop | Retries continue; notifications resume on reconnect. |

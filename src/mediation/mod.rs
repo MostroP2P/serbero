@@ -130,6 +130,11 @@ pub enum NodeSupport {
     Unknown(String),
 }
 
+/// A "mediation could not start" notice no solver received; the timer task
+/// retries it until an `opening_notice_sent` event follows.
+pub(crate) const OPENING_NOTICE_PENDING: &str = "opening_notice_pending";
+pub(crate) const OPENING_NOTICE_SENT: &str = "opening_notice_sent";
+
 /// How an attempt to mediate a dispute ended.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Opening {
@@ -440,7 +445,7 @@ impl<S: DmSender> Mediator<S> {
             )?;
         }
         let text = crate::solver::opening_failed(dispute_id);
-        notify_solvers(
+        let delivered = notify_solvers(
             &self.store,
             &self.sender,
             &self.solvers,
@@ -452,6 +457,20 @@ impl<S: DmSender> Mediator<S> {
         .await?;
         let session_id = session.map(|s| s.session_id.as_str());
         self.record(dispute_id, session_id, "mediation_failed", reason, now)?;
+        if delivered == 0 {
+            // No solver knows Serbero gave up: the timer task retries it.
+            let store = self.lock_store()?;
+            events::append(
+                store.conn(),
+                &events::NewEvent {
+                    dispute_id,
+                    session_id,
+                    kind: OPENING_NOTICE_PENDING,
+                    payload: json!({}),
+                    now,
+                },
+            )?;
+        }
         Ok(Opening::HandedOff(reason.to_owned()))
     }
 

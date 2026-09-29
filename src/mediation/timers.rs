@@ -7,11 +7,12 @@ use std::time::Duration;
 
 use super::guide::FINISH_LOOKBACK_SECS;
 use super::handoff::{BRIEF_PENDING, BRIEF_SENT, HANDOFF_NOTICE, TurnReading};
-use super::{Mediator, ReadyJudge};
+use super::{Mediator, OPENING_NOTICE_PENDING, OPENING_NOTICE_SENT, ReadyJudge};
 use crate::error::Result;
 use crate::judge::facts::{self, Facts};
 use crate::judge::{Answers, state};
 use crate::nostr::dm::DmSender;
+use crate::notifier::notify_solvers;
 use crate::policy::timers::{Clocks, PartyClock, Timer, check};
 use crate::policy::{HandoffReason, Path, Phase, template};
 use crate::solver::Subject;
@@ -145,6 +146,67 @@ impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
             }
         }
         self.finish_pending(now - FINISH_LOOKBACK_SECS, now).await;
+        self.retry_opening_notices(now).await;
+        Ok(())
+    }
+
+    /// Resends "mediation could not start" notices no solver received, for
+    /// disputes not resolved since.
+    async fn retry_opening_notices(&self, now: i64) {
+        let pending = match self.lock_store().and_then(|store| {
+            events::still_pending(
+                store.conn(),
+                OPENING_NOTICE_PENDING,
+                OPENING_NOTICE_SENT,
+                now - FINISH_LOOKBACK_SECS,
+            )
+        }) {
+            Ok(pending) => pending,
+            Err(e) => {
+                tracing::error!(error = %e, "cannot list pending opening notices");
+                return;
+            }
+        };
+        for dispute_id in pending {
+            if let Err(e) = self.retry_opening_notice(&dispute_id, now).await {
+                tracing::warn!(dispute_id, error = %e, "opening notice not sent; retried on the next tick");
+            }
+        }
+    }
+
+    async fn retry_opening_notice(&self, dispute_id: &str, now: i64) -> Result<()> {
+        let resolved = {
+            let store = self.lock_store()?;
+            disputes::get(store.conn(), dispute_id)?
+                .is_some_and(|d| d.lifecycle == disputes::Lifecycle::Resolved)
+        };
+        if resolved {
+            return Ok(());
+        }
+        let text = crate::solver::opening_failed(dispute_id);
+        let delivered = notify_solvers(
+            &self.store,
+            &self.sender,
+            &self.solvers,
+            dispute_id,
+            "handoff",
+            &text,
+            now,
+        )
+        .await?;
+        if delivered > 0 {
+            let store = self.lock_store()?;
+            events::append(
+                store.conn(),
+                &events::NewEvent {
+                    dispute_id,
+                    session_id: None,
+                    kind: OPENING_NOTICE_SENT,
+                    payload: serde_json::json!({}),
+                    now,
+                },
+            )?;
+        }
         Ok(())
     }
 
@@ -196,8 +258,12 @@ impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
                 self.brief_delivered(session, pending, now)?;
             }
         }
+        // An opening that failed never reached the parties: Serbero writes
+        // nothing more to them (`docs/spec.md` §7.2).
+        let opening_failed =
+            session.handoff_reason.as_deref() == Some(HandoffReason::OpeningFailed.as_str());
         match session.state {
-            SessionState::HandedOff => {
+            SessionState::HandedOff if !opening_failed => {
                 for party in [Party::Buyer, Party::Seller] {
                     let told = messages.iter().any(|m| {
                         m.direction == Direction::Out

@@ -32,20 +32,32 @@ use uuid::Uuid;
 
 const WAIT: Duration = Duration::from_secs(10);
 
-/// Solver DMs, kept instead of sent.
+/// Solver DMs, kept instead of sent. While `failing` is set, every send
+/// fails, as when no relay accepts it.
 #[derive(Clone, Default)]
-struct Outbox(Arc<Mutex<Vec<String>>>);
+struct Outbox {
+    sent: Arc<Mutex<Vec<String>>>,
+    failing: Arc<std::sync::atomic::AtomicBool>,
+}
 
 impl DmSender for Outbox {
     async fn send_dm(&self, _to: PublicKey, text: &str) -> SerberoResult<()> {
-        self.0.lock().unwrap().push(text.to_owned());
+        if self.failing.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(serbero::error::Error::Nostr("rate-limited".into()));
+        }
+        self.sent.lock().unwrap().push(text.to_owned());
         Ok(())
     }
 }
 
 impl Outbox {
     fn texts(&self) -> Vec<String> {
-        self.0.lock().unwrap().clone()
+        self.sent.lock().unwrap().clone()
+    }
+
+    fn fail(&self, failing: bool) {
+        self.failing
+            .store(failing, std::sync::atomic::Ordering::SeqCst);
     }
 }
 
@@ -512,6 +524,33 @@ async fn a_take_without_trade_keys_hands_the_dispute_to_the_solvers() {
         [serbero::solver::opening_failed(&dispute_id)]
     );
     assert!(event_kinds(&store, &dispute_id).contains(&"mediation_failed".to_owned()));
+}
+
+#[tokio::test]
+async fn an_opening_failure_no_solver_heard_of_is_retried_by_the_timer() {
+    let relay = MockRelay::run().await.unwrap();
+    let url = relay.url().await.to_string();
+    let node = start_node(&url, Mode::AcceptWithoutKeys).await;
+    let dispute_id = Uuid::new_v4().to_string();
+    let store = store_with_dispute(&dispute_id, Lifecycle::Notified);
+    let h = harness(&url, &node, &store, true, true).await;
+    h.outbox.fail(true);
+
+    let opening = h.mediator.consider(&dispute_id, 1_000).await;
+
+    assert!(matches!(opening, Opening::HandedOff(_)), "{opening:?}");
+    assert!(h.outbox.texts().is_empty());
+    h.outbox.fail(false);
+
+    h.mediator.tick(1_100).await.unwrap();
+    h.mediator.tick(1_200).await.unwrap();
+
+    assert_eq!(
+        h.outbox.texts(),
+        [serbero::solver::opening_failed(&dispute_id)],
+        "sent once, on the first tick after the failure"
+    );
+    assert!(event_kinds(&store, &dispute_id).contains(&"opening_notice_sent".to_owned()));
 }
 
 #[tokio::test]

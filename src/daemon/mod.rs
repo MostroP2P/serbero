@@ -432,7 +432,7 @@ pub async fn event_loop<S: DmSender>(
             notification = notifications.next() => match notification {
                 Some(ClientNotification::Event { event, .. }) => {
                     if let Err(e) = notifier.handle_event(&event, now()).await {
-                        tracing::error!(event_id = %event.id, error = %e, "failed to handle event");
+                        tracing::error!(error = %e, "failed to handle event");
                     }
                 }
                 Some(ClientNotification::Shutdown) | None => return Ok(()),
