@@ -252,8 +252,8 @@ cd serbero
 cargo build --release          # the binary is target/release/serbero
 ```
 
-The commands below write `serbero` for the binary: use `./serbero` from a
-release, or `./target/release/serbero` from a source build.
+The binary is `./serbero` in a release, and `./target/release/serbero` in a
+source build.
 
 ## Configure the notifier
 
@@ -343,10 +343,12 @@ for it: if the judge check fails, Serbero keeps notifying as usual.
 ## Run
 
 ```sh
-serbero                                         # reads ./config.toml
-SERBERO_CONFIG=/etc/serbero/config.toml serbero
-SERBERO_LOG=serbero=debug serbero               # more verbose logs
+./serbero                                         # reads ./config.toml
+SERBERO_CONFIG=/etc/serbero/config.toml ./serbero
+SERBERO_LOG=serbero=debug ./serbero               # more verbose logs
 ```
+
+From a source build, use `./target/release/serbero` instead of `./serbero`.
 
 Stop it with Ctrl-C or SIGTERM (as systemd and Docker do); relay connections
 are closed cleanly.
