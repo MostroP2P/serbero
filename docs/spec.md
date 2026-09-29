@@ -190,7 +190,10 @@ built and parsed with `mostro-core`, honouring the node's proof-of-work tags.
 At startup Serbero checks the node's instance-info event (`kind 38385`) and
 refuses to enable mediation if the node does not advertise
 `protocol_version = 2`; notification keeps working, since it only reads public
-dispute events.
+dispute events. The check runs in the background with the judge's checks. If
+no relay returns the event in time, mediation is not turned off for that;
+the event is read again before each take, which never takes a dispute from a
+node that does not speak v2.
 
 **Dispute events.** `kind 38386`, authored by the Mostro node, addressable by
 `d` = dispute id. Tags: `s` (status), `initiator` (`buyer` | `seller`),

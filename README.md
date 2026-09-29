@@ -290,8 +290,10 @@ That is all the notifier needs. Mediation stays off until you enable it.
 Mediation is opt-in and needs a few things in place first.
 
 1. **A supported Mostro node.** The node must speak Mostro protocol v2: the
-   first `mostrod` release after v0.18.8, or later. Serbero checks this at
-   startup and keeps mediation off on older nodes.
+   first `mostrod` release after v0.18.8, or later. Serbero reads the node's
+   info at startup and keeps mediation off, with a `mediation off` log line,
+   on a node that does not advertise v2. If the relays do not return that
+   info in time, it checks again before taking each dispute.
 2. **Serbero registered as a read solver.** Your Mostro admin adds Serbero's
    npub (from its startup log) as a solver with `read` permission, with the
    `admin-add-solver` action and the payload `<npub>:read`. Keep at least one

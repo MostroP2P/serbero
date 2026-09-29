@@ -21,7 +21,7 @@ use serbero::chat::channels::Chats;
 use serbero::config::Permission;
 use serbero::error::Result as SerberoResult;
 use serbero::mediation::eligibility::Ineligible;
-use serbero::mediation::{MediationSettings, Mediator, Opening, ReadyJudge};
+use serbero::mediation::{MediationSettings, Mediator, NodeSupport, Opening, ReadyJudge};
 use serbero::mostro::chat::ChannelKeys;
 use serbero::nostr::dm::DmSender;
 use serbero::notifier::Solver;
@@ -609,4 +609,55 @@ async fn a_silent_relay_never_delays_notification() {
         Lifecycle::Notified,
         "solvers were told at once"
     );
+}
+
+/// `docs/spec.md` §5.1: the node's protocol is checked at startup.
+#[tokio::test]
+async fn the_node_protocol_is_checked_before_any_dispute() {
+    let relay = MockRelay::run().await.unwrap();
+    let url = relay.url().await.to_string();
+    let publisher = serbero::nostr::connect(std::slice::from_ref(&url), WAIT)
+        .await
+        .unwrap();
+    let store = Arc::new(Mutex::new(Store::open_in_memory().unwrap()));
+    let node_with = |version: Option<&'static str>| {
+        let publisher = publisher.clone();
+        async move {
+            let node = FakeNode {
+                keys: Keys::generate(),
+                buyer: Keys::generate(),
+                seller: Keys::generate(),
+                takes: Arc::default(),
+            };
+            if let Some(version) = version {
+                let me = node.keys.public_key().to_hex();
+                publisher
+                    .send_event(&tagged(
+                        38385,
+                        &[&["d", &me], &["protocol_version", version], &["pow", "0"]],
+                        &node.keys,
+                    ))
+                    .await
+                    .unwrap();
+            }
+            node
+        }
+    };
+
+    for (version, expected) in [
+        (Some("2"), "v2"),
+        (Some("1"), "unsupported"),
+        (None, "unknown"),
+    ] {
+        let node = node_with(version).await;
+        let h = harness(&url, &node, &store, true, true).await;
+
+        let support = match h.mediator.check_node().await {
+            NodeSupport::V2 => "v2",
+            NodeSupport::Unsupported => "unsupported",
+            NodeSupport::Unknown(_) => "unknown",
+        };
+
+        assert_eq!(support, expected, "{version:?}");
+    }
 }
