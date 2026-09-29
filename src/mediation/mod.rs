@@ -444,21 +444,12 @@ impl<S: DmSender> Mediator<S> {
                 now,
             )?;
         }
-        let text = crate::solver::opening_failed(dispute_id);
-        let delivered = notify_solvers(
-            &self.store,
-            &self.sender,
-            &self.solvers,
-            dispute_id,
-            "handoff",
-            &text,
-            now,
-        )
-        .await?;
         let session_id = session.map(|s| s.session_id.as_str());
+        // Recorded before sending, so no failure while sending (or while
+        // auditing the send) can lose the retry: the notice stays pending
+        // until a solver received it.
         self.record(dispute_id, session_id, "mediation_failed", reason, now)?;
-        if delivered == 0 {
-            // No solver knows Serbero gave up: the timer task retries it.
+        {
             let store = self.lock_store()?;
             events::append(
                 store.conn(),
@@ -471,7 +462,50 @@ impl<S: DmSender> Mediator<S> {
                 },
             )?;
         }
+        self.send_opening_notice(dispute_id, now).await;
         Ok(Opening::HandedOff(reason.to_owned()))
+    }
+
+    /// Sends the solvers the "mediation could not start" notice and, once
+    /// one received it, closes the pending marker. A failure is logged: the
+    /// timer task tries again.
+    pub(crate) async fn send_opening_notice(&self, dispute_id: &str, now: i64) {
+        let text = crate::solver::opening_failed(dispute_id);
+        let delivered = match notify_solvers(
+            &self.store,
+            &self.sender,
+            &self.solvers,
+            dispute_id,
+            "handoff",
+            &text,
+            now,
+        )
+        .await
+        {
+            Ok(delivered) => delivered,
+            Err(e) => {
+                tracing::warn!(dispute_id, error = %e, "opening notice not recorded; retried by the timer");
+                0
+            }
+        };
+        if delivered == 0 {
+            return;
+        }
+        let closed = self.lock_store().and_then(|store| {
+            events::append(
+                store.conn(),
+                &events::NewEvent {
+                    dispute_id,
+                    session_id: None,
+                    kind: OPENING_NOTICE_SENT,
+                    payload: json!({}),
+                    now,
+                },
+            )
+        });
+        if let Err(e) = closed {
+            tracing::error!(dispute_id, error = %e, "cannot record the opening notice as sent");
+        }
     }
 
     fn record(

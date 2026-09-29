@@ -542,15 +542,23 @@ async fn an_opening_failure_no_solver_heard_of_is_retried_by_the_timer() {
     assert!(h.outbox.texts().is_empty());
     h.outbox.fail(false);
 
-    h.mediator.tick(1_100).await.unwrap();
-    h.mediator.tick(1_200).await.unwrap();
+    // However long it stayed undelivered, it is still retried.
+    let month_later = 1_000 + 30 * 24 * 3600;
+    h.mediator.tick(month_later).await.unwrap();
+    h.mediator.tick(month_later + 100).await.unwrap();
 
     assert_eq!(
         h.outbox.texts(),
         [serbero::solver::opening_failed(&dispute_id)],
         "sent once, on the first tick after the failure"
     );
-    assert!(event_kinds(&store, &dispute_id).contains(&"opening_notice_sent".to_owned()));
+    let kinds = event_kinds(&store, &dispute_id);
+    let position = |kind: &str| kinds.iter().position(|k| k == kind).unwrap();
+    assert!(
+        position("opening_notice_pending") < position("notification_failed"),
+        "recorded before the first attempt: {kinds:?}"
+    );
+    assert!(kinds.contains(&"opening_notice_sent".to_owned()));
 }
 
 #[tokio::test]

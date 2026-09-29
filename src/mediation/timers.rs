@@ -12,7 +12,6 @@ use crate::error::Result;
 use crate::judge::facts::{self, Facts};
 use crate::judge::{Answers, state};
 use crate::nostr::dm::DmSender;
-use crate::notifier::notify_solvers;
 use crate::policy::timers::{Clocks, PartyClock, Timer, check};
 use crate::policy::{HandoffReason, Path, Phase, template};
 use crate::solver::Subject;
@@ -151,15 +150,12 @@ impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
     }
 
     /// Resends "mediation could not start" notices no solver received, for
-    /// disputes not resolved since.
+    /// disputes not resolved since, however old.
     async fn retry_opening_notices(&self, now: i64) {
         let pending = match self.lock_store().and_then(|store| {
-            events::still_pending(
-                store.conn(),
-                OPENING_NOTICE_PENDING,
-                OPENING_NOTICE_SENT,
-                now - FINISH_LOOKBACK_SECS,
-            )
+            // No age limit: a notice stays pending until a solver got it or
+            // the dispute is resolved.
+            events::still_pending(store.conn(), OPENING_NOTICE_PENDING, OPENING_NOTICE_SENT, 0)
         }) {
             Ok(pending) => pending,
             Err(e) => {
@@ -180,32 +176,8 @@ impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
             disputes::get(store.conn(), dispute_id)?
                 .is_some_and(|d| d.lifecycle == disputes::Lifecycle::Resolved)
         };
-        if resolved {
-            return Ok(());
-        }
-        let text = crate::solver::opening_failed(dispute_id);
-        let delivered = notify_solvers(
-            &self.store,
-            &self.sender,
-            &self.solvers,
-            dispute_id,
-            "handoff",
-            &text,
-            now,
-        )
-        .await?;
-        if delivered > 0 {
-            let store = self.lock_store()?;
-            events::append(
-                store.conn(),
-                &events::NewEvent {
-                    dispute_id,
-                    session_id: None,
-                    kind: OPENING_NOTICE_SENT,
-                    payload: serde_json::json!({}),
-                    now,
-                },
-            )?;
+        if !resolved {
+            self.send_opening_notice(dispute_id, now).await;
         }
         Ok(())
     }
