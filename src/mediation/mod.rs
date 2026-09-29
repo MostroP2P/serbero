@@ -434,33 +434,41 @@ impl<S: DmSender> Mediator<S> {
         reason: &str,
         now: i64,
     ) -> Result<Opening> {
-        if let Some(session) = session {
-            let _ = self.chats.close(&session.session_id).await;
-            let store = self.lock_store()?;
-            sessions::hand_off(
-                store.conn(),
-                &session.session_id,
-                crate::policy::HandoffReason::OpeningFailed.as_str(),
-                now,
-            )?;
-        }
         let session_id = session.map(|s| s.session_id.as_str());
-        // Recorded before sending, so no failure while sending (or while
-        // auditing the send) can lose the retry: the notice stays pending
-        // until a solver received it.
-        self.record(dispute_id, session_id, "mediation_failed", reason, now)?;
+        // One transaction, before any network I/O: the handoff, its record
+        // and the pending notice exist together, so neither a failed send,
+        // a failed audit write, nor a restart or cancellation mid-send can
+        // lose the retry. The notice stays pending until a solver got it.
         {
             let store = self.lock_store()?;
-            events::append(
-                store.conn(),
-                &events::NewEvent {
-                    dispute_id,
+            let tx = store.conn().unchecked_transaction()?;
+            if let Some(session_id) = session_id {
+                sessions::hand_off(
+                    &tx,
                     session_id,
-                    kind: OPENING_NOTICE_PENDING,
-                    payload: json!({}),
+                    crate::policy::HandoffReason::OpeningFailed.as_str(),
                     now,
-                },
-            )?;
+                )?;
+            }
+            for (kind, payload) in [
+                ("mediation_failed", json!({ "reason": reason })),
+                (OPENING_NOTICE_PENDING, json!({})),
+            ] {
+                events::append(
+                    &tx,
+                    &events::NewEvent {
+                        dispute_id,
+                        session_id,
+                        kind,
+                        payload,
+                        now,
+                    },
+                )?;
+            }
+            tx.commit()?;
+        }
+        if let Some(session_id) = session_id {
+            let _ = self.chats.close(session_id).await;
         }
         self.send_opening_notice(dispute_id, now).await;
         Ok(Opening::HandedOff(reason.to_owned()))
