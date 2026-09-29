@@ -7,8 +7,8 @@ section `[X.Y.Z]` as its release notes.
 
 ## [Unreleased]
 
-Groundwork for assisted mediation. Mediation stays off; nothing here changes
-what a v0.1.0 operator sees.
+Groundwork for assisted mediation. Mediation stays off, and notification
+works as in v0.1.0; the startup log also shows Serbero's npub.
 
 ### Added
 
@@ -24,6 +24,10 @@ what a v0.1.0 operator sees.
   for every catalog.
 - A Spanish judge spike (`eval/spike/`) and the `qs-1` turn question set it
   informed.
+- The startup log shows Serbero's npub, the form a Mostro admin uses to
+  register it as a solver.
+- A README that explains mediation end to end: what the parties and solvers
+  see, the guarantees, languages, and how to enable it.
 
 ## [0.1.0] - 2026-09-27
 

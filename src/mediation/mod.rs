@@ -119,6 +119,17 @@ pub struct Mediator<S> {
     pub finishing: tokio::sync::Mutex<()>,
 }
 
+/// What the node's instance-info event says about protocol support.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NodeSupport {
+    V2,
+    /// The node answered without `protocol_version = 2`.
+    Unsupported,
+    /// No answer yet (slow relays, or not published): each take checks
+    /// again.
+    Unknown(String),
+}
+
 /// How an attempt to mediate a dispute ended.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Opening {
@@ -282,6 +293,19 @@ impl<S: DmSender> Mediator<S> {
         Ok(Opening::Opened {
             session_id: session.session_id,
         })
+    }
+
+    /// Whether the node speaks Mostro protocol v2, as read from its
+    /// instance-info event (`docs/spec.md` §5.1). Checked at startup so an
+    /// unsupported node turns mediation off before any dispute; `take`
+    /// checks again, since the node can change.
+    pub async fn check_node(&self) -> NodeSupport {
+        match node::fetch(&self.client, self.mostro, MOSTRO_TIMEOUT).await {
+            Ok(Some(node)) if node.speaks_v2() => NodeSupport::V2,
+            Ok(Some(_)) => NodeSupport::Unsupported,
+            Ok(None) => NodeSupport::Unknown("the node's info event was not found".into()),
+            Err(e) => NodeSupport::Unknown(format!("cannot read the node's info: {e}")),
+        }
     }
 
     /// The node must speak protocol v2; then `admin-take-dispute`.

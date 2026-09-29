@@ -51,9 +51,12 @@ pub async fn run(settings: &Settings) -> Result<()> {
         solvers.clone(),
         mostro,
     ));
+    // The npub is what a Mostro admin registers as a solver (`<npub>:read`).
+    let npub = keys.public_key().to_bech32().unwrap_or_default();
     tracing::info!(
         version = env!("CARGO_PKG_VERSION"),
         pubkey = %keys.public_key(),
+        npub,
         mostro = %mostro,
         relays = config.mostro.relays.len(),
         solvers = config.solvers.len(),
@@ -211,6 +214,22 @@ fn start_mediation(
     let thresholds = config.judge.active_thresholds().cloned();
     let started = now();
     background.push(tokio::spawn(async move {
+        // A node that answers without protocol v2 can never be mediated.
+        // One that does not answer yet is checked again before each take,
+        // so a slow relay never turns mediation off.
+        match mediator.check_node().await {
+            crate::mediation::NodeSupport::V2 => {}
+            crate::mediation::NodeSupport::Unsupported => {
+                tracing::warn!("mediation off: the Mostro node does not speak protocol v2");
+                return;
+            }
+            crate::mediation::NodeSupport::Unknown(reason) => {
+                tracing::warn!(
+                    reason,
+                    "node protocol not confirmed; checked again before each take"
+                );
+            }
+        }
         let judge = match judge {
             Ok(judge) => judge,
             Err(reason) => {
