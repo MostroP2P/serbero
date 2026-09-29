@@ -8,7 +8,8 @@ use std::collections::HashSet;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use mostro_core::dispute::Status as DisputeStatus;
-use nostr_sdk::prelude::{Event, PublicKey};
+use mostro_core::prelude::NOSTR_DISPUTE_EVENT_KIND;
+use nostr_sdk::prelude::{Event, Kind, PublicKey};
 use serde_json::json;
 
 pub use self::send::{Solver, notify_solvers};
@@ -125,13 +126,22 @@ impl<S: DmSender> Notifier<S> {
         Ok(sessions::live_for_dispute(store.conn(), dispute_id)?.is_some())
     }
 
+    /// The dispute an event carries. `None` for events of other kinds: the
+    /// client's notification stream carries every subscription's events
+    /// (party chats, node info, orders), and those are not worth a warning.
+    pub(crate) fn dispute_of(&self, event: &Event) -> Option<Result<DisputeEvent>> {
+        (event.kind == Kind::Custom(NOSTR_DISPUTE_EVENT_KIND))
+            .then(|| dispute_event::parse(event, &self.mostro))
+    }
+
     /// Handles one event from the dispute subscription. Events that are not
     /// valid dispute events from the configured node are logged and ignored.
     pub async fn handle_event(&self, event: &Event, now: i64) -> Result<Change> {
-        let dispute = match dispute_event::parse(event, &self.mostro) {
-            Ok(dispute) => dispute,
-            Err(e) => {
-                tracing::warn!(event_id = %event.id, error = %e, "ignoring event");
+        let dispute = match self.dispute_of(event) {
+            None => return Ok(Change::Unchanged),
+            Some(Ok(dispute)) => dispute,
+            Some(Err(e)) => {
+                tracing::warn!(error = %e, "ignoring malformed dispute event");
                 return Ok(Change::Unchanged);
             }
         };

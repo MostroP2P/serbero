@@ -130,6 +130,11 @@ pub enum NodeSupport {
     Unknown(String),
 }
 
+/// A "mediation could not start" notice no solver received; the timer task
+/// retries it until an `opening_notice_sent` event follows.
+pub(crate) const OPENING_NOTICE_PENDING: &str = "opening_notice_pending";
+pub(crate) const OPENING_NOTICE_SENT: &str = "opening_notice_sent";
+
 /// How an attempt to mediate a dispute ended.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Opening {
@@ -429,18 +434,52 @@ impl<S: DmSender> Mediator<S> {
         reason: &str,
         now: i64,
     ) -> Result<Opening> {
-        if let Some(session) = session {
-            let _ = self.chats.close(&session.session_id).await;
+        let session_id = session.map(|s| s.session_id.as_str());
+        // One transaction, before any network I/O: the handoff, its record
+        // and the pending notice exist together, so neither a failed send,
+        // a failed audit write, nor a restart or cancellation mid-send can
+        // lose the retry. The notice stays pending until a solver got it.
+        {
             let store = self.lock_store()?;
-            sessions::hand_off(
-                store.conn(),
-                &session.session_id,
-                crate::policy::HandoffReason::OpeningFailed.as_str(),
-                now,
-            )?;
+            let tx = store.conn().unchecked_transaction()?;
+            if let Some(session_id) = session_id {
+                sessions::hand_off(
+                    &tx,
+                    session_id,
+                    crate::policy::HandoffReason::OpeningFailed.as_str(),
+                    now,
+                )?;
+            }
+            for (kind, payload) in [
+                ("mediation_failed", json!({ "reason": reason })),
+                (OPENING_NOTICE_PENDING, json!({})),
+            ] {
+                events::append(
+                    &tx,
+                    &events::NewEvent {
+                        dispute_id,
+                        session_id,
+                        kind,
+                        payload,
+                        now,
+                    },
+                )?;
+            }
+            tx.commit()?;
         }
+        if let Some(session_id) = session_id {
+            let _ = self.chats.close(session_id).await;
+        }
+        self.send_opening_notice(dispute_id, now).await;
+        Ok(Opening::HandedOff(reason.to_owned()))
+    }
+
+    /// Sends the solvers the "mediation could not start" notice and, once
+    /// one received it, closes the pending marker. A failure is logged: the
+    /// timer task tries again.
+    pub(crate) async fn send_opening_notice(&self, dispute_id: &str, now: i64) {
         let text = crate::solver::opening_failed(dispute_id);
-        notify_solvers(
+        let delivered = match notify_solvers(
             &self.store,
             &self.sender,
             &self.solvers,
@@ -449,10 +488,32 @@ impl<S: DmSender> Mediator<S> {
             &text,
             now,
         )
-        .await?;
-        let session_id = session.map(|s| s.session_id.as_str());
-        self.record(dispute_id, session_id, "mediation_failed", reason, now)?;
-        Ok(Opening::HandedOff(reason.to_owned()))
+        .await
+        {
+            Ok(delivered) => delivered,
+            Err(e) => {
+                tracing::warn!(dispute_id, error = %e, "opening notice not recorded; retried by the timer");
+                0
+            }
+        };
+        if delivered == 0 {
+            return;
+        }
+        let closed = self.lock_store().and_then(|store| {
+            events::append(
+                store.conn(),
+                &events::NewEvent {
+                    dispute_id,
+                    session_id: None,
+                    kind: OPENING_NOTICE_SENT,
+                    payload: json!({}),
+                    now,
+                },
+            )
+        });
+        if let Err(e) = closed {
+            tracing::error!(dispute_id, error = %e, "cannot record the opening notice as sent");
+        }
     }
 
     fn record(

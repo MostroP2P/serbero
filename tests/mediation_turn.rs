@@ -1772,6 +1772,26 @@ async fn a_brief_is_recorded_when_it_is_sent() {
     assert!(brief.created_at >= before, "{}", brief.created_at);
 }
 
+#[tokio::test]
+async fn after_an_opening_failure_the_parties_are_never_written_to() {
+    let script = script(&[]).await;
+    let mut buyer = buyer_side(&script).await;
+    let mut seller = seller_side(&script).await;
+    // As `Mediator::abandon` leaves it: handed off, no notice sent.
+    sessions::hand_off(
+        script.store.lock().unwrap().conn(),
+        "s1",
+        "opening_failed",
+        2,
+    )
+    .unwrap();
+
+    script.mediator.tick(10_000).await.unwrap();
+
+    assert_eq!(buyer.next_within(QUIET).await, None);
+    assert_eq!(seller.next_within(QUIET).await, None);
+}
+
 /// AGENTS.md relays rule 7: timer sends to a silent relay never hold back
 /// dispute events.
 #[tokio::test]

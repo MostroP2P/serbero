@@ -300,7 +300,9 @@ Mediation is opt-in and needs a few things in place first.
    human solver with `write` permission, so someone can take over.
 3. **Relays that store chat messages.** Party messages are `kind 14` events.
    Use relays verified to store them; otherwise, messages sent while Serbero is
-   offline are lost.
+   offline are lost. List more than one: public relays often limit events per
+   IP, and a Serbero running on the same host as `mostrod` shares that limit
+   with it.
 4. **Your own judge account.** Create a [TypeSafe](https://typesafe.ai)
    account and export its key:
 

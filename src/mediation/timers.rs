@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use super::guide::FINISH_LOOKBACK_SECS;
 use super::handoff::{BRIEF_PENDING, BRIEF_SENT, HANDOFF_NOTICE, TurnReading};
-use super::{Mediator, ReadyJudge};
+use super::{Mediator, OPENING_NOTICE_PENDING, OPENING_NOTICE_SENT, ReadyJudge};
 use crate::error::Result;
 use crate::judge::facts::{self, Facts};
 use crate::judge::{Answers, state};
@@ -145,6 +145,40 @@ impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
             }
         }
         self.finish_pending(now - FINISH_LOOKBACK_SECS, now).await;
+        self.retry_opening_notices(now).await;
+        Ok(())
+    }
+
+    /// Resends "mediation could not start" notices no solver received, for
+    /// disputes not resolved since, however old.
+    async fn retry_opening_notices(&self, now: i64) {
+        let pending = match self.lock_store().and_then(|store| {
+            // No age limit: a notice stays pending until a solver got it or
+            // the dispute is resolved.
+            events::still_pending(store.conn(), OPENING_NOTICE_PENDING, OPENING_NOTICE_SENT, 0)
+        }) {
+            Ok(pending) => pending,
+            Err(e) => {
+                tracing::error!(error = %e, "cannot list pending opening notices");
+                return;
+            }
+        };
+        for dispute_id in pending {
+            if let Err(e) = self.retry_opening_notice(&dispute_id, now).await {
+                tracing::warn!(dispute_id, error = %e, "opening notice not sent; retried on the next tick");
+            }
+        }
+    }
+
+    async fn retry_opening_notice(&self, dispute_id: &str, now: i64) -> Result<()> {
+        let resolved = {
+            let store = self.lock_store()?;
+            disputes::get(store.conn(), dispute_id)?
+                .is_some_and(|d| d.lifecycle == disputes::Lifecycle::Resolved)
+        };
+        if !resolved {
+            self.send_opening_notice(dispute_id, now).await;
+        }
         Ok(())
     }
 
@@ -196,8 +230,12 @@ impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
                 self.brief_delivered(session, pending, now)?;
             }
         }
+        // An opening that failed never reached the parties: Serbero writes
+        // nothing more to them (`docs/spec.md` §7.2).
+        let opening_failed =
+            session.handoff_reason.as_deref() == Some(HandoffReason::OpeningFailed.as_str());
         match session.state {
-            SessionState::HandedOff => {
+            SessionState::HandedOff if !opening_failed => {
                 for party in [Party::Buyer, Party::Seller] {
                     let told = messages.iter().any(|m| {
                         m.direction == Direction::Out

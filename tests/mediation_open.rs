@@ -32,20 +32,42 @@ use uuid::Uuid;
 
 const WAIT: Duration = Duration::from_secs(10);
 
-/// Solver DMs, kept instead of sent.
+/// Solver DMs, kept instead of sent. While `failing` is set, every send
+/// fails, as when no relay accepts it.
 #[derive(Clone, Default)]
-struct Outbox(Arc<Mutex<Vec<String>>>);
+struct Outbox {
+    sent: Arc<Mutex<Vec<String>>>,
+    failing: Arc<std::sync::atomic::AtomicBool>,
+    /// While set, every send waits forever, as on a relay that never answers.
+    hanging: Arc<std::sync::atomic::AtomicBool>,
+}
 
 impl DmSender for Outbox {
     async fn send_dm(&self, _to: PublicKey, text: &str) -> SerberoResult<()> {
-        self.0.lock().unwrap().push(text.to_owned());
+        if self.hanging.load(std::sync::atomic::Ordering::SeqCst) {
+            std::future::pending::<()>().await;
+        }
+        if self.failing.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(serbero::error::Error::Nostr("rate-limited".into()));
+        }
+        self.sent.lock().unwrap().push(text.to_owned());
         Ok(())
     }
 }
 
 impl Outbox {
     fn texts(&self) -> Vec<String> {
-        self.0.lock().unwrap().clone()
+        self.sent.lock().unwrap().clone()
+    }
+
+    fn hang(&self, hanging: bool) {
+        self.hanging
+            .store(hanging, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    fn fail(&self, failing: bool) {
+        self.failing
+            .store(failing, std::sync::atomic::Ordering::SeqCst);
     }
 }
 
@@ -512,6 +534,114 @@ async fn a_take_without_trade_keys_hands_the_dispute_to_the_solvers() {
         [serbero::solver::opening_failed(&dispute_id)]
     );
     assert!(event_kinds(&store, &dispute_id).contains(&"mediation_failed".to_owned()));
+}
+
+#[tokio::test]
+async fn an_opening_failure_no_solver_heard_of_is_retried_by_the_timer() {
+    let relay = MockRelay::run().await.unwrap();
+    let url = relay.url().await.to_string();
+    let node = start_node(&url, Mode::AcceptWithoutKeys).await;
+    let dispute_id = Uuid::new_v4().to_string();
+    let store = store_with_dispute(&dispute_id, Lifecycle::Notified);
+    let h = harness(&url, &node, &store, true, true).await;
+    h.outbox.fail(true);
+
+    let opening = h.mediator.consider(&dispute_id, 1_000).await;
+
+    assert!(matches!(opening, Opening::HandedOff(_)), "{opening:?}");
+    assert!(h.outbox.texts().is_empty());
+    h.outbox.fail(false);
+
+    // However long it stayed undelivered, it is still retried.
+    let month_later = 1_000 + 30 * 24 * 3600;
+    h.mediator.tick(month_later).await.unwrap();
+    h.mediator.tick(month_later + 100).await.unwrap();
+
+    assert_eq!(
+        h.outbox.texts(),
+        [serbero::solver::opening_failed(&dispute_id)],
+        "sent once, on the first tick after the failure"
+    );
+    let kinds = event_kinds(&store, &dispute_id);
+    let position = |kind: &str| kinds.iter().position(|k| k == kind).unwrap();
+    assert!(
+        position("opening_notice_pending") < position("notification_failed"),
+        "recorded before the first attempt: {kinds:?}"
+    );
+    assert!(kinds.contains(&"opening_notice_sent".to_owned()));
+}
+
+#[tokio::test]
+async fn an_opening_notice_survives_a_failed_audit_write() {
+    let relay = MockRelay::run().await.unwrap();
+    let url = relay.url().await.to_string();
+    let node = start_node(&url, Mode::AcceptWithoutKeys).await;
+    let dispute_id = Uuid::new_v4().to_string();
+    let store = store_with_dispute(&dispute_id, Lifecycle::Notified);
+    let h = harness(&url, &node, &store, true, true).await;
+    h.outbox.fail(true);
+    // Recording the failed attempt fails too.
+    store
+        .lock()
+        .unwrap()
+        .conn()
+        .execute_batch(
+            "CREATE TRIGGER no_audit BEFORE INSERT ON events
+             WHEN NEW.kind = 'notification_failed'
+             BEGIN SELECT RAISE(ABORT, 'audit write failed'); END;",
+        )
+        .unwrap();
+
+    let opening = h.mediator.consider(&dispute_id, 1_000).await;
+
+    assert!(matches!(opening, Opening::HandedOff(_)), "{opening:?}");
+    store
+        .lock()
+        .unwrap()
+        .conn()
+        .execute_batch("DROP TRIGGER no_audit;")
+        .unwrap();
+    h.outbox.fail(false);
+    h.mediator.tick(1_100).await.unwrap();
+    assert_eq!(
+        h.outbox.texts(),
+        [serbero::solver::opening_failed(&dispute_id)]
+    );
+}
+
+#[tokio::test]
+async fn an_opening_notice_survives_a_cancelled_send() {
+    let relay = MockRelay::run().await.unwrap();
+    let url = relay.url().await.to_string();
+    let node = start_node(&url, Mode::AcceptWithoutKeys).await;
+    let dispute_id = Uuid::new_v4().to_string();
+    let store = store_with_dispute(&dispute_id, Lifecycle::Notified);
+    let h = harness(&url, &node, &store, true, true).await;
+    let outbox = h.outbox.clone();
+    outbox.hang(true);
+    let mediator = Arc::new(h.mediator);
+
+    // The process stops while the notice is on its way.
+    let opening = tokio::spawn({
+        let (mediator, dispute_id) = (Arc::clone(&mediator), dispute_id.clone());
+        async move { mediator.consider(&dispute_id, 1_000).await }
+    });
+    tokio::time::timeout(WAIT, async {
+        while !event_kinds(&store, &dispute_id).contains(&"opening_notice_pending".to_owned()) {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+    opening.abort();
+    outbox.hang(false);
+
+    mediator.tick(1_100).await.unwrap();
+
+    assert_eq!(
+        outbox.texts(),
+        [serbero::solver::opening_failed(&dispute_id)]
+    );
 }
 
 #[tokio::test]

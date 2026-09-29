@@ -585,3 +585,25 @@ mod sessions_end {
         assert_eq!(state(&n), SessionState::Closed);
     }
 }
+
+#[test]
+fn events_of_other_subscriptions_are_not_dispute_events() {
+    use nostr_sdk::prelude::*;
+    let mostro = Keys::generate();
+    let n = notifier(&mostro);
+    let event = |kind| {
+        EventBuilder::new(Kind::Custom(kind), "")
+            .finalize(&mostro)
+            .unwrap()
+    };
+
+    // A party chat message, an order and the node's info, as the client's
+    // shared notification stream delivers them: ignored without a warning.
+    for kind in [14, 38383, 38385] {
+        assert!(n.dispute_of(&event(kind)).is_none(), "kind {kind}");
+    }
+    assert!(
+        matches!(n.dispute_of(&event(38386)), Some(Err(_))),
+        "a malformed dispute event is still reported"
+    );
+}
