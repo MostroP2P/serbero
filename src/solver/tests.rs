@@ -386,8 +386,8 @@ fn an_update_lists_the_new_messages() {
 fn the_mediation_notice_matches_the_spec() {
     assert_eq!(
         mediation_started("d1"),
-        "Serbero is mediating dispute d1.\n\
-         You can take it over at any time; Serbero stops as soon as you do."
+        "Dispute d1 · mediating\n\
+         Serbero is mediating this dispute. You can take it over at any time; Serbero stops as soon as you do."
     );
 }
 
@@ -406,21 +406,21 @@ fn the_final_report_matches_the_spec() {
 
     assert_eq!(
         handed_off,
-        "Dispute d1 resolved: settled\n\
+        "Dispute d1 · resolved: settled\n\
          mediation: yes · outcome: handed_off (conflicting_claims) · rounds: 2 · duration: 41 min"
     );
     assert_eq!(
         self_resolved,
-        "Dispute d1 resolved: released\n\
+        "Dispute d1 · resolved: released\n\
          mediation: yes · outcome: self_resolved · rounds: 1 · duration: 3 h 0 min"
     );
     assert_eq!(
         not_mediated,
-        "Dispute d1 resolved: seller-refunded\nmediation: no"
+        "Dispute d1 · resolved: seller-refunded\nmediation: no"
     );
     assert_eq!(
         superseded,
-        "Dispute d1 resolved: settled\n\
+        "Dispute d1 · resolved: settled\n\
          mediation: yes · outcome: superseded · rounds: 1 · duration: 10 min"
     );
 }
@@ -429,8 +429,8 @@ fn the_final_report_matches_the_spec() {
 fn a_failed_opening_asks_the_solvers_to_take_over() {
     assert_eq!(
         opening_failed("d1"),
-        "Serbero took dispute d1 but could not start mediation.\n\
-         Please take it over; Serbero will not write to the parties."
+        "Dispute d1 · mediation could not start\n\
+         Serbero took this dispute but could not start mediation. Please take it over; Serbero will not write to the parties."
     );
 }
 
@@ -458,4 +458,34 @@ fn a_message_longer_than_a_dm_is_split_not_cut() {
         bodies.ends_with("END  [1 attachment]"),
         "the attachment note survives"
     );
+}
+
+/// Solver clients link a message to its dispute and classify it from the
+/// first line (`docs/messages.md` §3), so every solver text must start with
+/// `Dispute <dispute_id> · `.
+#[test]
+fn every_solver_message_starts_with_the_dispute_header() {
+    use crate::notifier::text;
+    use crate::store::disputes::Initiator;
+
+    let line = [Line {
+        at: 0,
+        speaker: Speaker::Party(Party::Buyer),
+        text: "hola",
+        attachments: 0,
+    }];
+    let mut texts = vec![
+        text::new_dispute("d1", Initiator::Buyer),
+        text::reminder("d1", 900),
+        text::taken("d1", true),
+        mediation_started("d1"),
+        opening_failed("d1"),
+        final_report("d1", "settled", Outcome::NotMediated, 0, 0),
+    ];
+    texts.extend(transcript("d1", &line));
+    texts.extend(update("d1", &line));
+
+    for text in texts {
+        assert!(text.starts_with("Dispute d1 · "), "bad header: {text}");
+    }
 }

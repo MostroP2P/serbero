@@ -43,7 +43,12 @@ struct Outbox {
 }
 
 impl DmSender for Outbox {
-    async fn send_dm(&self, _to: PublicKey, text: &str) -> SerberoResult<()> {
+    async fn send_dm(
+        &self,
+        _to: PublicKey,
+        _dispute_id: Option<uuid::Uuid>,
+        text: &str,
+    ) -> SerberoResult<()> {
         if self.hanging.load(std::sync::atomic::Ordering::SeqCst) {
             std::future::pending::<()>().await;
         }

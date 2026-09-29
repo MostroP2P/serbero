@@ -344,8 +344,8 @@ pub fn update(dispute_id: &str, lines: &[Line<'_>]) -> Vec<String> {
 /// Sent to solvers when Serbero takes a dispute to mediate it.
 pub fn mediation_started(dispute_id: &str) -> String {
     format!(
-        "Serbero is mediating dispute {dispute_id}.\n\
-         You can take it over at any time; Serbero stops as soon as you do."
+        "Dispute {dispute_id} · mediating\n\
+         Serbero is mediating this dispute. You can take it over at any time; Serbero stops as soon as you do."
     )
 }
 
@@ -400,8 +400,8 @@ fn chunk(lines: &[String], budget: usize) -> Vec<String> {
 /// human must take it over.
 pub fn opening_failed(dispute_id: &str) -> String {
     format!(
-        "Serbero took dispute {dispute_id} but could not start mediation.\n\
-         Please take it over; Serbero will not write to the parties."
+        "Dispute {dispute_id} · mediation could not start\n\
+         Serbero took this dispute but could not start mediation. Please take it over; Serbero will not write to the parties."
     )
 }
 
@@ -422,7 +422,7 @@ pub fn final_report(
     rounds: u32,
     duration_secs: i64,
 ) -> String {
-    let first = format!("Dispute {dispute_id} resolved: {status}");
+    let first = format!("Dispute {dispute_id} · resolved: {status}");
     let outcome = match outcome {
         Outcome::NotMediated => return format!("{first}\nmediation: no"),
         Outcome::SelfResolved => "self_resolved".to_owned(),

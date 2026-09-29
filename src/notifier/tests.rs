@@ -55,10 +55,7 @@ async fn new_dispute_is_sent_to_every_solver_and_marked_notified() {
         .unwrap();
 
     assert_eq!(n.sender.texts().len(), 2);
-    assert_eq!(
-        n.sender.texts()[0],
-        "New Mostro dispute\ndispute: d1\nopened by: seller"
-    );
+    assert_eq!(n.sender.texts()[0], "Dispute d1 · new\nopened by: seller");
     let store = n.store.lock().unwrap();
     let dispute = disputes::get(store.conn(), "d1").unwrap().unwrap();
     assert_eq!(dispute.lifecycle, Lifecycle::Notified);
@@ -125,8 +122,8 @@ async fn reminder_fires_once_per_interval() {
     assert_eq!((early, due, again, next), (0, 1, 0, 1));
     let texts = n.sender.texts();
     assert_eq!(texts.len(), 3);
-    assert_eq!(texts[1], "Dispute still unattended (15 min)\ndispute: d1");
-    assert_eq!(texts[2], "Dispute still unattended (30 min)\ndispute: d1");
+    assert_eq!(texts[1], "Dispute d1 · unattended (15 min)");
+    assert_eq!(texts[2], "Dispute d1 · unattended (30 min)");
 }
 
 #[tokio::test]
@@ -167,10 +164,7 @@ async fn failed_first_notification_is_retried_as_new_dispute() {
 
     n.remind(900, 1_900).await.unwrap();
 
-    assert_eq!(
-        n.sender.texts(),
-        ["New Mostro dispute\ndispute: d1\nopened by: seller"]
-    );
+    assert_eq!(n.sender.texts(), ["Dispute d1 · new\nopened by: seller"]);
     assert_eq!(lifecycle(&n, "d1"), Lifecycle::Notified);
 }
 
@@ -267,7 +261,7 @@ async fn taken_dispute_notifies_solvers_once() {
 
     let texts = n.sender.texts();
     assert_eq!(texts.len(), 2);
-    assert_eq!(texts[1], "Dispute taken\ndispute: d1\ntaken by: a solver");
+    assert_eq!(texts[1], "Dispute d1 · taken\ntaken by: a solver");
     assert_eq!(n.remind(900, 9_000).await.unwrap(), 0);
 }
 
@@ -366,10 +360,7 @@ async fn serberos_own_take_is_announced_as_serberos() {
         .await
         .unwrap();
 
-    assert_eq!(
-        n.sender.texts()[1],
-        "Dispute taken\ndispute: d1\ntaken by: Serbero"
-    );
+    assert_eq!(n.sender.texts()[1], "Dispute d1 · taken\ntaken by: Serbero");
 }
 
 #[tokio::test]

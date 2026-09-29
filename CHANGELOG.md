@@ -29,6 +29,14 @@ works as in v0.1.0; the startup log also shows Serbero's npub.
 - A README that explains mediation end to end: what the parties and solvers
   see, the guarantees, languages, and how to enable it.
 
+### Changed
+
+- Solver DMs carry the dispute id in the message `id`, and every solver
+  message starts with `Dispute <dispute_id> · <subject>`, so clients such as
+  Mostrix can link and classify them without parsing prose
+  (`docs/messages.md` §3). The new-dispute, reminder, taken, mediation and
+  final-report texts moved to that header.
+
 ## [0.1.0] - 2026-09-27
 
 The notifier: every Mostro dispute reaches every configured solver.
