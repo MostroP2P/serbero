@@ -229,37 +229,44 @@ Sent as Mostro protocol v2 `send-dm` messages: a `Message::Dm` with action
 read them in Mostro's own clients (Mostrix, `mostro-cli`). They never include a
 party's primary pubkey, only the trade role. Solver messages are in English.
 
+Clients link each message to its dispute and classify it without parsing
+prose, so two things are a contract:
+
+- The message `id` (the `MessageKind` id) is the dispute id.
+- The first line is always `Dispute <dispute_id> · <subject>`, where
+  `<subject>` starts with one of: `new`, `unattended`, `taken`, `mediating`,
+  `mediation could not start`, `handed off:`, `guidance sent:`, `transcript`,
+  `new messages since handoff`, `resolved:`. Everything after the first line
+  is for the solver to read and may change.
+
 ### New dispute / reminder / taken
 
 ```text
-New Mostro dispute
-dispute: <dispute_id>
+Dispute <dispute_id> · new
 opened by: seller
 ```
 
 ```text
-Dispute still unattended (32 min)
-dispute: <dispute_id>
+Dispute <dispute_id> · unattended (32 min)
 ```
 
 ```text
-Dispute taken
-dispute: <dispute_id>
+Dispute <dispute_id> · taken
 taken by: Serbero | a solver
 ```
 
 ### Mediation started
 
 ```text
-Serbero is mediating dispute <dispute_id>.
-You can take it over at any time; Serbero stops as soon as you do.
+Dispute <dispute_id> · mediating
+Serbero is mediating this dispute. You can take it over at any time; Serbero stops as soon as you do.
 ```
 
 ### Mediation could not start
 
 ```text
-Serbero took dispute <dispute_id> but could not start mediation.
-Please take it over; Serbero will not write to the parties.
+Dispute <dispute_id> · mediation could not start
+Serbero took this dispute but could not start mediation. Please take it over; Serbero will not write to the parties.
 ```
 
 ### Brief (on handoff or guidance)
@@ -316,7 +323,7 @@ Dispute <dispute_id> · new messages since handoff (2)
 ### Final report
 
 ```text
-Dispute <dispute_id> resolved: <status>
+Dispute <dispute_id> · resolved: <status>
 mediation: yes · outcome: handed_off (conflicting_claims) · rounds: 2 · duration: 41 min
 ```
 

@@ -8,13 +8,21 @@ use mostro_core::message::{Action, Message, Payload};
 use mostro_core::nip59::WrapOptions;
 use mostro_core::transport::wrap_message_nip44;
 use nostr_sdk::prelude::*;
+use uuid::Uuid;
 
 use crate::error::{Error, Result};
 
-/// Builds a signed `send-dm` event from Serbero to `solver`.
-pub fn solver_dm(serbero: &Keys, solver: PublicKey, text: &str) -> Result<Event> {
+/// Builds a signed `send-dm` event from Serbero to `solver`. The message
+/// `id` carries the dispute the text is about, so clients can link it
+/// without parsing the text (`docs/messages.md` §3).
+pub fn solver_dm(
+    serbero: &Keys,
+    solver: PublicKey,
+    dispute_id: Option<Uuid>,
+    text: &str,
+) -> Result<Event> {
     let message = Message::new_dm(
-        None,
+        dispute_id,
         None,
         Action::SendDm,
         Some(Payload::TextMessage(text.to_owned())),
@@ -28,7 +36,12 @@ pub fn solver_dm(serbero: &Keys, solver: PublicKey, text: &str) -> Result<Event>
 /// Something that can deliver a text DM to a solver. The notifier depends
 /// on this rather than on a relay client, so it is testable offline.
 pub trait DmSender {
-    fn send_dm(&self, to: PublicKey, text: &str) -> impl Future<Output = Result<()>> + Send;
+    fn send_dm(
+        &self,
+        to: PublicKey,
+        dispute_id: Option<Uuid>,
+        text: &str,
+    ) -> impl Future<Output = Result<()>> + Send;
 }
 
 /// Sends DMs through the relay client.
@@ -44,8 +57,8 @@ impl RelayDmSender {
 }
 
 impl DmSender for RelayDmSender {
-    async fn send_dm(&self, to: PublicKey, text: &str) -> Result<()> {
-        let event = solver_dm(&self.keys, to, text)?;
+    async fn send_dm(&self, to: PublicKey, dispute_id: Option<Uuid>, text: &str) -> Result<()> {
+        let event = solver_dm(&self.keys, to, dispute_id, text)?;
         let output = self
             .client
             .send_event(&event)
@@ -73,7 +86,7 @@ mod tests {
         let serbero = Keys::generate();
         let solver = Keys::generate();
 
-        let event = solver_dm(&serbero, solver.public_key(), "New Mostro dispute").unwrap();
+        let event = solver_dm(&serbero, solver.public_key(), None, "New Mostro dispute").unwrap();
 
         assert_eq!(event.kind, Kind::PrivateDirectMessage);
         assert_eq!(event.pubkey, serbero.public_key());
@@ -88,12 +101,24 @@ mod tests {
     }
 
     #[test]
+    fn the_dm_names_its_dispute_in_the_message_id() {
+        let serbero = Keys::generate();
+        let solver = Keys::generate();
+        let dispute_id = Uuid::new_v4();
+
+        let event = solver_dm(&serbero, solver.public_key(), Some(dispute_id), "hi").unwrap();
+
+        let opened = unwrap_message_nip44(&event, &solver).unwrap().unwrap();
+        assert_eq!(opened.message.get_inner_message_kind().id, Some(dispute_id));
+    }
+
+    #[test]
     fn other_keys_cannot_read_the_dm() {
         let serbero = Keys::generate();
         let solver = Keys::generate();
         let stranger = Keys::generate();
 
-        let event = solver_dm(&serbero, solver.public_key(), "secret").unwrap();
+        let event = solver_dm(&serbero, solver.public_key(), None, "secret").unwrap();
 
         assert!(unwrap_message_nip44(&event, &stranger).unwrap().is_none());
     }

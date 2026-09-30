@@ -430,10 +430,16 @@ mod tests {
             permission: Permission::Write,
         }];
 
-        let from_solver = solver_dm(&solver, serbero.public_key(), "wrong seller_receipt").unwrap();
-        let from_stranger =
-            solver_dm(&stranger, serbero.public_key(), "wrong seller_receipt").unwrap();
-        let chatter = solver_dm(&solver, serbero.public_key(), "gracias").unwrap();
+        let from_solver =
+            solver_dm(&solver, serbero.public_key(), None, "wrong seller_receipt").unwrap();
+        let from_stranger = solver_dm(
+            &stranger,
+            serbero.public_key(),
+            None,
+            "wrong seller_receipt",
+        )
+        .unwrap();
+        let chatter = solver_dm(&solver, serbero.public_key(), None, "gracias").unwrap();
 
         assert_eq!(
             handle(&from_solver, &serbero, &solvers, &store, 60)

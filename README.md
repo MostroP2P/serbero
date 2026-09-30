@@ -143,13 +143,15 @@ every language, is listed in [`docs/messages.md`](docs/messages.md).
 ## What solvers see
 
 Solvers receive short direct messages from Serbero's own Nostr identity. They
-read them in Mostro clients such as Mostrix and `mostro-cli`:
+read them in Mostro clients such as Mostrix and `mostro-cli`. Every message
+starts with `Dispute <id> · …` and carries the dispute id, so a client can
+file it under its dispute:
 
 | When | Message |
 |---|---|
-| A dispute is opened | `New Mostro dispute`, with its id and who opened it |
-| Nobody took it yet | `Dispute still unattended (32 min)`, every `renotify_after` |
-| Someone took it | `Dispute taken`, and whether Serbero or a solver took it |
+| A dispute is opened | `Dispute <id> · new`, and who opened it |
+| Nobody took it yet | `Dispute <id> · unattended (32 min)`, every `renotify_after` |
+| Someone took it | `Dispute <id> · taken`, and whether Serbero or a solver took it |
 | Serbero starts assisting | That it is mediating, and that any solver can take over |
 | Handoff or guidance | A **brief**, followed by the full **transcript** |
 | New party messages after a handoff | An **update** with the new messages |

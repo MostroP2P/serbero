@@ -51,7 +51,12 @@ struct Outbox {
 }
 
 impl DmSender for Outbox {
-    async fn send_dm(&self, _to: PublicKey, text: &str) -> SerberoResult<()> {
+    async fn send_dm(
+        &self,
+        _to: PublicKey,
+        _dispute_id: Option<uuid::Uuid>,
+        text: &str,
+    ) -> SerberoResult<()> {
         let stall = *self.stall.lock().unwrap();
         tokio::time::sleep(stall).await;
         let matches = self
@@ -824,7 +829,7 @@ async fn payment_arrived_is_guided_and_closed_when_the_seller_releases() {
 
     assert_eq!(seller.next_from_serbero().await, en("resolved_thanks"));
     assert_eq!(buyer.next_from_serbero().await, en("resolved_thanks"));
-    let report = wait_for_text(&script.outbox, "Dispute d1 resolved: released\n").await;
+    let report = wait_for_text(&script.outbox, "Dispute d1 · resolved: released\n").await;
     assert!(report.contains("outcome: self_resolved"), "{report}");
     assert_eq!(
         sessions::get(script.store.lock().unwrap().conn(), "s1")
@@ -861,7 +866,7 @@ async fn payment_not_sent_is_guided_and_closed_by_a_cooperative_cancel() {
     assert_eq!(buyer.next_from_serbero().await, en("resolved_thanks"));
     let report = wait_for_text(
         &script.outbox,
-        "Dispute d1 resolved: cooperatively-canceled\n",
+        "Dispute d1 · resolved: cooperatively-canceled\n",
     )
     .await;
     assert!(report.contains("outcome: self_resolved"), "{report}");
@@ -909,7 +914,7 @@ async fn a_handed_off_dispute_resolved_later_gets_no_thanks() {
         .await
         .unwrap();
 
-    let report = wait_for_text(&script.outbox, "Dispute d1 resolved: released\n").await;
+    let report = wait_for_text(&script.outbox, "Dispute d1 · resolved: released\n").await;
     assert!(
         report.contains("outcome: handed_off (human_requested)"),
         "{report}"
@@ -1070,7 +1075,7 @@ async fn a_closing_whose_report_failed_is_completed_later_without_thanking_twice
     script.outbox.fail(false);
     assert_eq!(script.mediator.finish_pending(0, 9_100).await, 1);
 
-    let report = wait_for_text(&script.outbox, "Dispute d1 resolved: released\n").await;
+    let report = wait_for_text(&script.outbox, "Dispute d1 · resolved: released\n").await;
     assert!(report.contains("outcome: self_resolved"), "{report}");
     assert_eq!(sent_count(&script, "resolved_thanks"), 2, "one per party");
     assert_eq!(seller.next_within(QUIET).await, None, "not thanked twice");
@@ -1080,7 +1085,7 @@ async fn a_closing_whose_report_failed_is_completed_later_without_thanking_twice
         .outbox
         .texts()
         .iter()
-        .filter(|t| t.starts_with("Dispute d1 resolved:"))
+        .filter(|t| t.starts_with("Dispute d1 · resolved:"))
         .count();
     assert_eq!(reports, 1);
     assert_eq!(

@@ -127,7 +127,9 @@ async fn a_solver_reply_is_recorded_against_the_briefed_evaluation() {
 
     let solver_client = serbero::nostr::connect(&[url], WAIT).await.unwrap();
     solver_client
-        .send_event(&solver_dm(&solver, serbero.public_key(), "wrong seller_receipt").unwrap())
+        .send_event(
+            &solver_dm(&solver, serbero.public_key(), None, "wrong seller_receipt").unwrap(),
+        )
         .await
         .unwrap();
 
@@ -149,7 +151,9 @@ async fn a_reply_sent_while_serbero_was_offline_is_recorded_once_at_startup() {
         .await
         .unwrap();
     solver_client
-        .send_event(&solver_dm(&solver, serbero.public_key(), "wrong seller_receipt").unwrap())
+        .send_event(
+            &solver_dm(&solver, serbero.public_key(), None, "wrong seller_receipt").unwrap(),
+        )
         .await
         .unwrap();
     // Serbero starts later than the reply, in a later second.
@@ -200,7 +204,9 @@ async fn a_silent_relay_never_delays_solver_feedback() {
 
     let solver_client = serbero::nostr::connect(&[healthy_url], WAIT).await.unwrap();
     solver_client
-        .send_event(&solver_dm(&solver, serbero.public_key(), "wrong seller_receipt").unwrap())
+        .send_event(
+            &solver_dm(&solver, serbero.public_key(), None, "wrong seller_receipt").unwrap(),
+        )
         .await
         .unwrap();
 
