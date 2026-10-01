@@ -1,0 +1,17 @@
+# cargo-release configuration (README "Releasing"). A release is two steps:
+# a PR that bumps the version and dates the changelog, then a tag on main
+# that the release workflow turns into binaries, an image and notes.
+
+# Serbero is a daemon, not a library: never publish it to crates.io.
+publish = false
+tag-name = "v{{version}}"
+tag-message = "Serbero {{tag_name}}"
+pre-release-commit-message = "chore(release): {{version}}"
+
+# Dates the unreleased notes and opens a new empty section above them; the
+# release workflow publishes the dated section as the release notes.
+[[pre-release-replacements]]
+file = "CHANGELOG.md"
+search = "## \\[Unreleased\\]"
+replace = "## [Unreleased]\n\n## [{{version}}] - {{date}}"
+exactly = 1

@@ -39,6 +39,9 @@ works as in v0.1.0; the startup log also shows Serbero's npub.
   `ghcr.io/mostrop2p/serbero` with build provenance. `deploy/compose.yml`
   runs a pinned published version; `deploy/compose.build.yml` builds from a
   checkout instead.
+- `cargo release` support (`release.toml`): it bumps the version and dates
+  the changelog in a PR, then tags `main`. The crate is marked
+  `publish = false`, so it never goes to crates.io.
 
 ### Changed
 
