@@ -545,13 +545,27 @@ question-set version and a new evaluation run
 
 ### Releasing
 
-1. Move the `[Unreleased]` notes in [`CHANGELOG.md`](CHANGELOG.md) under a
-   new `## [X.Y.Z] - YYYY-MM-DD` heading and set `version = "X.Y.Z"` in
-   `Cargo.toml`, in one PR.
-2. After it merges, tag the merge commit and push the tag:
+Releases use [`cargo-release`](https://github.com/crate-ci/cargo-release)
+(`cargo install cargo-release`), configured in [`release.toml`](release.toml).
+It never publishes to crates.io.
+
+1. In a branch, bump the version. This sets it in `Cargo.toml` and
+   `Cargo.lock`, moves the `[Unreleased]` notes in
+   [`CHANGELOG.md`](CHANGELOG.md) under `## [X.Y.Z] - <today>`, and commits
+   `chore(release): X.Y.Z`. Open a PR with that commit:
 
    ```sh
-   git tag -a vX.Y.Z -m "Serbero vX.Y.Z" && git push origin vX.Y.Z
+   git checkout -b release/vX.Y.Z
+   cargo release X.Y.Z --no-tag --no-push --execute
+   ```
+
+   Without `--execute`, the command only shows what it would change.
+2. After the PR merges, tag the merge commit on `main` and push the tag:
+
+   ```sh
+   git checkout main && git pull
+   cargo release tag --execute     # annotated tag vX.Y.Z
+   cargo release push --execute
    ```
 
 The release workflow checks that the tag matches `Cargo.toml` and that the
