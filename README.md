@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="serbero.jpg" alt="Serbero" width="400">
+</p>
+
 # Serbero
 
 Serbero is an assistant for [Mostro](https://mostro.network) disputes. It
