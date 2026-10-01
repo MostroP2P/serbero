@@ -277,7 +277,15 @@ impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
                 // sent, so a failed send to the other party cannot lose it.
                 let mut first_in_turn = true;
                 for (party, templates) in [(Party::Buyer, buyer), (Party::Seller, seller)] {
-                    self.ask(&session, party, templates).await?;
+                    let lang = session.language(party, default);
+                    if next.resends(party) && !history::written_in(&messages, party, lang) {
+                        // The party read the intro only in another language.
+                        for template in templates {
+                            self.send_with_intro(&session, party, template).await?;
+                        }
+                    } else {
+                        self.ask(&session, party, templates).await?;
+                    }
                     if next.asks(party) {
                         self.count_round(&session, party, first_in_turn, now)?;
                         first_in_turn = false;

@@ -414,6 +414,7 @@ impl<S: DmSender> Mediator<S> {
         session: &Session,
         party: Party,
         template: &str,
+        with_intro: bool,
     ) -> Result<(String, String)> {
         let lang = session.language(party, &self.settings.default_language);
         let catalog = self
@@ -424,7 +425,12 @@ impl<S: DmSender> Mediator<S> {
             (Some(value), Some(currency)) => Some(crate::catalog::Amount { value, currency }),
             _ => None,
         };
-        Ok((catalog.render(template, amount)?, lang.to_owned()))
+        let text = if with_intro {
+            catalog.render_opening(template, amount)?
+        } else {
+            catalog.render(template, amount)?
+        };
+        Ok((text, lang.to_owned()))
     }
 
     /// Renders a template for a party in its language and sends it.
@@ -434,7 +440,28 @@ impl<S: DmSender> Mediator<S> {
         party: Party,
         template: &str,
     ) -> Result<()> {
-        let (text, lang) = self.render_for(session, party, template)?;
+        self.send_rendered(session, party, template, false).await
+    }
+
+    /// Like `send_template`, with the intro first, as in the opening: for a
+    /// party who has not read the intro in its language (§4.1 step 1).
+    pub(super) async fn send_with_intro(
+        &self,
+        session: &Session,
+        party: Party,
+        template: &str,
+    ) -> Result<()> {
+        self.send_rendered(session, party, template, true).await
+    }
+
+    async fn send_rendered(
+        &self,
+        session: &Session,
+        party: Party,
+        template: &str,
+        with_intro: bool,
+    ) -> Result<()> {
+        let (text, lang) = self.render_for(session, party, template, with_intro)?;
         let message = Outbound {
             party,
             text: &text,

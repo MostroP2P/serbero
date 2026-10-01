@@ -272,7 +272,7 @@ impl<S: DmSender> Mediator<S> {
     }
 
     async fn send_thanks(&self, session: &Session, party: Party) -> Result<()> {
-        let (text, lang) = self.render_for(session, party, RESOLVED_THANKS)?;
+        let (text, lang) = self.render_for(session, party, RESOLVED_THANKS, false)?;
         send_after_close(
             &self.client,
             &self.gate,

@@ -26,6 +26,14 @@ pub fn from_messages(messages: &[Message]) -> (Asked, PartyHistory<'_>, PartyHis
     )
 }
 
+/// Serbero already wrote to `party` in `lang`. A party who never did has not
+/// read the intro in that language either.
+pub fn written_in(messages: &[Message], party: Party, lang: &str) -> bool {
+    messages.iter().any(|m| {
+        m.direction == Direction::Out && m.party == party && m.lang.as_deref() == Some(lang)
+    })
+}
+
 /// Order is arrival order (the row id), not `created_at`: an inbound
 /// message's `created_at` comes from the party's clock and may be skewed.
 fn party_history(messages: &[Message], party: Party) -> PartyHistory<'_> {
@@ -160,6 +168,25 @@ mod tests {
         assert!(
             !buyer.outstanding,
             "the question was answered; thanks asks nothing"
+        );
+    }
+
+    #[test]
+    fn a_party_has_been_written_to_only_in_the_languages_it_got() {
+        let opening = Message {
+            lang: Some("en".into()),
+            ..out(Party::Buyer, template::ASK_BUYER_SENT)
+        };
+        let to_seller = Message {
+            lang: Some("es".into()),
+            ..out(Party::Seller, template::ASK_SELLER_RECEIVED)
+        };
+        let messages = [opening, to_seller, reply(Party::Buyer)];
+
+        assert!(written_in(&messages, Party::Buyer, "en"));
+        assert!(
+            !written_in(&messages, Party::Buyer, "es"),
+            "Spanish went only to the seller"
         );
     }
 }

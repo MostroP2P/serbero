@@ -293,8 +293,10 @@ needed question changed and who has no question outstanding.
      `other`), send the last template again in the new language; after a
      `reminder`, which only points at the unanswered question, send that
      question instead. A party who writes "no entiendo" after an English
-     question most likely could not read it. This is the only allowed repeat, and it does not count as a
-     round.
+     question most likely could not read it, nor the English `intro`: when
+     Serbero has sent the party nothing in the new language yet, the resend
+     starts with `intro`, as the opening did. This is the only allowed repeat,
+     and it does not count as a round.
    - `not_understood`: send the `_simple` variant of the last question.
    - `asks_next_step`: send `what_happens_next` (once per party), then continue
      to step 2.

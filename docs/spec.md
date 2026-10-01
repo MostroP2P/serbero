@@ -801,7 +801,9 @@ Serbero logs an operator-actionable error and runs notification only.
   Any new provider is reviewed for the same guarantees before it is enabled.
 - **Disclosure:** the opening message (`intro`) tells each party they are
   talking to an automated assistant and that messages in the chat may be
-  monitored and processed by an automated service.
+  monitored and processed by an automated service. When a party's language
+  changes, the first message in the new language repeats `intro`
+  ([judgments.md §4.1](judgments.md#41-next-question-for-each-party)).
 - **Untrusted input:** party text is only ever placed inside `state`, never in
   question instructions. A party cannot change the questions or the options,
   and every possible answer is one Serbero already handles.

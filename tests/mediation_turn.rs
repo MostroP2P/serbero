@@ -659,11 +659,13 @@ async fn asking_for_spanish_switches_the_language_and_resends_the_question() {
     buyer.say("hablas español?").await;
     let reply = buyer.next_from_serbero().await;
 
+    // The buyer read the intro only in English: the resend repeats it, as
+    // the opening did.
     let catalogs = Catalogs::embedded().unwrap();
     let es = catalogs
         .get("es")
         .unwrap()
-        .render(
+        .render_opening(
             "ask_buyer_sent",
             Some(Amount {
                 value: "50000",
