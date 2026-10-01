@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use serbero::catalog::Catalogs;
-use serbero::config::{Config, JudgeConfig, Thresholds};
+use serbero::config::{Config, JudgeConfig, Thresholds, secret_file};
 use serbero::eval::{case, report};
 use serbero::judge::Judge;
 use serbero::judge::providers::recorded::RecordedJudge;
@@ -147,10 +147,19 @@ fn recording_judge(path: &Path) -> Result<String, String> {
 fn build_judge(setup: &Setup, options: &Options) -> Result<Box<dyn Judge>, String> {
     match setup.judge.provider.as_str() {
         "typesafe" => {
-            let key = std::env::var(&setup.judge.api_key_env)
-                .map_err(|_| format!("{} is not set", setup.judge.api_key_env))?;
+            let name = &setup.judge.api_key_env;
+            let key = secret_file::lookup(
+                name,
+                &|var| std::env::var(var).ok(),
+                &secret_file::read_from_disk,
+            )
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("{name} or {name}{} is not set", secret_file::FILE_SUFFIX))?;
+            if let Some(warning) = &key.warning {
+                eprintln!("warning: {warning}");
+            }
             Ok(Box::new(
-                TypeSafeJudge::new(&setup.judge, &key).map_err(|e| e.to_string())?,
+                TypeSafeJudge::new(&setup.judge, &key.value).map_err(|e| e.to_string())?,
             ))
         }
         "recorded" => {

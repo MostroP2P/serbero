@@ -140,6 +140,85 @@ fn judge_key_is_read_when_present() {
     assert_eq!(settings.secrets.judge_api_key.unwrap().expose(), "ts-key");
 }
 
+/// A reader for `*_FILE` secrets that serves `files` as (path, contents, shared).
+fn files(
+    files: &'static [(&'static str, &'static str, bool)],
+) -> impl Fn(&Path) -> std::io::Result<secret_file::SecretFile> {
+    move |path| {
+        files
+            .iter()
+            .find(|(p, _, _)| Path::new(p) == path)
+            .map(|(_, contents, shared)| secret_file::SecretFile {
+                contents: (*contents).to_owned(),
+                shared: *shared,
+            })
+            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "not found"))
+    }
+}
+
+#[test]
+fn secrets_are_read_from_file_variables() {
+    let settings = Settings::parse_with(
+        &minimal("[mediation]\nenabled = true\n"),
+        env(&[
+            ("SERBERO_PRIVATE_KEY_FILE", "/run/secrets/key"),
+            ("TYPESAFE_API_KEY_FILE", "/run/secrets/ts"),
+        ]),
+        files(&[
+            (
+                "/run/secrets/key",
+                "4444444444444444444444444444444444444444444444444444444444444444\n",
+                false,
+            ),
+            ("/run/secrets/ts", "ts-key\n", false),
+        ]),
+    )
+    .unwrap();
+
+    assert_eq!(settings.secrets.private_key.expose(), PRIVATE_KEY);
+    assert_eq!(settings.secrets.judge_api_key.unwrap().expose(), "ts-key");
+    assert!(settings.warnings.is_empty());
+}
+
+#[test]
+fn shared_secret_file_is_reported_as_a_warning() {
+    let settings = Settings::parse_with(
+        &minimal(""),
+        env(&[("SERBERO_PRIVATE_KEY_FILE", "/run/secrets/key")]),
+        files(&[(
+            "/run/secrets/key",
+            "4444444444444444444444444444444444444444444444444444444444444444",
+            true,
+        )]),
+    )
+    .unwrap();
+
+    assert_eq!(settings.warnings.len(), 1);
+    assert!(settings.warnings[0].contains("SERBERO_PRIVATE_KEY_FILE"));
+}
+
+#[test]
+fn missing_private_key_names_both_variables() {
+    let err = error_of(&minimal(""), env(&[]));
+
+    assert!(err.contains("SERBERO_PRIVATE_KEY"), "{err}");
+    assert!(err.contains("SERBERO_PRIVATE_KEY_FILE"), "{err}");
+}
+
+#[test]
+fn invalid_key_in_a_file_does_not_leak() {
+    let err = Settings::parse_with(
+        &minimal(""),
+        env(&[("SERBERO_PRIVATE_KEY_FILE", "/run/secrets/key")]),
+        files(&[("/run/secrets/key", "nsec-not-hex", false)]),
+    )
+    .unwrap_err()
+    .to_string();
+
+    assert!(err.contains("SERBERO_PRIVATE_KEY"), "{err}");
+    assert!(!err.contains("nsec-not-hex"), "secret leaked: {err}");
+}
+
 #[test]
 fn unknown_language_is_rejected() {
     let err = error_of(

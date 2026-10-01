@@ -4,9 +4,17 @@
 #   install -m 755 serbero /usr/local/bin/serbero
 #   install -d -m 755 /etc/serbero
 #   install -m 644 config.toml /etc/serbero/config.toml
-#   install -m 600 deploy/serbero.env.sample /etc/serbero/serbero.env   # then fill it in
+#   install -d -m 700 /etc/serbero/credentials
+#   (umask 077; openssl rand -hex 32 > /etc/serbero/credentials/serbero_private_key)
 #   install -m 644 deploy/serbero.service /etc/systemd/system/serbero.service
 #   systemctl daemon-reload && systemctl enable --now serbero
+#
+# Needs systemd 247 or later for LoadCredential= and the %d specifier.
+#
+# Secrets are systemd credentials: root-only files that systemd hands to the
+# service in a private directory ($CREDENTIALS_DIRECTORY, %d), so they never
+# enter the environment. To keep them encrypted at rest, create them with
+# `systemd-creds encrypt` and use LoadCredentialEncrypted= instead.
 #
 # The database lives in /var/lib/serbero (StateDirectory), which is also the
 # working directory, so the default db_path "serbero.db" lands there. A fixed
@@ -23,8 +31,13 @@ After=network-online.target
 Type=exec
 ExecStart=/usr/local/bin/serbero
 Environment=SERBERO_CONFIG=/etc/serbero/config.toml
-# Secrets stay out of the unit file, which any user can read.
-EnvironmentFile=/etc/serbero/serbero.env
+LoadCredential=serbero_private_key:/etc/serbero/credentials/serbero_private_key
+Environment=SERBERO_PRIVATE_KEY_FILE=%d/serbero_private_key
+# With mediation enabled, also add the judge key:
+# LoadCredential=typesafe_api_key:/etc/serbero/credentials/typesafe_api_key
+# Environment=TYPESAFE_API_KEY_FILE=%d/typesafe_api_key
+# Optional non-secret settings, such as SERBERO_LOG.
+EnvironmentFile=-/etc/serbero/serbero.env
 User=serbero
 Group=serbero
 StateDirectory=serbero

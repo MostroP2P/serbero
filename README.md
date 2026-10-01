@@ -293,15 +293,26 @@ source build.
    Every field is described in [`docs/spec.md` §9](docs/spec.md#9-configuration).
    Unknown or misspelled fields are rejected at startup.
 
-2. Give Serbero its own Nostr identity. The private key never goes in the
-   file; export it as a 64-character hex key:
+2. Give Serbero its own Nostr identity, a 64-character hex private key. The
+   key never goes in the config file. Generate it on the server, into a file
+   only you can read:
 
    ```sh
-   export SERBERO_PRIVATE_KEY=<hex private key>
+   (umask 077; openssl rand -hex 32 > serbero_private_key)
+   export SERBERO_PRIVATE_KEY_FILE=$PWD/serbero_private_key
    ```
 
+   Every secret can be given either as the variable itself
+   (`SERBERO_PRIVATE_KEY=<hex>`) or as a file named by the same variable with
+   `_FILE` appended, never both. Prefer the file: it keeps the secret out of
+   the process environment, out of `docker inspect`, and out of your shell
+   history. Serbero warns at startup when a secret file is readable by other
+   users. Docker and systemd setups use files by default
+   ([Run with Docker](#run-with-docker), [Run with systemd](#run-with-systemd)).
+
    Solvers receive DMs from this identity. Serbero logs its public key, in hex
-   and as an npub, when it starts.
+   and as an npub, when it starts. Back up the key somewhere safe and offline:
+   if it is lost, Serbero gets a new npub and must be registered again.
 
 That is all the notifier needs. Mediation stays off until you enable it.
 
@@ -327,7 +338,10 @@ Mediation is opt-in and needs a few things in place first.
    account and export its key:
 
    ```sh
-   export TYPESAFE_API_KEY=<your key>
+   read -rs TYPESAFE_API_KEY                 # paste it; nothing is echoed
+   (umask 077; printf '%s\n' "$TYPESAFE_API_KEY" > typesafe_api_key)
+   unset TYPESAFE_API_KEY
+   export TYPESAFE_API_KEY_FILE=$PWD/typesafe_api_key
    ```
 
    Each operator uses and pays for its own account. A turn costs a few
@@ -398,15 +412,23 @@ system and no capabilities:
 cd deploy
 cp ../config.sample.toml config.toml     # edit it as in "Configure the notifier"
 chmod 644 config.toml                    # read by UID 10001; holds no secrets
-cp serbero.env.sample serbero.env        # SERBERO_PRIVATE_KEY, TYPESAFE_API_KEY
-chmod 600 serbero.env
+mkdir -m 700 secrets
+(umask 077; openssl rand -hex 32 > secrets/serbero_private_key)
+# back up secrets/serbero_private_key now; after the chown only root can read it
+sudo chown 10001:10001 secrets/serbero_private_key   # readable by Serbero only
 echo SERBERO_VERSION=X.Y.Z > .env        # the release to run, without the v
 docker compose up -d
 docker compose logs -f serbero
 ```
 
-Keep secrets in `serbero.env`, never in `config.toml`, `.env` or
-`compose.yml`. To inspect the database, run the queries below inside the
+This needs Docker Compose 2.24 or later. Secrets are Docker secrets: files in
+`deploy/secrets/` (gitignored), mounted
+under `/run/secrets` and read through `SERBERO_PRIVATE_KEY_FILE` and
+`TYPESAFE_API_KEY_FILE`, so they never show in `docker inspect`. To enable
+mediation, put the TypeSafe key in `secrets/typesafe_api_key` the same way and
+uncomment its lines in `compose.yml`. Never put a secret in `config.toml`,
+`.env` or `compose.yml`; `serbero.env` is only for non-secret settings such
+as `SERBERO_LOG`. To inspect the database, run the queries below inside the
 container, for example
 `docker compose exec serbero sqlite3 serbero.db "SELECT ..."`.
 
@@ -432,9 +454,13 @@ docker compose -f compose.yml -f compose.build.yml up -d --build
 
 To run the release binary as a service without Docker, use
 [`deploy/serbero.service`](deploy/serbero.service). Its header lists the
-install commands. It runs Serbero as a throwaway user with a read-only view of
-the system, reads secrets from `/etc/serbero/serbero.env` (mode 600), and keeps
-the database in `/var/lib/serbero`.
+install commands. It runs Serbero as a dedicated `serbero` user with a
+read-only view of the system and keeps the database in `/var/lib/serbero`.
+It needs systemd 247 or later (Debian 12, Ubuntu 22.04, RHEL 9). Secrets are
+systemd credentials: root-only files in `/etc/serbero/credentials`
+that systemd hands to the service in a private directory, so they never enter
+its environment. To keep them encrypted at rest, create them with
+`systemd-creds encrypt` and switch the unit to `LoadCredentialEncrypted=`.
 
 ```sh
 journalctl -u serbero -f                  # logs
@@ -471,7 +497,7 @@ docker compose exec serbero rm /data/backup.db
 chmod 600 "serbero-$(date +%F).db"
 ```
 
-Also keep a copy of `SERBERO_PRIVATE_KEY`: it is Serbero's identity, and
+Also keep a copy of Serbero's private key: it is Serbero's identity, and
 solvers recognize its messages by it.
 
 ## Inspect

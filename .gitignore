@@ -8,3 +8,4 @@ __pycache__/
 deploy/config.toml
 deploy/serbero.env
 deploy/.env
+deploy/secrets/

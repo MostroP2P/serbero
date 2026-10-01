@@ -1,6 +1,7 @@
 # Serbero configuration. Copy to config.toml and edit.
 # Reference: docs/spec.md §9. Secrets are never stored here: each *_env
-# field names the environment variable that holds the secret.
+# field names the environment variable that holds the secret, or, with
+# _FILE appended (SERBERO_PRIVATE_KEY_FILE), a file that holds it.
 
 [serbero]
 private_key_env = "SERBERO_PRIVATE_KEY"   # hex private key of Serbero's solver identity

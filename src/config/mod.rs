@@ -1,9 +1,11 @@
 //! Configuration: `config.toml` plus secrets from the environment.
 //!
 //! The file layout is specified in `docs/spec.md` §9. Secrets are never read
-//! from the file: the file names the environment variables that hold them.
+//! from the file: the file names the environment variables that hold them,
+//! and each may instead be read from the file its `<VAR>_FILE` points to.
 
 mod duration;
+pub mod secret_file;
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -26,6 +28,9 @@ pub const KNOWN_PROVIDERS: &[&str] = &["typesafe", "recorded"];
 pub struct Settings {
     pub config: Config,
     pub secrets: Secrets,
+    /// Problems worth logging that do not stop startup. Config is loaded
+    /// before logging is set up, so the caller logs them.
+    pub warnings: Vec<String>,
 }
 
 impl Settings {
@@ -36,11 +41,25 @@ impl Settings {
         Self::parse(&text, |name| std::env::var(name).ok())
     }
 
-    /// Parses and validates `text`, resolving secrets through `env`.
+    /// Parses and validates `text`, resolving secrets through `env` and,
+    /// for `*_FILE` variables, from disk.
     pub fn parse(text: &str, env: impl Fn(&str) -> Option<String>) -> Result<Self> {
+        Self::parse_with(text, env, secret_file::read_from_disk)
+    }
+
+    fn parse_with(
+        text: &str,
+        env: impl Fn(&str) -> Option<String>,
+        read_file: impl Fn(&Path) -> std::io::Result<secret_file::SecretFile>,
+    ) -> Result<Self> {
         let config = Config::parse(text)?;
-        let secrets = Secrets::resolve(&config, env)?;
-        Ok(Self { config, secrets })
+        let mut warnings = Vec::new();
+        let secrets = Secrets::resolve(&config, &env, &read_file, &mut warnings)?;
+        Ok(Self {
+            config,
+            secrets,
+            warnings,
+        })
     }
 
     /// Path from `SERBERO_CONFIG`, or `config.toml` in the working directory.
@@ -389,7 +408,8 @@ impl Config {
     }
 }
 
-/// Secrets resolved from the environment variables the config names.
+/// Secrets resolved from the environment variables the config names, or from
+/// the files their `*_FILE` variants point to.
 pub struct Secrets {
     pub private_key: Secret,
     /// Present when the judge provider needs a key and it is set.
@@ -397,17 +417,24 @@ pub struct Secrets {
 }
 
 impl Secrets {
-    fn resolve(config: &Config, env: impl Fn(&str) -> Option<String>) -> Result<Self> {
-        let read = |name: &str| {
-            env(name)
-                .map(|v| v.trim().to_owned())
-                .filter(|v| !v.is_empty())
+    fn resolve(
+        config: &Config,
+        env: &impl Fn(&str) -> Option<String>,
+        read_file: &impl Fn(&Path) -> std::io::Result<secret_file::SecretFile>,
+        warnings: &mut Vec<String>,
+    ) -> Result<Self> {
+        let mut read = |name: &str| -> Result<Option<String>> {
+            Ok(secret_file::lookup(name, env, read_file)?.map(|found| {
+                warnings.extend(found.warning);
+                found.value
+            }))
         };
 
         let key_env = &config.serbero.private_key_env;
-        let private_key = read(key_env).ok_or_else(|| {
+        let key_file = format!("{key_env}{}", secret_file::FILE_SUFFIX);
+        let private_key = read(key_env)?.ok_or_else(|| {
             Error::Config(format!(
-                "environment variable {key_env} (serbero.private_key_env) is not set"
+                "environment variable {key_env} or {key_file} (serbero.private_key_env) is not set"
             ))
         })?;
         if !is_hex_key(&private_key) || SecretKey::from_hex(&private_key).is_err() {
@@ -416,12 +443,13 @@ impl Secrets {
             ));
         }
 
-        let judge_api_key = read(&config.judge.api_key_env).map(Secret);
+        let api_env = &config.judge.api_key_env;
+        let judge_api_key = read(api_env)?.map(Secret);
         let needs_key = config.mediation.enabled && config.judge.provider != "recorded";
         if needs_key && judge_api_key.is_none() {
             return invalid(format!(
-                "mediation is enabled but environment variable {} (judge.api_key_env) is not set",
-                config.judge.api_key_env
+                "mediation is enabled but environment variable {api_env} or {api_env}{} (judge.api_key_env) is not set",
+                secret_file::FILE_SUFFIX
             ));
         }
 

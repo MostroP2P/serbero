@@ -2,19 +2,36 @@
 #
 #   cp ../config.sample.toml config.toml     # then edit it
 #   chmod 644 config.toml                    # read by UID 10001; holds no secrets
-#   cp serbero.env.sample serbero.env        # then fill it in
-#   chmod 600 serbero.env
+#   mkdir -m 700 secrets
+#   (umask 077; openssl rand -hex 32 > secrets/serbero_private_key)
+#   # back up the key now: after the chown only root can read it
+#   sudo chown 10001:10001 secrets/serbero_private_key   # readable by Serbero only
+#
+# Needs Docker Compose 2.24 or later (optional env_file).
 #   echo SERBERO_VERSION=X.Y.Z > .env        # a released version, without the v
 #   docker compose up -d
 #
-# The version is required, never `latest`, so an update is a deliberate
-# change: edit .env and run `docker compose up -d` again. To build from this
-# checkout instead, add compose.build.yml (see that file).
+# Secrets are Docker secrets: files mounted under /run/secrets and read through
+# *_FILE variables, so they never show in `docker inspect`. The version is
+# required, never `latest`, so an update is a deliberate change: edit .env and
+# run `docker compose up -d` again. To build from this checkout instead, add
+# compose.build.yml (see that file).
 services:
   serbero:
     image: ghcr.io/mostrop2p/serbero:${SERBERO_VERSION:?set SERBERO_VERSION in deploy/.env to a released version}
     restart: unless-stopped
-    env_file: serbero.env
+    # Optional, non-secret settings such as SERBERO_LOG.
+    env_file:
+      - path: serbero.env
+        required: false
+    environment:
+      SERBERO_PRIVATE_KEY_FILE: /run/secrets/serbero_private_key
+      # With mediation enabled, also uncomment the typesafe_api_key secret
+      # below and here:
+      # TYPESAFE_API_KEY_FILE: /run/secrets/typesafe_api_key
+    secrets:
+      - serbero_private_key
+      # - typesafe_api_key
     volumes:
       - ./config.toml:/etc/serbero/config.toml:ro
       - serbero-data:/data
@@ -29,3 +46,9 @@ services:
 
 volumes:
   serbero-data:
+
+secrets:
+  serbero_private_key:
+    file: ./secrets/serbero_private_key
+  # typesafe_api_key:
+  #   file: ./secrets/typesafe_api_key

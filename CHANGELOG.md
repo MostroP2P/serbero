@@ -7,6 +7,20 @@ section `[X.Y.Z]` as its release notes.
 
 ## [Unreleased]
 
+### Added
+
+- Secrets can be read from files: `SERBERO_PRIVATE_KEY_FILE` and
+  `TYPESAFE_API_KEY_FILE` (any `*_env` variable with `_FILE` appended), as
+  Docker secrets and systemd credentials provide. Setting both forms is an
+  error, and a secret file readable by other users is logged as a warning.
+
+### Changed
+
+- `deploy/compose.yml` passes secrets as Docker secrets and
+  `deploy/serbero.service` as systemd credentials, so they no longer sit in
+  the container or process environment. `serbero.env` now holds only
+  non-secret settings.
+
 ## [0.2.0] - 2026-10-01
 
 Groundwork for assisted mediation. Mediation stays off, and notification
