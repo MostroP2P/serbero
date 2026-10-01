@@ -27,3 +27,66 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
+
+  docker:
+    name: container image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - run: docker build -t serbero:ci .
+      # Starts the image without relays: the binary must run as the
+      # unprivileged user, find the mounted config, and fail fast on a
+      # missing secret instead of starting half-configured.
+      - name: smoke test
+        run: |
+          test "$(docker run --rm --entrypoint id serbero:ci -u):$(docker run --rm --entrypoint id serbero:ci -g)" = "10001:10001"
+          set +e
+          out=$(docker run --rm --read-only \
+            -v "$PWD/config.sample.toml:/etc/serbero/config.toml:ro" \
+            serbero:ci 2>&1)
+          code=$?
+          set -e
+          echo "$out"
+          test "$code" -ne 0
+          grep -q "SERBERO_PRIVATE_KEY" <<<"$out"
+
+  systemd:
+    name: systemd unit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --locked --bin serbero
+      # Installs the unit as the README says and runs it, so the hardening
+      # options are exercised against the real binary, not only parsed.
+      - name: install
+        run: |
+          sudo useradd --system --home-dir /var/lib/serbero --shell /usr/sbin/nologin serbero
+          sudo install -m 755 target/release/serbero /usr/local/bin/serbero
+          sudo install -d -m 755 /etc/serbero
+          sudo install -m 644 config.sample.toml /etc/serbero/config.toml
+          printf 'SERBERO_PRIVATE_KEY=%s\n' "$(openssl rand -hex 32)" > serbero.env
+          sudo install -m 600 serbero.env /etc/serbero/serbero.env
+          rm serbero.env
+          sudo install -m 644 deploy/serbero.service /etc/systemd/system/serbero.service
+          sudo systemd-analyze verify /etc/systemd/system/serbero.service
+          sudo systemctl daemon-reload
+      - name: start, check, stop
+        run: |
+          sudo systemctl start serbero
+          # Migrations are the first database writes; they need no relay.
+          for _ in $(seq 30); do
+            sudo journalctl -u serbero --no-pager | grep -q "applied migration" && break
+            sleep 1
+          done
+          sudo journalctl -u serbero --no-pager
+          systemctl is-active serbero
+          test "$(sudo stat -c '%U %a' /var/lib/serbero)" = "serbero 700"
+          sudo test -f /var/lib/serbero/serbero.db
+          sudo systemctl stop serbero
+          test "$(systemctl show -p Result --value serbero)" = "success"

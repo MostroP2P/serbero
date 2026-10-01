@@ -1,0 +1,30 @@
+# Runs Serbero with Docker Compose. From this directory:
+#
+#   cp ../config.sample.toml config.toml     # then edit it
+#   chmod 644 config.toml                    # read by UID 10001; holds no secrets
+#   cp serbero.env.sample serbero.env        # then fill it in
+#   chmod 600 serbero.env
+#   docker compose up -d --build
+#
+# The image is built from this checkout; to update, `git pull` and run the
+# last command again.
+services:
+  serbero:
+    image: serbero:local
+    build: ..
+    restart: unless-stopped
+    env_file: serbero.env
+    volumes:
+      - ./config.toml:/etc/serbero/config.toml:ro
+      - serbero-data:/data
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+volumes:
+  serbero-data:

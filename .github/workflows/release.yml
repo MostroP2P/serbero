@@ -60,8 +60,11 @@ jobs:
       - name: Package
         run: |
           name="serbero-${GITHUB_REF_NAME}-${{ matrix.target }}"
-          mkdir "$name"
+          mkdir -p "$name/deploy"
           cp "target/${{ matrix.target }}/release/serbero" LICENSE README.md CHANGELOG.md config.sample.toml "$name/"
+          # The systemd unit and env template, so the README's systemd
+          # instructions work from the archive alone.
+          cp deploy/serbero.service deploy/serbero.env.sample "$name/deploy/"
           tar -czf "$name.tar.gz" "$name"
           shasum -a 256 "$name.tar.gz" > "$name.tar.gz.sha256"
       - uses: actions/upload-artifact@v7
