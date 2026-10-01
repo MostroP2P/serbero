@@ -15,10 +15,11 @@ Mostro with read-only permission, so Mostro rejects any fund action it could
 send. The parties act from their own Mostro apps, and a human solver always
 has the final word.
 
-> **Status.** The notifier is released (v0.1.0). Assisted mediation is
-> complete in `main` but ships **off**: it turns on only after its judge has
-> been calibrated on labeled conversations, which is the remaining work
-> ([`docs/plan.md`](docs/plan.md), tasks T3.8 to T3.10).
+> **Status.** The notifier is released. Assisted mediation ships **off** and
+> can be turned on as a **pilot**, which gathers the facts and hands every
+> case to a solver ([Enable mediation](#enable-mediation)). Calibrating its
+> judge on labeled conversations, so it can also guide the parties, is the
+> remaining work ([`docs/plan.md`](docs/plan.md), tasks T3.8 to T3.10).
 
 ## Contents
 
@@ -351,11 +352,33 @@ Mediation is opt-in and needs a few things in place first.
    Each operator uses and pays for its own account. A turn costs a few
    thousand input tokens. For real disputes, ask TypeSafe for zero data
    retention.
-5. **Calibrated thresholds.** Serbero acts on the judge's answers only with
-   thresholds measured for that exact judge and model, in
-   `[judge.thresholds."typesafe/jev-<version>"]`. Without them, mediation stays
-   off. The values come from a committed calibration report
-   ([`docs/evaluation.md`](docs/evaluation.md)); they are not published yet.
+5. **Thresholds for the judge.** Serbero acts on the judge's answers only
+   with a `[judge.thresholds."typesafe/jev-<version>"]` table for that exact
+   judge and model; without it, mediation stays off. No calibration report on
+   a full golden set is published yet, so for now mediation runs as a
+   **pilot** with the defaults of
+   [`docs/judgments.md` §3](docs/judgments.md#3-from-answers-to-facts), which
+   `config.sample.toml` ships commented out:
+
+   ```toml
+   [judge.thresholds."typesafe/jev-1.13.0"]
+   guide = 0.90
+   fact = 0.80
+   human_request = 0.80
+   fraud = 0.60
+   conflict = 0.75
+   outside_scope = 0.80
+   validated_languages = []
+   ```
+
+   With `validated_languages = []`, Serbero talks to both parties, gathers the
+   payment facts, notices requests for a human and fraud signals, and hands
+   every case to a solver with a brief. It never tells a party to release or
+   cancel. Adding a language to `validated_languages` also lets Serbero guide
+   the parties to resolve on their own in that language; do that only once
+   you accept the evidence for it
+   ([`docs/evaluation.md` §3.1](docs/evaluation.md#31-pilot)). Watch the
+   pilot with the reports in [Monitor mediation](#monitor-mediation).
 6. **Turn it on** in `config.toml`:
 
    ```toml

@@ -155,6 +155,26 @@ The same targets gate every provider and model. To switch Serbero to a new one:
 A new model version from the same provider (for example a new Jev release) goes
 through steps 2–4 as well.
 
+### 3.1 Pilot
+
+Until a calibration report on the full golden set is committed, mediation may
+run as a pilot with the defaults of
+[judgments.md §3](judgments.md#3-from-answers-to-facts) (`guide` 0.90, `fact`
+0.80, `human_request` 0.80, `fraud` 0.60, `conflict` 0.75, `outside_scope`
+0.80). They were chosen by the cost of each error, and the 10-case Spanish
+sample (`eval/sample/REPORT-es.md`) met every target with them, but 10 cases
+cannot place a threshold.
+
+A pilot has two levels, chosen by the operator:
+
+| Level | `validated_languages` | Serbero |
+|---|---|---|
+| Fact-gathering | `[]` | Talks to both parties, gathers the facts, and hands every case to a solver with a brief (`facts_gathered`, `wants_human`, `fraud_signal`, ...). It never guides a fund action. |
+| Guided | Languages the operator accepts | Also guides the parties to release or cancel in those languages ([spec.md §7.4](spec.md#74-self-resolution-paths)), still only after the acting party stated the fact. |
+
+Start with fact-gathering. A pilot's conversations, labeled, become golden
+cases; the calibration report that replaces the defaults comes from them.
+
 ## 4. Tests without a live judge
 
 - **Recorded answers.** Every golden case also stores the answers the judge returned

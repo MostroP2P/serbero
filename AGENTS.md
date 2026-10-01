@@ -162,6 +162,8 @@ Serbero from repeating that:
   bump.
 - Thresholds are configuration, per provider and model. Changing them, or
   enabling a new provider or model, requires a committed calibration report.
+  Until the first one exists, a pilot may run with the defaults of
+  `docs/judgments.md` §3 ([`docs/evaluation.md` §3.1](docs/evaluation.md#31-pilot)).
 - Jev reference: https://docs.typesafe.ai/llms.txt
 
 ## Workflow
