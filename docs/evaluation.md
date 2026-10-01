@@ -165,15 +165,17 @@ run as a pilot with the defaults of
 sample (`eval/sample/REPORT-es.md`) met every target with them, but 10 cases
 cannot place a threshold.
 
-A pilot has two levels, chosen by the operator:
+A pilot runs with `validated_languages = []`: Serbero talks to both parties,
+gathers the facts, and hands every case to a solver with a brief
+(`facts_gathered`, `wants_human`, `fraud_signal`, ...). It never guides a fund
+action. A pilot never adds a language to `validated_languages`: a language
+enters that list only when its golden set meets the targets of §2 for the
+active judge ([spec.md §7.7](spec.md#77-languages)), so no party receives
+guidance from a judge that was not measured in its language.
 
-| Level | `validated_languages` | Serbero |
-|---|---|---|
-| Fact-gathering | `[]` | Talks to both parties, gathers the facts, and hands every case to a solver with a brief (`facts_gathered`, `wants_human`, `fraud_signal`, ...). It never guides a fund action. |
-| Guided | Languages the operator accepts | Also guides the parties to release or cancel in those languages ([spec.md §7.4](spec.md#74-self-resolution-paths)), still only after the acting party stated the fact. |
-
-Start with fact-gathering. A pilot's conversations, labeled, become golden
-cases; the calibration report that replaces the defaults comes from them.
+A pilot's conversations, labeled, become golden cases; the calibration report
+that replaces the defaults, and the validation that enables guidance, come
+from them.
 
 ## 4. Tests without a live judge
 

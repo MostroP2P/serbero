@@ -374,11 +374,12 @@ Mediation is opt-in and needs a few things in place first.
    With `validated_languages = []`, Serbero talks to both parties, gathers the
    payment facts, notices requests for a human and fraud signals, and hands
    every case to a solver with a brief. It never tells a party to release or
-   cancel. Adding a language to `validated_languages` also lets Serbero guide
-   the parties to resolve on their own in that language; do that only once
-   you accept the evidence for it
-   ([`docs/evaluation.md` §3.1](docs/evaluation.md#31-pilot)). Watch the
-   pilot with the reports in [Monitor mediation](#monitor-mediation).
+   cancel. Keep the list empty during the pilot: a language is added only
+   when its golden set passes the evaluation, which is what lets Serbero
+   guide the parties to resolve on their own in it
+   ([`docs/evaluation.md` §3.1](docs/evaluation.md#31-pilot),
+   [`docs/spec.md` §7.7](docs/spec.md#77-languages)). Watch the pilot with
+   the reports in [Monitor mediation](#monitor-mediation).
 6. **Turn it on** in `config.toml`:
 
    ```toml

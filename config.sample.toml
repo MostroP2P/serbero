@@ -65,4 +65,4 @@ max_retries = 3
 # fraud = 0.60
 # conflict = 0.75
 # outside_scope = 0.80
-# validated_languages = []               # languages allowed to guide the parties (spec §7.7)
+# validated_languages = []               # languages whose golden set passed for this judge (spec §7.7); empty in a pilot

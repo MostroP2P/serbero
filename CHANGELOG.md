@@ -11,9 +11,9 @@ section `[X.Y.Z]` as its release notes.
 
 - Mediation can run as a pilot with the default thresholds of
   `docs/judgments.md` §3 until a calibration report is published. With
-  `validated_languages = []` it gathers the facts and hands every case to a
-  solver, and never guides a fund action (README "Enable mediation",
-  `docs/evaluation.md` §3.1).
+  `validated_languages = []`, which a pilot keeps, it gathers the facts and
+  hands every case to a solver, and never guides a fund action (README
+  "Enable mediation", `docs/evaluation.md` §3.1).
 
 ## [0.2.1] - 2026-10-01
 
