@@ -288,8 +288,12 @@ Serbero only writes to a party who wrote in this turn, or to a party whose
 needed question changed and who has no question outstanding.
 
 1. **Message kind first.**
-   - `asks_language`: send the last template again in the newly detected
-     language. This is the only allowed repeat, and it does not count as a
+   - **Language resend.** When this turn changed the party's language and the
+     party did not answer (`asks_language`, `not_understood`, `greeting` or
+     `other`), send the last template again in the new language; after a
+     `reminder`, which only points at the unanswered question, send that
+     question instead. A party who writes "no entiendo" after an English
+     question most likely could not read it. This is the only allowed repeat, and it does not count as a
      round.
    - `not_understood`: send the `_simple` variant of the last question.
    - `asks_next_step`: send `what_happens_next` (once per party), then continue
@@ -316,9 +320,11 @@ Two clarifications, as implemented in `src/policy/next.rs`:
   when no fact is needed from that party. A fact still unknown after all of
   its questions were used gets no template; the decision table then hands
   off with `uncertain` (§4 row 11).
-- `asks_language` resends the last template only when this turn changed the
-  party's language. Otherwise the resend would repeat the same text in the
-  same language, and the turn continues with step 2.
+- The language resend happens only when this turn changed the party's
+  language. Otherwise it would repeat the same text in the same language, and
+  the turn continues normally. A party who answers (`answers`,
+  `asks_next_step`) in a new language gets the next step in that language
+  instead of the answered question again.
 
 A round is counted whenever a turn sends at least one question template,
 except a language resend (`NextQuestions::counts_as_round`).

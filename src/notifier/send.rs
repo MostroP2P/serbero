@@ -150,7 +150,7 @@ pub(crate) mod testing {
             use std::sync::atomic::Ordering;
             let early = self
                 .fail_first
-                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
+                .try_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
                 .is_ok();
             if early || self.failing.contains(&to) {
                 return Err(Error::Nostr("relay rejected".into()));
