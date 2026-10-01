@@ -1,6 +1,7 @@
 //! Dispute detection, solver notifications, and the dispute lifecycle
 //! (`docs/spec.md` §6).
 
+pub mod observers;
 pub mod send;
 pub mod text;
 
@@ -12,7 +13,7 @@ use mostro_core::prelude::NOSTR_DISPUTE_EVENT_KIND;
 use nostr_sdk::prelude::{Event, Kind, PublicKey};
 use serde_json::json;
 
-pub use self::send::{Solver, notify_observers, notify_solvers};
+pub use self::send::{Solver, notify_solvers};
 use crate::error::{Error, Result};
 use crate::mostro::dispute_event::{self, DisputeEvent};
 use crate::nostr::dm::DmSender;

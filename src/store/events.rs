@@ -75,9 +75,9 @@ pub fn last_notification_to(
         .find(|event| event.id == id))
 }
 
-/// Whether `observer` (hex pubkey) already received the solver message
-/// `subject` about `dispute_id`.
-pub fn observer_notified(
+/// Whether `subject` about `dispute_id` is already queued for `observer`
+/// (hex pubkey).
+pub fn observer_queued(
     conn: &Connection,
     dispute_id: &str,
     observer: &str,
@@ -85,12 +85,65 @@ pub fn observer_notified(
 ) -> Result<bool> {
     Ok(conn.query_row(
         "SELECT EXISTS (SELECT 1 FROM events
-             WHERE dispute_id = ?1 AND kind = 'observer_notified'
+             WHERE dispute_id = ?1 AND kind = 'observer_pending'
                AND json_extract(payload_json, '$.observer') = ?2
                AND json_extract(payload_json, '$.subject') = ?3)",
         params![dispute_id, observer, subject],
         |row| row.get(0),
     )?)
+}
+
+/// An observer notice queued and not delivered yet.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ObserverNotice {
+    pub dispute_id: String,
+    /// Hex pubkey.
+    pub observer: String,
+    pub subject: String,
+    pub failures: u32,
+    pub last_failure: Option<i64>,
+}
+
+/// Observer notices queued since `since` without an `observer_notified`
+/// for the same dispute, observer and subject, oldest first, with their
+/// failed attempts.
+pub fn pending_observer_notices(conn: &Connection, since: i64) -> Result<Vec<ObserverNotice>> {
+    let mut stmt = conn.prepare(
+        "WITH queued AS (
+             SELECT id, dispute_id,
+                    json_extract(payload_json, '$.observer') AS observer,
+                    json_extract(payload_json, '$.subject') AS subject
+             FROM events WHERE kind = 'observer_pending' AND created_at >= ?1
+         ), attempts AS (
+             SELECT dispute_id, kind, created_at,
+                    json_extract(payload_json, '$.observer') AS observer,
+                    json_extract(payload_json, '$.subject') AS subject
+             FROM events
+             WHERE kind IN ('observer_notified', 'observer_failed') AND created_at >= ?1
+         )
+         SELECT q.dispute_id, q.observer, q.subject,
+                (SELECT count(*) FROM attempts a
+                  WHERE a.kind = 'observer_failed' AND a.dispute_id = q.dispute_id
+                    AND a.observer = q.observer AND a.subject = q.subject),
+                (SELECT max(a.created_at) FROM attempts a
+                  WHERE a.kind = 'observer_failed' AND a.dispute_id = q.dispute_id
+                    AND a.observer = q.observer AND a.subject = q.subject)
+         FROM queued q
+         WHERE NOT EXISTS (SELECT 1 FROM attempts a
+                           WHERE a.kind = 'observer_notified' AND a.dispute_id = q.dispute_id
+                             AND a.observer = q.observer AND a.subject = q.subject)
+         ORDER BY q.id",
+    )?;
+    let rows = stmt.query_map(params![since], |row| {
+        Ok(ObserverNotice {
+            dispute_id: row.get(0)?,
+            observer: row.get(1)?,
+            subject: row.get(2)?,
+            failures: row.get(3)?,
+            last_failure: row.get(4)?,
+        })
+    })?;
+    rows.map(|r| r.map_err(Into::into)).collect()
 }
 
 /// Disputes with a `pending` event since `since` that no later `done` event

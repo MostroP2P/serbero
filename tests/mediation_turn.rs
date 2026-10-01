@@ -418,6 +418,7 @@ async fn script_with(picks: &[(&'static str, (&'static str, f64))], options: Opt
         } else {
             vec![]
         },
+        observer_wake: Default::default(),
         own_takes: Arc::default(),
         judge: Default::default(),
         finishing: Default::default(),
@@ -773,6 +774,15 @@ async fn a_handoff_tells_observers_the_reason_and_nothing_the_parties_said() {
     buyer.say("quiero hablar con una persona").await;
     let _notice = buyer.next_from_serbero().await;
 
+    assert!(
+        script.outbox.texts_to(&observer()).is_empty(),
+        "only queued: the brief and the party notice never wait for an observer"
+    );
+    script
+        .mediator
+        .deliver_observer_notices(serbero::daemon::now())
+        .await
+        .unwrap();
     assert_eq!(
         script.outbox.texts_to(&observer()),
         ["Dispute d1 · handed off: human_requested"],

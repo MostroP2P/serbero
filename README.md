@@ -274,9 +274,10 @@ source build.
 
    Optionally, add an `[[observers]]` entry with the hex pubkey of a service
    such as mostro-watchdog, to post mediation progress to your team chat. It
-   gets only the first line of each mediation update (for example
+   gets one line per mediation update (for example
    `Dispute <id> · handed off: conflicting_claims`), never what the parties
-   wrote ([`docs/messages.md` §3](docs/messages.md#observers)).
+   wrote, and only while mediation is enabled
+   ([`docs/messages.md` §3](docs/messages.md#observers)).
 
    Every field is described in [`docs/spec.md` §9](docs/spec.md#9-configuration).
    Unknown or misspelled fields are rejected at startup.
@@ -397,6 +398,11 @@ sqlite3 serbero.db "SELECT datetime(created_at, 'unixepoch'), kind, payload_json
 sqlite3 serbero.db "SELECT dispute_id, json_extract(payload_json, '$.solver'),
   json_extract(payload_json, '$.error') FROM events
   WHERE kind = 'notification_failed' AND created_at > unixepoch() - 86400;"
+
+# Observer notices that failed in the last day (each is retried for a day)
+sqlite3 serbero.db "SELECT dispute_id, json_extract(payload_json, '$.subject'),
+  json_extract(payload_json, '$.error') FROM events
+  WHERE kind = 'observer_failed' AND created_at > unixepoch() - 86400;"
 ```
 
 ## Monitor mediation

@@ -337,9 +337,9 @@ mediation: yes · outcome: handed_off (conflicting_claims) · rounds: 2 · durat
 An `[[observers]]` entry ([spec.md §9](spec.md#9-configuration)) is a service,
 such as mostro-watchdog, that relays mediation progress to a team chat. Its
 DMs use the same `send-dm` envelope and message `id` as solver messages, but
-the text is **only the first line**, so nothing a party wrote ever reaches it.
-Observers get the first line of these solver messages, each subject at most
-once per dispute, even when the solvers are retried:
+the text is a **single line**, built from the dispute id and the subject
+alone, so nothing a party wrote can reach it. Observers hear only about
+mediation, so they get nothing while `[mediation].enabled` is false:
 
 | Solver message | Observer text |
 |---|---|
@@ -348,10 +348,18 @@ once per dispute, even when the solvers are retried:
 | Brief on handoff | `Dispute <dispute_id> · handed off: <reason>` |
 | Brief on guidance | `Dispute <dispute_id> · guidance sent: <path>` |
 
-Deliveries are recorded as `observer_notified` / `observer_failed` events with
-the subject, never as solver notifications, so they never count as a solver
-having been told. A failed delivery is tried again the next time the solvers
-are.
+Delivery (`src/notifier/observers.rs`):
+
+- Mediation only **queues** a notice (`observer_pending`), in the transaction
+  that records what it reports, once per dispute, observer and subject. One
+  task sends the queue, oldest first, so a slow observer never delays a
+  solver, a party, or a retry, and two tasks never send the same notice.
+- Each send is cut after 15 s. A failed one (`observer_failed`) is retried a
+  minute later, then with the wait doubling up to an hour, for a day.
+- A delivered notice is recorded as `observer_notified`; neither event counts
+  as a solver notification. A stop between a send and its record may repeat
+  that one notice after a restart, so observers should still ignore a header
+  they already have.
 
 ## 4. Template rules
 

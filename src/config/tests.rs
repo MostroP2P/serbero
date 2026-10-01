@@ -459,3 +459,15 @@ fn an_observer_listed_twice_is_refused() {
 
     assert!(err.contains("observers[1].pubkey is listed twice"), "{err}");
 }
+
+#[test]
+fn the_mostro_node_cannot_be_an_observer() {
+    let text = minimal(&format!("[[observers]]\npubkey = \"{MOSTRO}\"\n"));
+
+    let err = error_of(&text, base_env());
+
+    assert!(
+        err.contains("observers[0].pubkey is the Mostro node"),
+        "{err}"
+    );
+}

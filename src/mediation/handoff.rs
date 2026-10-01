@@ -112,7 +112,10 @@ impl<S: DmSender> Mediator<S> {
                 },
             )?;
             let pending = pending_brief(&tx, session, json!({ "reason": reason.as_str() }), now)?;
+            let subject = Subject::Handoff(reason).text();
+            let queued = self.queue_for_observers(&tx, &session.dispute_id, &subject, now)?;
             tx.commit()?;
+            self.wake_observers(queued);
             pending
         };
         let delivered = self
@@ -196,14 +199,7 @@ impl<S: DmSender> Mediator<S> {
                     .map(|part| ("transcript", part)),
             )
             .collect();
-        let delivered = self.deliver(&to, dispute_id, &parts, now).await?;
-        // Retried with the solvers until one gets the brief; an observer
-        // still gets its first line only once.
-        if let Some((notification, brief)) = parts.first() {
-            self.notify_observers(dispute_id, notification, brief, now)
-                .await;
-        }
-        Ok(delivered)
+        self.deliver(&to, dispute_id, &parts, now).await
     }
 
     /// Sends every part, in order, to each solver. Returns how many solvers

@@ -65,6 +65,13 @@ pub async fn run(settings: &Settings) -> Result<()> {
         "serbero starting"
     );
 
+    if !config.observers.is_empty() && !config.mediation.enabled {
+        tracing::warn!(
+            observers = config.observers.len(),
+            "observers are configured but mediation is disabled; they get nothing until it is enabled"
+        );
+    }
+
     let renotify_after = config.notify.renotify_after.as_secs() as i64;
     let (notifications, mut background) = start(&client, &notifier, mostro, renotify_after).await?;
 
@@ -153,10 +160,14 @@ fn start_mediation(
         sender: RelayDmSender::new(client.clone(), keys.clone()),
         solvers: solvers.to_vec(),
         observers,
+        observer_wake: Default::default(),
         own_takes: notifier.own_takes(),
         judge: Default::default(),
         finishing: Default::default(),
     });
+    if !mediator.observers.is_empty() {
+        background.push(tokio::spawn(Arc::clone(&mediator).run_observer_notices()));
+    }
     // Party messages reach the turn task through the chat channels.
     let (forward, received) = tokio::sync::mpsc::unbounded_channel();
     chats.forward_to(forward);

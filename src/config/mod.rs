@@ -276,6 +276,9 @@ impl Config {
         for (i, observer) in self.observers.iter().enumerate() {
             let field = format!("observers[{i}].pubkey");
             check_pubkey(&field, &observer.pubkey)?;
+            if same(&self.mostro.pubkey, &observer.pubkey) {
+                return invalid(format!("{field} is the Mostro node"));
+            }
             // A solver already gets every message in full; as an observer it
             // would get each header a second time.
             if self

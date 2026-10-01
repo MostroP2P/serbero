@@ -768,10 +768,14 @@ validated_languages = ["en", "es"]       # languages whose golden set passed for
 ```
 
 Startup fails fast on a missing key, an unknown language, or a solver list that
-cannot be parsed. An observer must not also be a solver (it would get every
-header twice) and may be listed once. With `[mediation].enabled = true` and no reachable judge, or
+cannot be parsed. With `[mediation].enabled = true` and no reachable judge, or
 no calibrated thresholds for the configured provider and model,
 Serbero logs an operator-actionable error and runs notification only.
+
+An observer must not be the Mostro node or a solver (a solver already gets
+every message in full) and may be listed once. Observers hear only about
+mediation: with it disabled, Serbero logs a warning and sends them nothing
+([messages.md](messages.md#observers)).
 
 ## 10. Degraded mode
 
@@ -785,6 +789,7 @@ Serbero logs an operator-actionable error and runs notification only.
 | All relays drop | Retries continue; notifications resume on reconnect. |
 | SQLite write fails on detect | The dispute is not notified until it is seen again; integrity over delivery. |
 | A solver DM fails | Recorded; the reminder timer covers unattended disputes. |
+| An observer's DM fails or its relays are silent | Recorded; its own task retries it with backoff for a day. No solver, party or retry waits for an observer. |
 | Take-dispute fails or times out | No session; the dispute stays a normal notified dispute. |
 | Judge `Unavailable` (overload, rate limit, network, timeout) | Retry with backoff up to `max_retries`, then `Handoff(judge_unavailable)`. |
 | Judge `Unauthorized` / `InvalidRequest` / `Malformed` | No retry; `Handoff(judge_unavailable)` and an operator error log (key, adapter, or question-set bug). |

@@ -11,6 +11,7 @@ pub mod feedback;
 pub mod guide;
 pub mod handoff;
 pub mod history;
+pub mod observers;
 pub mod settle;
 pub mod timers;
 pub mod turn;
@@ -30,7 +31,7 @@ use crate::chat::{Outbound, OutboundGate, send_to_party};
 use crate::error::{Error, Result};
 use crate::mostro::{node, order, take};
 use crate::nostr::dm::DmSender;
-use crate::notifier::{OwnTakes, Solver, notify_observers, notify_solvers};
+use crate::notifier::{OwnTakes, Solver, notify_solvers};
 use crate::policy::template;
 use crate::store::sessions::{self, NewSession, Party, Session, SessionState};
 use crate::store::{Store, disputes, events};
@@ -114,6 +115,8 @@ pub struct Mediator<S> {
     /// Get the first line of what solvers are told about mediation
     /// (`docs/messages.md` §3).
     pub observers: Vec<PublicKey>,
+    /// Woken when an observer notice is queued (`observers`).
+    pub observer_wake: tokio::sync::Notify,
     pub own_takes: OwnTakes,
     /// Set once the judge passed its startup checks; no dispute is taken
     /// and no turn is judged before.
@@ -153,27 +156,6 @@ pub enum Opening {
 }
 
 impl<S: DmSender> Mediator<S> {
-    /// Tells the observers what the solvers were just told, first line
-    /// only, once per dispute and subject (`notify_observers`).
-    pub(crate) async fn notify_observers(
-        &self,
-        dispute_id: &str,
-        notification: &str,
-        text: &str,
-        now: i64,
-    ) {
-        notify_observers(
-            &self.store,
-            &self.sender,
-            &self.observers,
-            dispute_id,
-            notification,
-            text,
-            now,
-        )
-        .await;
-    }
-
     pub fn set_ready(&self, judge: ReadyJudge) {
         if let Ok(mut slot) = self.judge.write() {
             *slot = Some(Arc::new(judge));
@@ -297,10 +279,16 @@ impl<S: DmSender> Mediator<S> {
             let reason = format!("cannot reach the parties: {e}");
             return self.abandon(dispute_id, Some(&session), &reason, now).await;
         }
-        {
+        let queued = {
             let store = self.lock_store()?;
-            sessions::set_state(store.conn(), &session.session_id, SessionState::Active, now)?;
-        }
+            let tx = store.conn().unchecked_transaction()?;
+            sessions::set_state(&tx, &session.session_id, SessionState::Active, now)?;
+            let queued =
+                self.queue_for_observers(&tx, dispute_id, crate::solver::MEDIATING, now)?;
+            tx.commit()?;
+            queued
+        };
+        self.wake_observers(queued);
         let text = crate::solver::mediation_started(dispute_id);
         notify_solvers(
             &self.store,
@@ -312,8 +300,6 @@ impl<S: DmSender> Mediator<S> {
             now,
         )
         .await?;
-        self.notify_observers(dispute_id, "mediation_started", &text, now)
-            .await;
         self.record(
             dispute_id,
             Some(&session.session_id),
@@ -465,7 +451,7 @@ impl<S: DmSender> Mediator<S> {
         // and the pending notice exist together, so neither a failed send,
         // a failed audit write, nor a restart or cancellation mid-send can
         // lose the retry. The notice stays pending until a solver got it.
-        {
+        let queued = {
             let store = self.lock_store()?;
             let tx = store.conn().unchecked_transaction()?;
             if let Some(session_id) = session_id {
@@ -491,8 +477,12 @@ impl<S: DmSender> Mediator<S> {
                     },
                 )?;
             }
+            let queued =
+                self.queue_for_observers(&tx, dispute_id, crate::solver::OPENING_FAILED, now)?;
             tx.commit()?;
-        }
+            queued
+        };
+        self.wake_observers(queued);
         if let Some(session_id) = session_id {
             let _ = self.chats.close(session_id).await;
         }
@@ -522,10 +512,6 @@ impl<S: DmSender> Mediator<S> {
                 0
             }
         };
-        // Observers are told on the first attempt that reaches them; the
-        // timer's retries for the solvers never repeat it.
-        self.notify_observers(dispute_id, "handoff", &text, now)
-            .await;
         if delivered == 0 {
             return;
         }

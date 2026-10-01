@@ -317,6 +317,7 @@ async fn harness(
             permission: Permission::Write,
         }],
         observers: vec![],
+        observer_wake: Default::default(),
         own_takes: Arc::default(),
         judge: Default::default(),
         finishing: Default::default(),
@@ -840,6 +841,11 @@ async fn observers_hear_that_mediation_started_in_one_line() {
         [serbero::solver::mediation_started(&dispute_id)],
         "solvers still get the full message"
     );
+    assert!(
+        h.outbox.texts_to(&observer()).is_empty(),
+        "only queued: the opening never waits for an observer"
+    );
+    h.mediator.deliver_observer_notices(1_001).await.unwrap();
     assert_eq!(
         h.outbox.texts_to(&observer()),
         [format!("Dispute {dispute_id} · mediating")]
@@ -858,14 +864,21 @@ async fn an_opening_failure_reaches_an_observer_once_across_retries() {
     h.outbox.fail(true);
 
     let opening = h.mediator.consider(&dispute_id, 1_000).await;
+    h.mediator.deliver_observer_notices(1_001).await.unwrap();
     h.outbox.fail(false);
-    h.mediator.tick(2_000).await.unwrap();
-    h.mediator.tick(2_100).await.unwrap();
+    // The solvers' notice is retried by the timer; the observer's by its
+    // own backoff, a minute after the failure.
+    h.mediator.tick(1_030).await.unwrap();
+    h.mediator.deliver_observer_notices(1_030).await.unwrap();
+    assert!(h.outbox.texts_to(&observer()).is_empty(), "backing off");
+    for now in [1_061, 1_200, 5_000] {
+        h.mediator.deliver_observer_notices(now).await.unwrap();
+    }
 
     assert!(matches!(opening, Opening::HandedOff(_)), "{opening:?}");
     assert_eq!(
         h.outbox.texts_to(&observer()),
         [format!("Dispute {dispute_id} · mediation could not start")],
-        "missed while relays failed, delivered with the retry, never twice"
+        "missed while relays failed, delivered on the retry, never twice"
     );
 }
