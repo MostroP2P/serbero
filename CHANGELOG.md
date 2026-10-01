@@ -35,6 +35,10 @@ works as in v0.1.0; the startup log also shows Serbero's npub.
 - `Dockerfile`, `deploy/compose.yml`, and a hardened systemd unit
   (`deploy/serbero.service`), with README sections on running them and on
   backing up the database. CI builds the image and smoke-tests it.
+- Each release publishes a multi-arch container image (amd64, arm64) to
+  `ghcr.io/mostrop2p/serbero` with build provenance. `deploy/compose.yml`
+  runs a pinned published version; `deploy/compose.build.yml` builds from a
+  checkout instead.
 
 ### Changed
 

@@ -4,14 +4,15 @@
 #   chmod 644 config.toml                    # read by UID 10001; holds no secrets
 #   cp serbero.env.sample serbero.env        # then fill it in
 #   chmod 600 serbero.env
-#   docker compose up -d --build
+#   echo SERBERO_VERSION=X.Y.Z > .env        # a released version, without the v
+#   docker compose up -d
 #
-# The image is built from this checkout; to update, `git pull` and run the
-# last command again.
+# The version is required, never `latest`, so an update is a deliberate
+# change: edit .env and run `docker compose up -d` again. To build from this
+# checkout instead, add compose.build.yml (see that file).
 services:
   serbero:
-    image: serbero:local
-    build: ..
+    image: ghcr.io/mostrop2p/serbero:${SERBERO_VERSION:?set SERBERO_VERSION in deploy/.env to a released version}
     restart: unless-stopped
     env_file: serbero.env
     volumes:

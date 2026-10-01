@@ -1,0 +1,10 @@
+# Builds the image from this checkout instead of pulling a release:
+#
+#   echo SERBERO_VERSION=dev > .env          # any label for the local image
+#   docker compose -f compose.yml -f compose.build.yml up -d --build
+#
+# To update, `git pull` and run the last command again.
+services:
+  serbero:
+    image: serbero:${SERBERO_VERSION:?set SERBERO_VERSION in deploy/.env to a label for the local image}
+    build: ..
