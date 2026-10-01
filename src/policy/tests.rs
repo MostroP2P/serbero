@@ -10,7 +10,8 @@ struct Case {
     buyer_language: &'static str,
     seller_language: &'static str,
     validated: Vec<String>,
-    rounds: u32,
+    buyer_rounds: u32,
+    seller_rounds: u32,
     asked: Asked,
     next: NextQuestions,
 }
@@ -25,7 +26,8 @@ impl Case {
             buyer_language: "es",
             seller_language: "es",
             validated: vec!["en".into(), "es".into()],
-            rounds: 0,
+            buyer_rounds: 0,
+            seller_rounds: 0,
             asked: Asked::default(),
             next: NextQuestions::default(),
         }
@@ -38,7 +40,8 @@ impl Case {
             buyer_language: self.buyer_language,
             seller_language: self.seller_language,
             validated_languages: &self.validated,
-            rounds: self.rounds,
+            buyer_rounds: self.buyer_rounds,
+            seller_rounds: self.seller_rounds,
             max_rounds: MAX_ROUNDS,
             asked: &self.asked,
             next: &self.next,
@@ -100,7 +103,7 @@ fn conflict_answered(c: &mut Case) {
     c.facts.seller_has_checked = true;
 }
 fn rounds_used(c: &mut Case) {
-    c.rounds = MAX_ROUNDS;
+    c.buyer_rounds = MAX_ROUNDS;
 }
 fn question_pending(c: &mut Case) {
     c.next.buyer = vec![ASK_BUYER_SENT];
@@ -259,6 +262,33 @@ fn row_9_the_round_limit_hands_off() {
     assert_eq!(
         Case::new().with(rounds_used).decide(),
         Action::Handoff(HandoffReason::RoundLimit)
+    );
+}
+
+#[test]
+fn row_9_either_party_reaching_the_limit_hands_off() {
+    let case = Case::new().with(|c| c.seller_rounds = MAX_ROUNDS);
+
+    assert_eq!(case.decide(), Action::Handoff(HandoffReason::RoundLimit));
+}
+
+#[test]
+fn row_9_rounds_are_counted_per_party() {
+    // Staging: a quick seller got two questions and the buyer one; the
+    // buyer still had questions left, so the session must go on.
+    let case = Case::new()
+        .with(|c| {
+            c.buyer_rounds = 1;
+            c.seller_rounds = MAX_ROUNDS - 1;
+        })
+        .with(question_pending);
+
+    assert_eq!(
+        case.decide(),
+        Action::Ask {
+            buyer: vec![ASK_BUYER_SENT],
+            seller: vec![],
+        }
     );
 }
 

@@ -25,6 +25,8 @@ fn session() -> Session {
         buyer_chat_cursor: None,
         seller_chat_cursor: None,
         rounds: 0,
+        buyer_rounds: 0,
+        seller_rounds: 0,
         handoff_reason: None,
         opened_at: 1_700_000_100,
         updated_at: 1_700_000_100,

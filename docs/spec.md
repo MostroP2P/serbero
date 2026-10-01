@@ -555,7 +555,7 @@ opening ─▶ active ─┬─▶ guiding ─┬─▶ closed          (parties
 | `human_requested` | A party explicitly asks for a person. Honored at any point. |
 | `outside_scope` | The dispute is not about payment confirmation, or the seller objects to a payment that arrived (wrong amount, another sender, reversed). |
 | `unresponsive` | A party did not answer the question and the reminder within `response_timeout`. |
-| `round_limit` | `max_rounds` question rounds sent without reaching a decision. |
+| `round_limit` | One party was sent `max_rounds` question rounds without reaching a decision. |
 | `uncertain` | The same fact stayed below threshold after its follow-up question. |
 | `judge_unavailable` | The judge failed after retries. The brief carries the transcript without judgments. |
 | `flood` | A party sent more than `max_messages_per_turn` in one turn repeatedly. |
@@ -665,7 +665,9 @@ sessions (
   seller_lang         TEXT,
   buyer_chat_cursor   INTEGER,               -- `since` for the buyer channel
   seller_chat_cursor  INTEGER,               -- `since` for the seller channel
-  rounds              INTEGER NOT NULL DEFAULT 0,
+  rounds              INTEGER NOT NULL DEFAULT 0,  -- turns that asked anyone, for reports
+  buyer_rounds        INTEGER NOT NULL DEFAULT 0,  -- rounds the buyer was asked; the limit applies here
+  seller_rounds       INTEGER NOT NULL DEFAULT 0,
   handoff_reason      TEXT,
   opened_at           INTEGER NOT NULL,
   updated_at          INTEGER NOT NULL
@@ -739,7 +741,7 @@ default_language = "en"                   # language of the opening message
 languages = ["en", "es", "pt"]            # any language with a messages/<code>.toml file (§7.7)
 quiet_period = "20s"
 response_timeout = "30m"                  # per question, before the reminder and again before handoff
-max_rounds = 3
+max_rounds = 3                            # question rounds per party before handing off
 max_message_chars = 2000
 max_messages_per_turn = 10
 self_resolution_timeout = "2h"           # guiding → handed_off if not resolved

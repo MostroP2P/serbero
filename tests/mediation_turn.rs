@@ -31,7 +31,7 @@ use serbero::notifier::Solver;
 use serbero::policy::HandoffReason;
 use serbero::store::disputes::{self, Initiator, NewDispute};
 use serbero::store::messages::{self, Direction, NewMessage};
-use serbero::store::sessions::{self, NewSession, SessionState};
+use serbero::store::sessions::{self, NewSession, Party, SessionState};
 use serbero::store::{Store, evaluations, events};
 
 const WAIT: Duration = Duration::from_secs(10);
@@ -637,9 +637,13 @@ async fn a_burst_of_messages_is_judged_once_and_answered_once() {
         serde_json::json!({ "ask": { "buyer": ["ask_buyer_sent_simple"], "seller": [] } }),
         "the seller still owes an answer and gets nothing"
     );
+    let session = sessions::get(store.conn(), "s1").unwrap().unwrap();
+    assert_eq!(session.rounds, 1);
+    assert_eq!(session.rounds_of(Party::Buyer), 1);
     assert_eq!(
-        sessions::get(store.conn(), "s1").unwrap().unwrap().rounds,
-        1
+        session.rounds_of(Party::Seller),
+        0,
+        "the seller was not asked"
     );
 }
 

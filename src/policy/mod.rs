@@ -210,13 +210,19 @@ pub struct NextQuestions {
 }
 
 impl NextQuestions {
-    /// A turn counts as a round when it sends a question that is not a
-    /// language resend (§4.1).
-    pub fn counts_as_round(&self) -> bool {
-        let asks = |templates: &[&str], resend: bool| {
-            !resend && templates.iter().any(|t| template::is_question(t))
+    /// The turn asks `party` a question that is not a language resend,
+    /// which counts as one of the party's rounds (§4.1).
+    pub fn asks(&self, party: Party) -> bool {
+        let (templates, resend) = match party {
+            Party::Buyer => (&self.buyer, self.buyer_resend),
+            Party::Seller => (&self.seller, self.seller_resend),
         };
-        asks(&self.buyer, self.buyer_resend) || asks(&self.seller, self.seller_resend)
+        !resend && templates.iter().any(|t| template::is_question(t))
+    }
+
+    /// A turn counts as a round of the session when it asks either party.
+    pub fn counts_as_round(&self) -> bool {
+        self.asks(Party::Buyer) || self.asks(Party::Seller)
     }
 }
 
@@ -230,7 +236,9 @@ pub struct Turn<'a> {
     pub seller_language: &'a str,
     /// The active judge's `validated_languages`.
     pub validated_languages: &'a [String],
-    pub rounds: u32,
+    /// Question rounds each party was asked so far.
+    pub buyer_rounds: u32,
+    pub seller_rounds: u32,
     pub max_rounds: u32,
     pub asked: &'a Asked,
     pub next: &'a NextQuestions,
@@ -271,7 +279,7 @@ pub fn decide(turn: &Turn<'_>) -> Action {
     if conflict_with_both_sides_answered(turn) {
         return Action::Handoff(HandoffReason::ConflictingClaims);
     }
-    if turn.rounds >= turn.max_rounds {
+    if turn.buyer_rounds.max(turn.seller_rounds) >= turn.max_rounds {
         return Action::Handoff(HandoffReason::RoundLimit);
     }
     let next = turn.next;

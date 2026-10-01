@@ -30,6 +30,10 @@ pub const MIGRATIONS: &[Migration] = &[
         name: "messages_unique_per_party",
         sql: include_str!("sql/0004_messages_unique_per_party.sql"),
     },
+    Migration {
+        name: "rounds_per_party",
+        sql: include_str!("sql/0005_rounds_per_party.sql"),
+    },
 ];
 
 /// Brings `conn` up to the latest version in `migrations`. Each migration

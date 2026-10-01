@@ -261,7 +261,8 @@ impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
             buyer_language: session.language(Party::Buyer, default),
             seller_language: session.language(Party::Seller, default),
             validated_languages: &ready.thresholds.validated_languages,
-            rounds: session.rounds,
+            buyer_rounds: session.buyer_rounds,
+            seller_rounds: session.seller_rounds,
             max_rounds: self.settings.max_rounds,
             asked: &asked,
             next: &next,
@@ -430,8 +431,12 @@ impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
 
     fn count_round(&self, session: &Session, next: &NextQuestions, now: i64) -> Result<()> {
         if next.counts_as_round() {
+            let asked: Vec<Party> = [Party::Buyer, Party::Seller]
+                .into_iter()
+                .filter(|party| next.asks(*party))
+                .collect();
             let store = self.lock_store()?;
-            sessions::increment_rounds(store.conn(), &session.session_id, now)?;
+            sessions::increment_rounds(store.conn(), &session.session_id, &asked, now)?;
         }
         Ok(())
     }
