@@ -150,7 +150,7 @@ impl Default for MediationConfig {
                 .collect(),
             quiet_period: Duration::from_secs(20),
             response_timeout: Duration::from_secs(30 * 60),
-            max_rounds: 3,
+            max_rounds: 4,
             max_message_chars: 2_000,
             max_messages_per_turn: 10,
             self_resolution_timeout: Duration::from_secs(2 * 3_600),
