@@ -7,6 +7,8 @@ section `[X.Y.Z]` as its release notes.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-01
+
 Groundwork for assisted mediation. Mediation stays off, and notification
 works as in v0.1.0; the startup log also shows Serbero's npub.
 
