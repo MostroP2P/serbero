@@ -27,3 +27,27 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
+
+  docker:
+    name: container image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - run: docker build -t serbero:ci .
+      # Starts the image without relays: the binary must run as the
+      # unprivileged user, find the mounted config, and fail fast on a
+      # missing secret instead of starting half-configured.
+      - name: smoke test
+        run: |
+          test "$(docker run --rm --entrypoint id serbero:ci -u):$(docker run --rm --entrypoint id serbero:ci -g)" = "10001:10001"
+          set +e
+          out=$(docker run --rm --read-only \
+            -v "$PWD/config.sample.toml:/etc/serbero/config.toml:ro" \
+            serbero:ci 2>&1)
+          code=$?
+          set -e
+          echo "$out"
+          test "$code" -ne 0
+          grep -q "SERBERO_PRIVATE_KEY" <<<"$out"

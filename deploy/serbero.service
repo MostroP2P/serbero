@@ -1,0 +1,58 @@
+# systemd unit for running the Serbero binary without Docker.
+#
+#   useradd --system --home-dir /var/lib/serbero --shell /usr/sbin/nologin serbero
+#   install -m 755 serbero /usr/local/bin/serbero
+#   install -d -m 755 /etc/serbero
+#   install -m 644 config.toml /etc/serbero/config.toml
+#   install -m 600 serbero.env /etc/serbero/serbero.env
+#   install -m 644 serbero.service /etc/systemd/system/serbero.service
+#   systemctl daemon-reload && systemctl enable --now serbero
+#
+# The database lives in /var/lib/serbero (StateDirectory), which is also the
+# working directory, so the default db_path "serbero.db" lands there. A fixed
+# user, rather than DynamicUser, lets the operator inspect and back up the
+# database as that user without creating files the service cannot write.
+
+[Unit]
+Description=Serbero, dispute assistant for Mostro
+Documentation=https://github.com/MostroP2P/serbero
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=exec
+ExecStart=/usr/local/bin/serbero
+Environment=SERBERO_CONFIG=/etc/serbero/config.toml
+# Secrets stay out of the unit file, which any user can read.
+EnvironmentFile=/etc/serbero/serbero.env
+User=serbero
+Group=serbero
+StateDirectory=serbero
+WorkingDirectory=/var/lib/serbero
+Restart=on-failure
+RestartSec=5s
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectClock=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictSUIDSGID=yes
+RemoveIPC=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

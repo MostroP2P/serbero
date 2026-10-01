@@ -5,3 +5,5 @@
 config.toml
 .env
 __pycache__/
+deploy/config.toml
+deploy/serbero.env

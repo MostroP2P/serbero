@@ -28,6 +28,9 @@ has the final word.
 - [Configure the notifier](#configure-the-notifier)
 - [Enable mediation](#enable-mediation)
 - [Run](#run)
+- [Run with Docker](#run-with-docker)
+- [Run with systemd](#run-with-systemd)
+- [Back up](#back-up)
 - [Inspect](#inspect)
 - [Monitor mediation](#monitor-mediation)
 - [Documentation](#documentation)
@@ -371,6 +374,71 @@ synced again every 10 minutes and whenever a relay reconnects. A dispute
 Serbero already knows is never announced as new again. A dispute that was opened and then taken or
 resolved while Serbero was offline is recorded without notifying anyone. Live
 mediation sessions resume where they were.
+
+## Run with Docker
+
+Serbero only makes outbound connections, so the container needs no published
+port. The [`Dockerfile`](Dockerfile) builds an image that runs as an
+unprivileged user (UID 10001), reads the config from
+`/etc/serbero/config.toml`, and keeps the database in the `/data` volume.
+[`deploy/compose.yml`](deploy/compose.yml) runs it with a read-only root file
+system and no capabilities:
+
+```sh
+cd deploy
+cp ../config.sample.toml config.toml     # edit it as in "Configure the notifier"
+chmod 644 config.toml                    # read by UID 10001; holds no secrets
+cp serbero.env.sample serbero.env        # SERBERO_PRIVATE_KEY, TYPESAFE_API_KEY
+chmod 600 serbero.env
+docker compose up -d --build             # builds the image from this checkout
+docker compose logs -f serbero
+```
+
+Keep secrets in `serbero.env`, never in `config.toml` or `compose.yml`. To
+inspect the database, run the queries below inside the container, for example
+`docker compose exec serbero sqlite3 serbero.db "SELECT ..."`.
+
+To update, `git pull` and run `docker compose up -d --build` again. Live
+mediation sessions resume where they were.
+
+## Run with systemd
+
+To run the release binary as a service without Docker, use
+[`deploy/serbero.service`](deploy/serbero.service). Its header lists the
+install commands. It runs Serbero as a throwaway user with a read-only view of
+the system, reads secrets from `/etc/serbero/serbero.env` (mode 600), and keeps
+the database in `/var/lib/serbero`.
+
+```sh
+journalctl -u serbero -f                  # logs
+cd /var/lib/serbero && sudo -u serbero sqlite3 serbero.db "SELECT ..."
+```
+
+Run `sqlite3` as the `serbero` user: as root, it can leave root-owned `-wal`
+and `-shm` files that the service then cannot write.
+
+## Back up
+
+Back up the database with SQLite's online backup. It is safe while Serbero
+runs; copying the file with `cp` is not, because recent writes may still be in
+the `-wal` file.
+
+```sh
+sqlite3 serbero.db ".backup serbero-$(date +%F).db"
+```
+
+Under systemd, run it as the `serbero` user in `/var/lib/serbero`.
+
+Under Docker, run it in the container and copy the result out:
+
+```sh
+docker compose exec serbero sqlite3 serbero.db ".backup /data/backup.db"
+docker compose cp serbero:/data/backup.db "serbero-$(date +%F).db"
+docker compose exec serbero rm /data/backup.db
+```
+
+Also keep a copy of `SERBERO_PRIVATE_KEY`: it is Serbero's identity, and
+solvers recognize its messages by it.
 
 ## Inspect
 

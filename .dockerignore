@@ -1,0 +1,8 @@
+# Only what the build needs; never secrets or local state.
+*
+!Cargo.toml
+!Cargo.lock
+!build.rs
+!src/
+!messages/
+!config.sample.toml

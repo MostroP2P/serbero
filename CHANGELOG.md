@@ -32,9 +32,14 @@ works as in v0.1.0; the startup log also shows Serbero's npub.
   per mediation update (mediating, could not start, handed off, guidance
   sent), once per dispute, without any party text. Notices are queued with
   the state they report and delivered by their own task, with retries.
+- `Dockerfile`, `deploy/compose.yml`, and a hardened systemd unit
+  (`deploy/serbero.service`), with README sections on running them and on
+  backing up the database. CI builds the image and smoke-tests it.
 
 ### Changed
 
+- Logs are colored only on a terminal and never when `NO_COLOR` is set, so
+  `docker logs` and the systemd journal carry no escape codes.
 - Solver DMs carry the dispute id in the message `id`, and every solver
   message starts with `Dispute <dispute_id> · <subject>`, so clients such as
   Mostrix can link and classify them without parsing prose
