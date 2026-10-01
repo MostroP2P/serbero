@@ -4,8 +4,8 @@
 #   install -m 755 serbero /usr/local/bin/serbero
 #   install -d -m 755 /etc/serbero
 #   install -m 644 config.toml /etc/serbero/config.toml
-#   install -m 600 serbero.env /etc/serbero/serbero.env
-#   install -m 644 serbero.service /etc/systemd/system/serbero.service
+#   install -m 600 deploy/serbero.env.sample /etc/serbero/serbero.env   # then fill it in
+#   install -m 644 deploy/serbero.service /etc/systemd/system/serbero.service
 #   systemctl daemon-reload && systemctl enable --now serbero
 #
 # The database lives in /var/lib/serbero (StateDirectory), which is also the
@@ -28,6 +28,8 @@ EnvironmentFile=/etc/serbero/serbero.env
 User=serbero
 Group=serbero
 StateDirectory=serbero
+# The database holds dispute conversations: no other local user may read it.
+StateDirectoryMode=0700
 WorkingDirectory=/var/lib/serbero
 Restart=on-failure
 RestartSec=5s

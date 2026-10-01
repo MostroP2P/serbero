@@ -246,7 +246,7 @@ SHA-256 checksum and the sample config:
 ```sh
 shasum -a 256 -c serbero-vX.Y.Z-x86_64-unknown-linux-gnu.tar.gz.sha256
 tar -xzf serbero-vX.Y.Z-x86_64-unknown-linux-gnu.tar.gz
-cd serbero-vX.Y.Z-x86_64-unknown-linux-gnu    # ./serbero and config.sample.toml
+cd serbero-vX.Y.Z-x86_64-unknown-linux-gnu    # ./serbero, config.sample.toml, deploy/
 ```
 
 To build from source, you need the latest stable Rust toolchain:
@@ -423,11 +423,17 @@ Back up the database with SQLite's online backup. It is safe while Serbero
 runs; copying the file with `cp` is not, because recent writes may still be in
 the `-wal` file.
 
+The database holds the parties' conversations, so keep backups private: set
+`umask 077` first, so the copy is readable only by you, and store it where
+other users cannot read it.
+
 ```sh
+umask 077
 sqlite3 serbero.db ".backup serbero-$(date +%F).db"
 ```
 
-Under systemd, run it as the `serbero` user in `/var/lib/serbero`.
+Under systemd, run it as the `serbero` user in `/var/lib/serbero`, then move
+the copy somewhere private.
 
 Under Docker, run it in the container and copy the result out:
 
@@ -435,6 +441,7 @@ Under Docker, run it in the container and copy the result out:
 docker compose exec serbero sqlite3 serbero.db ".backup /data/backup.db"
 docker compose cp serbero:/data/backup.db "serbero-$(date +%F).db"
 docker compose exec serbero rm /data/backup.db
+chmod 600 "serbero-$(date +%F).db"
 ```
 
 Also keep a copy of `SERBERO_PRIVATE_KEY`: it is Serbero's identity, and

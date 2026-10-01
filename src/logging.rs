@@ -1,5 +1,6 @@
 //! Tracing subscriber setup.
 
+use std::ffi::OsString;
 use std::io::IsTerminal;
 
 use tracing_subscriber::EnvFilter;
@@ -23,7 +24,7 @@ pub fn init(fallback: &str) -> Result<()> {
         .map_err(|e| Error::Logging(format!("invalid log filter {directive:?}: {e}")))?;
     let ansi = use_ansi(
         std::io::stdout().is_terminal(),
-        std::env::var(NO_COLOR_ENV).ok(),
+        std::env::var_os(NO_COLOR_ENV),
     );
     tracing_subscriber::fmt()
         .with_env_filter(filter)
@@ -41,7 +42,7 @@ fn directive(env_value: Option<String>, fallback: &str) -> String {
 
 /// Colors only on a terminal: under Docker or systemd, escape codes would end
 /// up as noise in `docker logs` and the journal.
-fn use_ansi(stdout_is_terminal: bool, no_color: Option<String>) -> bool {
+fn use_ansi(stdout_is_terminal: bool, no_color: Option<OsString>) -> bool {
     stdout_is_terminal && no_color.is_none_or(|v| v.is_empty())
 }
 
@@ -69,7 +70,14 @@ mod tests {
     fn no_color_disables_colors_on_a_terminal() {
         assert!(!use_ansi(true, Some("1".into())));
         // An empty NO_COLOR is ignored (https://no-color.org).
-        assert!(use_ansi(true, Some(String::new())));
+        assert!(use_ansi(true, Some(OsString::new())));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn non_unicode_no_color_disables_colors() {
+        use std::os::unix::ffi::OsStringExt;
+        assert!(!use_ansi(true, Some(OsString::from_vec(vec![0xff]))));
     }
 
     #[test]
