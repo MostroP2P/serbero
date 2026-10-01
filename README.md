@@ -378,7 +378,8 @@ mediation sessions resume where they were.
 ## Run with Docker
 
 Each release publishes a multi-arch image (amd64 and arm64) to
-`ghcr.io/mostrop2p/serbero`, tagged `X.Y.Z`, `X.Y` and `latest`. Serbero only
+`ghcr.io/mostrop2p/serbero`, tagged `X.Y.Z`; `X.Y` and `latest` follow the
+newest release of the line and overall. Serbero only
 makes outbound connections, so the container needs no published port. The
 image runs as an unprivileged user (UID 10001), reads the config from
 `/etc/serbero/config.toml`, and keeps the database in the `/data` volume.

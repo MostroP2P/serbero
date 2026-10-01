@@ -143,19 +143,25 @@ jobs:
       id-token: write
       attestations: write
     steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@v8
         with:
           path: ${{ runner.temp }}/digests
           pattern: digest-*
           merge-multiple: true
-      # `X.Y.Z`, `X.Y` and `latest`; a pre-release tag gets only its own.
-      - id: meta
-        uses: docker/metadata-action@v6
-        with:
-          images: ${{ env.IMAGE }}
-          tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
+      # `X.Y.Z` always; `X.Y` and `latest` only while this is the newest
+      # stable release of its line, or of all, so a slower run for an older
+      # tag never moves them back (scripts/image-aliases.sh).
+      - id: tags
+        name: Choose the image tags
+        run: |
+          version=${GITHUB_REF_NAME#v}
+          git ls-remote --tags --refs origin | sed 's|.*refs/tags/||' \
+            | scripts/image-aliases.sh "$version" > "$RUNNER_TEMP/aliases"
+          cat "$RUNNER_TEMP/aliases"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
       - uses: docker/setup-buildx-action@v4
       - uses: docker/login-action@v4
         with:
@@ -165,14 +171,15 @@ jobs:
       - name: Create the multi-arch image
         working-directory: ${{ runner.temp }}/digests
         run: |
-          mapfile -t tags < <(jq -r '.tags[] | "-t", .' <<< "$DOCKER_METADATA_OUTPUT_JSON")
+          tags=()
+          while read -r alias; do tags+=(-t "$IMAGE:$alias"); done < "$RUNNER_TEMP/aliases"
           sources=()
           for digest in *; do sources+=("$IMAGE@sha256:$digest"); done
           docker buildx imagetools create "${tags[@]}" "${sources[@]}"
       - id: digest
         name: Read the image digest
         env:
-          VERSION: ${{ steps.meta.outputs.version }}
+          VERSION: ${{ steps.tags.outputs.version }}
         run: |
           digest=$(docker buildx imagetools inspect "$IMAGE:$VERSION" --format '{{json .Manifest}}' | jq -r .digest)
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
