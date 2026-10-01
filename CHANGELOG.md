@@ -7,6 +7,8 @@ section `[X.Y.Z]` as its release notes.
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-10-01
+
 ### Added
 
 - Secrets can be read from files: `SERBERO_PRIVATE_KEY_FILE` and

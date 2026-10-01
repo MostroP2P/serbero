@@ -1,6 +1,6 @@
 [package]
 name = "serbero"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 description = "Helps the parties of a Mostro dispute resolve it themselves, and escalates to a human solver when needed"
 license = "MIT"
