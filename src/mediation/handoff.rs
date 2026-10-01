@@ -414,6 +414,7 @@ impl<S: DmSender> Mediator<S> {
         session: &Session,
         party: Party,
         template: &str,
+        with_intro: bool,
     ) -> Result<(String, String)> {
         let lang = session.language(party, &self.settings.default_language);
         let catalog = self
@@ -424,17 +425,31 @@ impl<S: DmSender> Mediator<S> {
             (Some(value), Some(currency)) => Some(crate::catalog::Amount { value, currency }),
             _ => None,
         };
-        Ok((catalog.render(template, amount)?, lang.to_owned()))
+        let text = if with_intro {
+            catalog.render_opening(template, amount)?
+        } else {
+            catalog.render(template, amount)?
+        };
+        Ok((text, lang.to_owned()))
     }
 
-    /// Renders a template for a party in its language and sends it.
+    /// Renders a template for a party in its language and sends it. The
+    /// first message to a party in a language other than the ones it already
+    /// got starts with the intro, as the opening did, so it reads the
+    /// disclosure in a language it understands (`docs/messages.md`).
     pub(super) async fn send_template(
         &self,
         session: &Session,
         party: Party,
         template: &str,
     ) -> Result<()> {
-        let (text, lang) = self.render_for(session, party, template)?;
+        let lang = session.language(party, &self.settings.default_language);
+        let with_intro = {
+            let store = self.lock_store()?;
+            let sent = messages::list_for_session(store.conn(), &session.session_id)?;
+            super::history::needs_intro(&sent, party, lang)
+        };
+        let (text, lang) = self.render_for(session, party, template, with_intro)?;
         let message = Outbound {
             party,
             text: &text,

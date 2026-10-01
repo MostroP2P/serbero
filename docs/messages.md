@@ -13,7 +13,12 @@ quotes. No text is generated at runtime.
   `50.000 ARS` in Spanish; see [spec.md §7.2](spec.md#72-opening)). If either is unknown, the template's `_noamount` form is
   used, which is the same sentence without it.
 - The first message a party receives is `intro` followed by one blank line and
-  the question. `intro` is never sent again.
+  the question. `intro` is sent once per language: the first template a party
+  receives in a language it has received nothing in yet (a language resend,
+  [judgments.md §4.1](judgments.md#41-next-question-for-each-party), or any
+  later template once its language changed) starts with `intro` and one blank
+  line, so the party reads the disclosure in a language it understands. A
+  switch back to a language the party already received does not repeat it.
 - The language is the party's detected language
   ([judgments.md §3](judgments.md#3-from-answers-to-facts)), or
   `default_language` until one is detected.
