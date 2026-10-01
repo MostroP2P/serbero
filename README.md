@@ -272,6 +272,12 @@ source build.
    - one `[[solvers]]` entry per solver to notify, with their hex pubkey and
      `read` or `write` permission.
 
+   Optionally, add an `[[observers]]` entry with the hex pubkey of a service
+   such as mostro-watchdog, to post mediation progress to your team chat. It
+   gets only the first line of each mediation update (for example
+   `Dispute <id> · handed off: conflicting_claims`), never what the parties
+   wrote ([`docs/messages.md` §3](docs/messages.md#observers)).
+
    Every field is described in [`docs/spec.md` §9](docs/spec.md#9-configuration).
    Unknown or misspelled fields are rejected at startup.
 

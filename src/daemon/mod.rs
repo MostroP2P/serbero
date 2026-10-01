@@ -60,6 +60,7 @@ pub async fn run(settings: &Settings) -> Result<()> {
         mostro = %mostro,
         relays = config.mostro.relays.len(),
         solvers = config.solvers.len(),
+        observers = config.observers.len(),
         mediation = config.mediation.enabled,
         "serbero starting"
     );
@@ -125,6 +126,12 @@ fn start_mediation(
 ) -> Result<()> {
     let config = &settings.config;
     let catalogs = crate::catalog::Catalogs::embedded()?;
+    let observers = config
+        .observers
+        .iter()
+        .enumerate()
+        .map(|(i, o)| crate::nostr::public_key(&format!("observers[{i}].pubkey"), &o.pubkey))
+        .collect::<Result<Vec<_>>>()?;
     let mediator = Arc::new(crate::mediation::Mediator {
         client: client.clone(),
         keys: keys.clone(),
@@ -145,6 +152,7 @@ fn start_mediation(
         },
         sender: RelayDmSender::new(client.clone(), keys.clone()),
         solvers: solvers.to_vec(),
+        observers,
         own_takes: notifier.own_takes(),
         judge: Default::default(),
         finishing: Default::default(),

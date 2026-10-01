@@ -398,3 +398,64 @@ fn a_config_parsed_without_secrets_is_still_validated() {
         "{err}"
     );
 }
+
+const OBSERVER: &str = "e493dbf1c10d80f3581e4904930b1404cc6c13900ee0758474fa94abe8c4cd13";
+
+#[test]
+fn observers_are_optional() {
+    let settings = Settings::parse(&minimal(""), base_env()).unwrap();
+
+    assert!(settings.config.observers.is_empty());
+}
+
+#[test]
+fn observers_are_read_from_their_own_list() {
+    let text = minimal(&format!("[[observers]]\npubkey = \"{OBSERVER}\"\n"));
+
+    let settings = Settings::parse(&text, base_env()).unwrap();
+
+    let pubkeys: Vec<&str> = settings
+        .config
+        .observers
+        .iter()
+        .map(|o| o.pubkey.as_str())
+        .collect();
+    assert_eq!(pubkeys, [OBSERVER]);
+}
+
+#[test]
+fn an_observer_with_a_bad_pubkey_is_refused() {
+    let text = minimal("[[observers]]\npubkey = \"npub1notahexkey\"\n");
+
+    let err = error_of(&text, base_env());
+
+    assert!(err.contains("observers[0].pubkey"), "{err}");
+}
+
+#[test]
+fn an_observer_that_is_also_a_solver_is_refused() {
+    // A solver already gets the full message; as an observer it would get
+    // every header twice.
+    let text = minimal(&format!(
+        "[[solvers]]\npubkey = \"{OBSERVER}\"\npermission = \"write\"\n\
+         [[observers]]\npubkey = \"{OBSERVER}\"\n"
+    ));
+
+    let err = error_of(&text, base_env());
+
+    assert!(
+        err.contains("observers[0].pubkey is also a solver"),
+        "{err}"
+    );
+}
+
+#[test]
+fn an_observer_listed_twice_is_refused() {
+    let text = minimal(&format!(
+        "[[observers]]\npubkey = \"{OBSERVER}\"\n[[observers]]\npubkey = \"{OBSERVER}\"\n"
+    ));
+
+    let err = error_of(&text, base_env());
+
+    assert!(err.contains("observers[1].pubkey is listed twice"), "{err}");
+}

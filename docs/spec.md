@@ -732,6 +732,9 @@ relays = ["wss://relay.mostro.network", "wss://nos.lol"]
 pubkey = "<hex>"
 permission = "write"                      # "read" | "write"
 
+[[observers]]                             # optional, e.g. mostro-watchdog
+pubkey = "<hex>"                          # gets the first line of mediation updates only
+
 [notify]
 renotify_after = "15m"
 
@@ -765,7 +768,8 @@ validated_languages = ["en", "es"]       # languages whose golden set passed for
 ```
 
 Startup fails fast on a missing key, an unknown language, or a solver list that
-cannot be parsed. With `[mediation].enabled = true` and no reachable judge, or
+cannot be parsed. An observer must not also be a solver (it would get every
+header twice) and may be listed once. With `[mediation].enabled = true` and no reachable judge, or
 no calibrated thresholds for the configured provider and model,
 Serbero logs an operator-actionable error and runs notification only.
 

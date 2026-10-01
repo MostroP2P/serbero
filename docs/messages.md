@@ -332,6 +332,27 @@ Dispute <dispute_id> · resolved: <status>
 mediation: yes · outcome: handed_off (conflicting_claims) · rounds: 2 · duration: 41 min
 ```
 
+### Observers
+
+An `[[observers]]` entry ([spec.md §9](spec.md#9-configuration)) is a service,
+such as mostro-watchdog, that relays mediation progress to a team chat. Its
+DMs use the same `send-dm` envelope and message `id` as solver messages, but
+the text is **only the first line**, so nothing a party wrote ever reaches it.
+Observers get the first line of these solver messages, each subject at most
+once per dispute, even when the solvers are retried:
+
+| Solver message | Observer text |
+|---|---|
+| Mediation started | `Dispute <dispute_id> · mediating` |
+| Mediation could not start | `Dispute <dispute_id> · mediation could not start` |
+| Brief on handoff | `Dispute <dispute_id> · handed off: <reason>` |
+| Brief on guidance | `Dispute <dispute_id> · guidance sent: <path>` |
+
+Deliveries are recorded as `observer_notified` / `observer_failed` events with
+the subject, never as solver notifications, so they never count as a solver
+having been told. A failed delivery is tried again the next time the solvers
+are.
+
 ## 4. Template rules
 
 Enforced by tests over every `messages/<code>.toml`:

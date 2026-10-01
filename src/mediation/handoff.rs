@@ -196,7 +196,14 @@ impl<S: DmSender> Mediator<S> {
                     .map(|part| ("transcript", part)),
             )
             .collect();
-        self.deliver(&to, dispute_id, &parts, now).await
+        let delivered = self.deliver(&to, dispute_id, &parts, now).await?;
+        // Retried with the solvers until one gets the brief; an observer
+        // still gets its first line only once.
+        if let Some((notification, brief)) = parts.first() {
+            self.notify_observers(dispute_id, notification, brief, now)
+                .await;
+        }
+        Ok(delivered)
     }
 
     /// Sends every part, in order, to each solver. Returns how many solvers

@@ -28,6 +28,9 @@ works as in v0.1.0; the startup log also shows Serbero's npub.
   register it as a solver.
 - A README that explains mediation end to end: what the parties and solvers
   see, the guarantees, languages, and how to enable it.
+- Optional `[[observers]]`: services such as mostro-watchdog get the first
+  line of each mediation update (mediating, could not start, handed off,
+  guidance sent), once per dispute, without any party text.
 
 ### Changed
 

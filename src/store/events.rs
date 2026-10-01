@@ -75,6 +75,24 @@ pub fn last_notification_to(
         .find(|event| event.id == id))
 }
 
+/// Whether `observer` (hex pubkey) already received the solver message
+/// `subject` about `dispute_id`.
+pub fn observer_notified(
+    conn: &Connection,
+    dispute_id: &str,
+    observer: &str,
+    subject: &str,
+) -> Result<bool> {
+    Ok(conn.query_row(
+        "SELECT EXISTS (SELECT 1 FROM events
+             WHERE dispute_id = ?1 AND kind = 'observer_notified'
+               AND json_extract(payload_json, '$.observer') = ?2
+               AND json_extract(payload_json, '$.subject') = ?3)",
+        params![dispute_id, observer, subject],
+        |row| row.get(0),
+    )?)
+}
+
 /// Disputes with a `pending` event since `since` that no later `done` event
 /// closed, oldest first: work to retry, such as an undelivered notice.
 pub fn still_pending(
