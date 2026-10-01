@@ -201,9 +201,12 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+      # Only the binary archives: the image jobs' digests and build records
+      # are artifacts of the same run and must not become release assets.
       - uses: actions/download-artifact@v8
         with:
           path: dist
+          pattern: serbero-*
           merge-multiple: true
       - name: Publish the release
         env:
