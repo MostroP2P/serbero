@@ -691,6 +691,43 @@ async fn asking_for_spanish_switches_the_language_and_resends_the_question() {
 }
 
 #[tokio::test]
+async fn an_answer_in_a_new_language_gets_the_intro_in_that_language_once() {
+    let script = script(&[
+        ("buyer_payment", ("says_sent", 0.99)),
+        ("buyer_details", ("yes", 0.99)),
+        ("buyer_language", ("es", 0.95)),
+    ])
+    .await;
+    let mut buyer = buyer_side(&script).await;
+
+    buyer
+        .say("ya pagué a las 14:10 por mercado pago, ref 8841")
+        .await;
+    let reply = buyer.next_from_serbero().await;
+
+    // The buyer read the intro only in English: the first Spanish message
+    // repeats it, although it is not a language resend.
+    let catalogs = Catalogs::embedded().unwrap();
+    let es = catalogs.get("es").unwrap();
+    let amount = Some(Amount {
+        value: "50000",
+        currency: "ARS",
+    });
+    assert_eq!(reply, es.render_opening("thanks_waiting", amount).unwrap());
+
+    buyer.say("ya está, revisa por favor").await;
+    let _ = buyer.next_within(QUIET * 4).await;
+    let intro = es.render("intro", None).unwrap();
+    let store = script.store.lock().unwrap();
+    let intros = messages::list_for_session(store.conn(), "s1")
+        .unwrap()
+        .iter()
+        .filter(|m| m.direction == Direction::Out && m.content.starts_with(&intro))
+        .count();
+    assert_eq!(intros, 1, "the intro is sent once per language");
+}
+
+#[tokio::test]
 async fn a_request_for_a_person_hands_off_and_later_messages_are_forwarded() {
     let script = script(&[("buyer_wants_human", ("yes", 0.95))]).await;
     let mut buyer = buyer_side(&script).await;

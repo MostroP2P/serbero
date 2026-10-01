@@ -26,12 +26,15 @@ pub fn from_messages(messages: &[Message]) -> (Asked, PartyHistory<'_>, PartyHis
     )
 }
 
-/// Serbero already wrote to `party` in `lang`. A party who never did has not
-/// read the intro in that language either.
-pub fn written_in(messages: &[Message], party: Party, lang: &str) -> bool {
-    messages.iter().any(|m| {
-        m.direction == Direction::Out && m.party == party && m.lang.as_deref() == Some(lang)
-    })
+/// Serbero wrote to `party` before, but never in `lang`: the party read the
+/// intro only in another language. A party never written to has not been
+/// opened, and its first message is not a change of language.
+pub fn needs_intro(messages: &[Message], party: Party, lang: &str) -> bool {
+    let mut sent = messages
+        .iter()
+        .filter(|m| m.direction == Direction::Out && m.party == party)
+        .peekable();
+    sent.peek().is_some() && sent.all(|m| m.lang.as_deref() != Some(lang))
 }
 
 /// Order is arrival order (the row id), not `created_at`: an inbound
@@ -172,7 +175,7 @@ mod tests {
     }
 
     #[test]
-    fn a_party_has_been_written_to_only_in_the_languages_it_got() {
+    fn only_a_party_written_to_in_other_languages_needs_the_intro() {
         let opening = Message {
             lang: Some("en".into()),
             ..out(Party::Buyer, template::ASK_BUYER_SENT)
@@ -183,10 +186,14 @@ mod tests {
         };
         let messages = [opening, to_seller, reply(Party::Buyer)];
 
-        assert!(written_in(&messages, Party::Buyer, "en"));
+        assert!(!needs_intro(&messages, Party::Buyer, "en"));
         assert!(
-            !written_in(&messages, Party::Buyer, "es"),
+            needs_intro(&messages, Party::Buyer, "es"),
             "Spanish went only to the seller"
+        );
+        assert!(
+            !needs_intro(&[], Party::Buyer, "es"),
+            "a party never written to was not opened"
         );
     }
 }

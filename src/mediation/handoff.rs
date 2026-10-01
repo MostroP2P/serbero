@@ -433,34 +433,22 @@ impl<S: DmSender> Mediator<S> {
         Ok((text, lang.to_owned()))
     }
 
-    /// Renders a template for a party in its language and sends it.
+    /// Renders a template for a party in its language and sends it. The
+    /// first message to a party in a language other than the ones it already
+    /// got starts with the intro, as the opening did, so it reads the
+    /// disclosure in a language it understands (`docs/messages.md`).
     pub(super) async fn send_template(
         &self,
         session: &Session,
         party: Party,
         template: &str,
     ) -> Result<()> {
-        self.send_rendered(session, party, template, false).await
-    }
-
-    /// Like `send_template`, with the intro first, as in the opening: for a
-    /// party who has not read the intro in its language (§4.1 step 1).
-    pub(super) async fn send_with_intro(
-        &self,
-        session: &Session,
-        party: Party,
-        template: &str,
-    ) -> Result<()> {
-        self.send_rendered(session, party, template, true).await
-    }
-
-    async fn send_rendered(
-        &self,
-        session: &Session,
-        party: Party,
-        template: &str,
-        with_intro: bool,
-    ) -> Result<()> {
+        let lang = session.language(party, &self.settings.default_language);
+        let with_intro = {
+            let store = self.lock_store()?;
+            let sent = messages::list_for_session(store.conn(), &session.session_id)?;
+            super::history::needs_intro(&sent, party, lang)
+        };
         let (text, lang) = self.render_for(session, party, template, with_intro)?;
         let message = Outbound {
             party,

@@ -220,14 +220,6 @@ impl NextQuestions {
         !resend && templates.iter().any(|t| template::is_question(t))
     }
 
-    /// The party's templates are a language resend (§4.1 step 1).
-    pub fn resends(&self, party: Party) -> bool {
-        match party {
-            Party::Buyer => self.buyer_resend,
-            Party::Seller => self.seller_resend,
-        }
-    }
-
     /// A turn counts as a round of the session when it asks either party.
     pub fn counts_as_round(&self) -> bool {
         self.asks(Party::Buyer) || self.asks(Party::Seller)
