@@ -132,9 +132,10 @@ jobs:
 
   image-manifest:
     name: image manifest
-    # Tags the image only once the binaries built too, so a tag never
-    # publishes an image without its release.
-    needs: [image, build]
+    # Tags the image only after the GitHub release is published, so a tag
+    # never publishes an image without its release. If this job fails, the
+    # release exists and re-running the failed jobs finishes the image.
+    needs: [image, release]
     runs-on: ubuntu-latest
     permissions:
       contents: read
