@@ -85,8 +85,10 @@ implementation plan is [`docs/plan.md`](docs/plan.md).
    Never log message text. Never include a party's primary pubkey in any
    message.
 6. **Secrets come from the environment** (`SERBERO_PRIVATE_KEY`
-   and the judge API key, `TYPESAFE_API_KEY` for Jev). Never commit them or log
-   them.
+   and the judge API key, `TYPESAFE_API_KEY` for Jev), either as the variable
+   itself or as a file the same variable with `_FILE` appended points to
+   (Docker secrets, systemd credentials). Never from the config file. Never
+   commit them, log them, or echo them in errors.
 7. **Code owns decisions.** `policy` is a pure function of facts, session
    state, and config. The judge answers questions; it does not choose actions.
 

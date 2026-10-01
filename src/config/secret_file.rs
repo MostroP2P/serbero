@@ -91,8 +91,14 @@ pub fn lookup(
 /// Reads a secret file from disk. The permissions checked are those of the
 /// file actually read: both come from one open handle.
 pub fn read_from_disk(path: &Path) -> std::io::Result<SecretFile> {
+    // Checked before opening: opening a FIFO with no writer blocks forever,
+    // which would hang startup. Symlinks are followed, as Docker secrets and
+    // systemd credentials may use them.
+    ensure_regular(&std::fs::metadata(path)?)?;
     let file = std::fs::File::open(path)?;
-    let shared = is_shared(&file.metadata()?);
+    let metadata = file.metadata()?;
+    ensure_regular(&metadata)?;
+    let shared = is_shared(&metadata);
     let mut contents = String::new();
     file.take(MAX_SECRET_BYTES as u64 + 1)
         .read_to_string(&mut contents)?;
@@ -103,6 +109,17 @@ pub fn read_from_disk(path: &Path) -> std::io::Result<SecretFile> {
         ));
     }
     Ok(SecretFile { contents, shared })
+}
+
+fn ensure_regular(metadata: &std::fs::Metadata) -> std::io::Result<()> {
+    if metadata.is_file() {
+        Ok(())
+    } else {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "not a regular file",
+        ))
+    }
 }
 
 #[cfg(unix)]
@@ -236,6 +253,32 @@ mod tests {
         let result = read_from_disk(&path);
         std::fs::remove_file(&path).unwrap();
         assert!(result.is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn disk_reader_rejects_a_fifo_without_blocking() {
+        let path = std::env::temp_dir().join(format!("serbero-fifo-{}", uuid::Uuid::new_v4()));
+        let made = std::process::Command::new("mkfifo")
+            .arg(&path)
+            .status()
+            .unwrap();
+        assert!(made.success());
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        let reader_path = path.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(read_from_disk(&reader_path).is_err());
+        });
+        let rejected = rx.recv_timeout(std::time::Duration::from_secs(2));
+        std::fs::remove_file(&path).unwrap();
+
+        assert_eq!(rejected, Ok(true), "a FIFO must be rejected, not opened");
+    }
+
+    #[test]
+    fn disk_reader_rejects_a_directory() {
+        assert!(read_from_disk(&std::env::temp_dir()).is_err());
     }
 
     #[cfg(unix)]
