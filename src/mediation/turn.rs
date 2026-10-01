@@ -17,7 +17,7 @@ use crate::judge::facts::{self, Facts};
 use crate::judge::state;
 use crate::nostr::dm::DmSender;
 use crate::policy::next::{History, next_questions};
-use crate::policy::{Action, HandoffReason, NextQuestions, Phase, Turn, decide, timers};
+use crate::policy::{Action, HandoffReason, Phase, Turn, decide, timers};
 use crate::store::messages::{self, Direction, Message};
 use crate::store::sessions::{self, Party, Session, SessionState};
 use crate::store::{disputes, evaluations, events};
@@ -273,9 +273,16 @@ impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
         )?;
         match &action {
             Action::Ask { buyer, seller } => {
-                self.ask(&session, Party::Buyer, buyer).await?;
-                self.ask(&session, Party::Seller, seller).await?;
-                self.count_round(&session, &next, now)?;
+                // Each party's round is counted as soon as its question is
+                // sent, so a failed send to the other party cannot lose it.
+                let mut first_in_turn = true;
+                for (party, templates) in [(Party::Buyer, buyer), (Party::Seller, seller)] {
+                    self.ask(&session, party, templates).await?;
+                    if next.asks(party) {
+                        self.count_round(&session, party, first_in_turn, now)?;
+                        first_in_turn = false;
+                    }
+                }
             }
             Action::Handoff(reason) => {
                 let reading = TurnReading {
@@ -429,16 +436,15 @@ impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
         Ok(())
     }
 
-    fn count_round(&self, session: &Session, next: &NextQuestions, now: i64) -> Result<()> {
-        if next.counts_as_round() {
-            let asked: Vec<Party> = [Party::Buyer, Party::Seller]
-                .into_iter()
-                .filter(|party| next.asks(*party))
-                .collect();
-            let store = self.lock_store()?;
-            sessions::increment_rounds(store.conn(), &session.session_id, &asked, now)?;
-        }
-        Ok(())
+    fn count_round(
+        &self,
+        session: &Session,
+        party: Party,
+        first_in_turn: bool,
+        now: i64,
+    ) -> Result<()> {
+        let store = self.lock_store()?;
+        sessions::count_round(store.conn(), &session.session_id, party, first_in_turn, now)
     }
 
     #[allow(clippy::too_many_arguments)]

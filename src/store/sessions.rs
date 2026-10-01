@@ -192,20 +192,25 @@ pub fn set_language(
     Ok(updated == 1)
 }
 
-/// Counts one question round for the session and for each party asked
-/// (`docs/judgments.md` §4.1).
-pub fn increment_rounds(
+/// Counts a question round for `party`, right after its question was sent
+/// (`docs/judgments.md` §4.1). `first_in_turn` also counts the turn in the
+/// session total, which reports use.
+pub fn count_round(
     conn: &Connection,
     session_id: &str,
-    parties: &[Party],
+    party: Party,
+    first_in_turn: bool,
     now: i64,
 ) -> Result<()> {
-    let asked = |party| i64::from(parties.contains(&party));
+    let (buyer, seller) = match party {
+        Party::Buyer => (1, 0),
+        Party::Seller => (0, 1),
+    };
     conn.execute(
-        "UPDATE sessions SET rounds = rounds + 1, buyer_rounds = buyer_rounds + ?2,
-             seller_rounds = seller_rounds + ?3, updated_at = ?4
+        "UPDATE sessions SET rounds = rounds + ?2, buyer_rounds = buyer_rounds + ?3,
+             seller_rounds = seller_rounds + ?4, updated_at = ?5
          WHERE session_id = ?1",
-        params![session_id, asked(Party::Buyer), asked(Party::Seller), now],
+        params![session_id, i64::from(first_in_turn), buyer, seller, now],
     )?;
     Ok(())
 }
@@ -441,8 +446,10 @@ mod tests {
     fn rounds_count_up() {
         let store = store_with_session();
 
-        increment_rounds(store.conn(), "s1", &[Party::Buyer, Party::Seller], 300).unwrap();
-        increment_rounds(store.conn(), "s1", &[Party::Seller], 301).unwrap();
+        // One turn asking both parties, then one asking only the seller.
+        count_round(store.conn(), "s1", Party::Buyer, true, 300).unwrap();
+        count_round(store.conn(), "s1", Party::Seller, false, 300).unwrap();
+        count_round(store.conn(), "s1", Party::Seller, true, 301).unwrap();
 
         let session = get(store.conn(), "s1").unwrap().unwrap();
         assert_eq!(session.rounds, 2, "one round per turn");
