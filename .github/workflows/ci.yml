@@ -71,9 +71,9 @@ jobs:
           sudo install -m 755 target/release/serbero /usr/local/bin/serbero
           sudo install -d -m 755 /etc/serbero
           sudo install -m 644 config.sample.toml /etc/serbero/config.toml
-          printf 'SERBERO_PRIVATE_KEY=%s\n' "$(openssl rand -hex 32)" > serbero.env
-          sudo install -m 600 serbero.env /etc/serbero/serbero.env
-          rm serbero.env
+          sudo install -d -m 700 /etc/serbero/credentials
+          openssl rand -hex 32 | sudo tee /etc/serbero/credentials/serbero_private_key > /dev/null
+          sudo chmod 600 /etc/serbero/credentials/serbero_private_key
           sudo install -m 644 deploy/serbero.service /etc/systemd/system/serbero.service
           sudo systemd-analyze verify /etc/systemd/system/serbero.service
           sudo systemctl daemon-reload
@@ -87,6 +87,17 @@ jobs:
           done
           sudo journalctl -u serbero --no-pager
           systemctl is-active serbero
+          # The key arrives as a credential file, never in the environment,
+          # and the credential file raised no permission warning.
+          pid=$(systemctl show -p MainPID --value serbero)
+          sudo stat -c 'credential: %a %U:%G' /run/credentials/serbero.service/serbero_private_key
+          key=$(sudo cat /etc/serbero/credentials/serbero_private_key)
+          if sudo cat "/proc/$pid/environ" | tr '\0' '\n' | grep -qF "$key"; then
+            echo "the private key is in the process environment"; exit 1
+          fi
+          if sudo journalctl -u serbero --no-pager | grep -q "readable by any user"; then
+            echo "the credential file was reported as shared"; exit 1
+          fi
           test "$(sudo stat -c '%U %a' /var/lib/serbero)" = "serbero 700"
           sudo test -f /var/lib/serbero/serbero.db
           sudo systemctl stop serbero

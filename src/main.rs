@@ -17,6 +17,9 @@ async fn main() -> ExitCode {
         eprintln!("serbero: {e}");
         return ExitCode::FAILURE;
     }
+    for warning in &settings.warnings {
+        tracing::warn!(%warning, "configuration");
+    }
     match serbero::daemon::run(&settings).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
