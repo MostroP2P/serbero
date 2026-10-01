@@ -90,7 +90,10 @@ impl<S: DmSender> Mediator<S> {
                 },
             )?;
             let pending = pending_brief(&tx, session, json!({ "path": path.as_str() }), now)?;
+            let subject = Subject::Guide(path).text();
+            let queued = self.queue_for_observers(&tx, &session.dispute_id, &subject, now)?;
             tx.commit()?;
+            self.wake_observers(queued);
             pending
         };
         let delivered = self

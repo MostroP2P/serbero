@@ -42,7 +42,7 @@ const MAX_PER_TURN: u32 = 3;
 /// fails, as when no relay accepts it.
 #[derive(Clone, Default)]
 struct Outbox {
-    sent: Arc<Mutex<Vec<String>>>,
+    sent: Arc<Mutex<Vec<(PublicKey, String)>>>,
     failing: Arc<AtomicBool>,
     /// Sends of texts containing this fail.
     fail_on: Arc<Mutex<Option<&'static str>>>,
@@ -53,7 +53,7 @@ struct Outbox {
 impl DmSender for Outbox {
     async fn send_dm(
         &self,
-        _to: PublicKey,
+        to: PublicKey,
         _dispute_id: Option<uuid::Uuid>,
         text: &str,
     ) -> SerberoResult<()> {
@@ -67,14 +67,32 @@ impl DmSender for Outbox {
         if self.failing.load(Ordering::SeqCst) || matches {
             return Err(serbero::error::Error::Nostr("relay rejected".into()));
         }
-        self.sent.lock().unwrap().push(text.to_owned());
+        self.sent.lock().unwrap().push((to, text.to_owned()));
         Ok(())
     }
 }
 
 impl Outbox {
+    /// Texts sent to solvers, in order: observers are left out, so the
+    /// existing assertions read what solvers got.
     fn texts(&self) -> Vec<String> {
-        self.sent.lock().unwrap().clone()
+        self.sent
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(to, _)| *to != observer())
+            .map(|(_, text)| text.clone())
+            .collect()
+    }
+
+    fn texts_to(&self, recipient: &PublicKey) -> Vec<String> {
+        self.sent
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(to, _)| to == recipient)
+            .map(|(_, text)| text.clone())
+            .collect()
     }
 
     fn fail(&self, failing: bool) {
@@ -232,11 +250,19 @@ struct Options {
     silent_relay: bool,
     /// No solver is configured.
     no_solvers: bool,
+    /// An observer is configured (`observer()`).
+    observer: bool,
     /// The session was handed off before the pending message, and a notice
     /// was stored after it, as when the process stopped mid-handoff.
     handed_off: bool,
     /// A second live session, `s2` of dispute `d2`.
     second_session: bool,
+}
+
+/// The observer some scripts add, e.g. mostro-watchdog relaying to a team
+/// chat.
+fn observer() -> PublicKey {
+    PublicKey::from_hex("e493dbf1c10d80f3581e4904930b1404cc6c13900ee0758474fa94abe8c4cd13").unwrap()
 }
 
 /// An active session with both openers sent and unanswered.
@@ -387,6 +413,12 @@ async fn script_with(picks: &[(&'static str, (&'static str, f64))], options: Opt
                 permission: Permission::Write,
             }]
         },
+        observers: if options.observer {
+            vec![observer()]
+        } else {
+            vec![]
+        },
+        observer_wake: Default::default(),
         own_takes: Arc::default(),
         judge: Default::default(),
         finishing: Default::default(),
@@ -725,6 +757,41 @@ async fn an_answer_in_a_new_language_gets_the_intro_in_that_language_once() {
         .filter(|m| m.direction == Direction::Out && m.content.starts_with(&intro))
         .count();
     assert_eq!(intros, 1, "the intro is sent once per language");
+}
+
+#[tokio::test]
+async fn a_handoff_tells_observers_the_reason_and_nothing_the_parties_said() {
+    let script = script_with(
+        &[("buyer_wants_human", ("yes", 0.95))],
+        Options {
+            observer: true,
+            ..Options::default()
+        },
+    )
+    .await;
+    let mut buyer = buyer_side(&script).await;
+
+    buyer.say("quiero hablar con una persona").await;
+    let _notice = buyer.next_from_serbero().await;
+
+    assert!(
+        script.outbox.texts_to(&observer()).is_empty(),
+        "only queued: the brief and the party notice never wait for an observer"
+    );
+    script
+        .mediator
+        .deliver_observer_notices(serbero::daemon::now())
+        .await
+        .unwrap();
+    assert_eq!(
+        script.outbox.texts_to(&observer()),
+        ["Dispute d1 · handed off: human_requested"],
+        "the header only: no brief body, no transcript"
+    );
+    assert!(
+        script.outbox.texts()[0].contains("human requested: yes"),
+        "solvers still get the full brief"
+    );
 }
 
 #[tokio::test]

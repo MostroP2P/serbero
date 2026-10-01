@@ -36,7 +36,7 @@ const WAIT: Duration = Duration::from_secs(10);
 /// fails, as when no relay accepts it.
 #[derive(Clone, Default)]
 struct Outbox {
-    sent: Arc<Mutex<Vec<String>>>,
+    sent: Arc<Mutex<Vec<(PublicKey, String)>>>,
     failing: Arc<std::sync::atomic::AtomicBool>,
     /// While set, every send waits forever, as on a relay that never answers.
     hanging: Arc<std::sync::atomic::AtomicBool>,
@@ -45,7 +45,7 @@ struct Outbox {
 impl DmSender for Outbox {
     async fn send_dm(
         &self,
-        _to: PublicKey,
+        to: PublicKey,
         _dispute_id: Option<uuid::Uuid>,
         text: &str,
     ) -> SerberoResult<()> {
@@ -55,14 +55,32 @@ impl DmSender for Outbox {
         if self.failing.load(std::sync::atomic::Ordering::SeqCst) {
             return Err(serbero::error::Error::Nostr("rate-limited".into()));
         }
-        self.sent.lock().unwrap().push(text.to_owned());
+        self.sent.lock().unwrap().push((to, text.to_owned()));
         Ok(())
     }
 }
 
 impl Outbox {
+    /// Texts sent to solvers, in order: observers are left out, so the
+    /// existing assertions read what solvers got.
     fn texts(&self) -> Vec<String> {
-        self.sent.lock().unwrap().clone()
+        self.sent
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(to, _)| *to != observer())
+            .map(|(_, text)| text.clone())
+            .collect()
+    }
+
+    fn texts_to(&self, recipient: &PublicKey) -> Vec<String> {
+        self.sent
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(to, _)| to == recipient)
+            .map(|(_, text)| text.clone())
+            .collect()
     }
 
     fn hang(&self, hanging: bool) {
@@ -298,6 +316,8 @@ async fn harness(
             pubkey: Keys::generate().public_key(),
             permission: Permission::Write,
         }],
+        observers: vec![],
+        observer_wake: Default::default(),
         own_takes: Arc::default(),
         judge: Default::default(),
         finishing: Default::default(),
@@ -319,6 +339,12 @@ async fn harness(
         outbox,
         url: url.to_owned(),
     }
+}
+
+/// The observer some tests add, e.g. mostro-watchdog relaying to a team
+/// chat.
+fn observer() -> PublicKey {
+    PublicKey::from_hex("e493dbf1c10d80f3581e4904930b1404cc6c13900ee0758474fa94abe8c4cd13").unwrap()
 }
 
 /// Listens as a party on its channel with Serbero and returns the first
@@ -795,4 +821,64 @@ async fn the_node_protocol_is_checked_before_any_dispute() {
 
         assert_eq!(support, expected, "{version:?}");
     }
+}
+
+#[tokio::test]
+async fn observers_hear_that_mediation_started_in_one_line() {
+    let relay = MockRelay::run().await.unwrap();
+    let url = relay.url().await.to_string();
+    let node = start_node(&url, Mode::Accept).await;
+    let dispute_id = Uuid::new_v4().to_string();
+    let store = store_with_dispute(&dispute_id, Lifecycle::Notified);
+    let mut h = harness(&url, &node, &store, true, true).await;
+    h.mediator.observers = vec![observer()];
+
+    let opening = h.mediator.consider(&dispute_id, 1_000).await;
+
+    assert!(matches!(opening, Opening::Opened { .. }), "{opening:?}");
+    assert_eq!(
+        h.outbox.texts(),
+        [serbero::solver::mediation_started(&dispute_id)],
+        "solvers still get the full message"
+    );
+    assert!(
+        h.outbox.texts_to(&observer()).is_empty(),
+        "only queued: the opening never waits for an observer"
+    );
+    h.mediator.deliver_observer_notices(1_001).await.unwrap();
+    assert_eq!(
+        h.outbox.texts_to(&observer()),
+        [format!("Dispute {dispute_id} · mediating")]
+    );
+}
+
+#[tokio::test]
+async fn an_opening_failure_reaches_an_observer_once_across_retries() {
+    let relay = MockRelay::run().await.unwrap();
+    let url = relay.url().await.to_string();
+    let node = start_node(&url, Mode::AcceptWithoutKeys).await;
+    let dispute_id = Uuid::new_v4().to_string();
+    let store = store_with_dispute(&dispute_id, Lifecycle::Notified);
+    let mut h = harness(&url, &node, &store, true, true).await;
+    h.mediator.observers = vec![observer()];
+    h.outbox.fail(true);
+
+    let opening = h.mediator.consider(&dispute_id, 1_000).await;
+    h.mediator.deliver_observer_notices(1_001).await.unwrap();
+    h.outbox.fail(false);
+    // The solvers' notice is retried by the timer; the observer's by its
+    // own backoff, a minute after the failure.
+    h.mediator.tick(1_030).await.unwrap();
+    h.mediator.deliver_observer_notices(1_030).await.unwrap();
+    assert!(h.outbox.texts_to(&observer()).is_empty(), "backing off");
+    for now in [1_061, 1_200, 5_000] {
+        h.mediator.deliver_observer_notices(now).await.unwrap();
+    }
+
+    assert!(matches!(opening, Opening::HandedOff(_)), "{opening:?}");
+    assert_eq!(
+        h.outbox.texts_to(&observer()),
+        [format!("Dispute {dispute_id} · mediation could not start")],
+        "missed while relays failed, delivered on the retry, never twice"
+    );
 }

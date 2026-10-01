@@ -60,6 +60,8 @@ pub struct Config {
     #[serde(default)]
     pub solvers: Vec<SolverConfig>,
     #[serde(default)]
+    pub observers: Vec<ObserverConfig>,
+    #[serde(default)]
     pub notify: NotifyConfig,
     #[serde(default)]
     pub mediation: MediationConfig,
@@ -97,6 +99,14 @@ pub struct MostroConfig {
 pub struct SolverConfig {
     pub pubkey: String,
     pub permission: Permission,
+}
+
+/// A service, such as mostro-watchdog, that receives only the first line of
+/// the solver messages a team chat should see (`docs/messages.md` §3).
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ObserverConfig {
+    pub pubkey: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -255,9 +265,37 @@ impl Config {
         for (i, solver) in self.solvers.iter().enumerate() {
             check_pubkey(&format!("solvers[{i}].pubkey"), &solver.pubkey)?;
         }
+        self.validate_observers()?;
         check_non_zero("notify.renotify_after", self.notify.renotify_after)?;
         self.validate_mediation()?;
         self.validate_judge()
+    }
+
+    fn validate_observers(&self) -> Result<()> {
+        let same = |a: &str, b: &str| a.eq_ignore_ascii_case(b);
+        for (i, observer) in self.observers.iter().enumerate() {
+            let field = format!("observers[{i}].pubkey");
+            check_pubkey(&field, &observer.pubkey)?;
+            if same(&self.mostro.pubkey, &observer.pubkey) {
+                return invalid(format!("{field} is the Mostro node"));
+            }
+            // A solver already gets every message in full; as an observer it
+            // would get each header a second time.
+            if self
+                .solvers
+                .iter()
+                .any(|s| same(&s.pubkey, &observer.pubkey))
+            {
+                return invalid(format!("{field} is also a solver"));
+            }
+            if self.observers[..i]
+                .iter()
+                .any(|o| same(&o.pubkey, &observer.pubkey))
+            {
+                return invalid(format!("{field} is listed twice"));
+            }
+        }
+        Ok(())
     }
 
     fn validate_mediation(&self) -> Result<()> {

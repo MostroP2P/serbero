@@ -1,6 +1,7 @@
 //! Dispute detection, solver notifications, and the dispute lifecycle
 //! (`docs/spec.md` §6).
 
+pub mod observers;
 pub mod send;
 pub mod text;
 

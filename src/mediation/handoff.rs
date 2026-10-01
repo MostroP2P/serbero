@@ -112,7 +112,10 @@ impl<S: DmSender> Mediator<S> {
                 },
             )?;
             let pending = pending_brief(&tx, session, json!({ "reason": reason.as_str() }), now)?;
+            let subject = Subject::Handoff(reason).text();
+            let queued = self.queue_for_observers(&tx, &session.dispute_id, &subject, now)?;
             tx.commit()?;
+            self.wake_observers(queued);
             pending
         };
         let delivered = self

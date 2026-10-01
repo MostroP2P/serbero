@@ -14,6 +14,12 @@ use crate::judge::facts::Facts;
 use crate::policy::{HandoffReason, Path};
 use crate::store::sessions::Party;
 
+/// Subject of the mediation notice's first line.
+pub const MEDIATING: &str = "mediating";
+
+/// Subject of the "mediation could not start" notice's first line.
+pub const OPENING_FAILED: &str = "mediation could not start";
+
 /// Why the brief is sent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Subject {
@@ -87,11 +93,17 @@ pub fn brief(input: &BriefInput<'_>) -> String {
 }
 
 fn header(input: &BriefInput<'_>) -> String {
-    let what = match input.subject {
-        Subject::Handoff(reason) => format!("handed off: {}", reason.as_str()),
-        Subject::Guide(path) => format!("guidance sent: {}", path.as_str()),
-    };
-    format!("Dispute {} · {what}", input.dispute_id)
+    format!("Dispute {} · {}", input.dispute_id, input.subject.text())
+}
+
+impl Subject {
+    /// What follows `Dispute <id> · ` on the brief's first line.
+    pub fn text(self) -> String {
+        match self {
+            Self::Handoff(reason) => format!("handed off: {}", reason.as_str()),
+            Self::Guide(path) => format!("guidance sent: {}", path.as_str()),
+        }
+    }
 }
 
 fn topic(answers: &Answers) -> String {
@@ -344,7 +356,7 @@ pub fn update(dispute_id: &str, lines: &[Line<'_>]) -> Vec<String> {
 /// Sent to solvers when Serbero takes a dispute to mediate it.
 pub fn mediation_started(dispute_id: &str) -> String {
     format!(
-        "Dispute {dispute_id} · mediating\n\
+        "Dispute {dispute_id} · {MEDIATING}\n\
          Serbero is mediating this dispute. You can take it over at any time; Serbero stops as soon as you do."
     )
 }
@@ -400,7 +412,7 @@ fn chunk(lines: &[String], budget: usize) -> Vec<String> {
 /// human must take it over.
 pub fn opening_failed(dispute_id: &str) -> String {
     format!(
-        "Dispute {dispute_id} · mediation could not start\n\
+        "Dispute {dispute_id} · {OPENING_FAILED}\n\
          Serbero took this dispute but could not start mediation. Please take it over; Serbero will not write to the parties."
     )
 }

@@ -22,6 +22,13 @@ permission = "write"
 pubkey = "f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9"
 permission = "read"
 
+# Optional. Services such as mostro-watchdog that relay mediation progress to
+# a team chat. They get one line per mediation update solvers receive
+# (`Dispute <id> · handed off: <reason>`), never what the parties said, and
+# nothing while mediation is disabled.
+# [[observers]]
+# pubkey = "e493dbf1c10d80f3581e4904930b1404cc6c13900ee0758474fa94abe8c4cd13"
+
 [notify]
 renotify_after = "15m"
 
