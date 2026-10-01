@@ -377,9 +377,11 @@ mediation sessions resume where they were.
 
 ## Run with Docker
 
-Serbero only makes outbound connections, so the container needs no published
-port. The [`Dockerfile`](Dockerfile) builds an image that runs as an
-unprivileged user (UID 10001), reads the config from
+Each release publishes a multi-arch image (amd64 and arm64) to
+`ghcr.io/mostrop2p/serbero`, tagged `X.Y.Z`; `X.Y` and `latest` follow the
+newest release of the line and overall. Serbero only
+makes outbound connections, so the container needs no published port. The
+image runs as an unprivileged user (UID 10001), reads the config from
 `/etc/serbero/config.toml`, and keeps the database in the `/data` volume.
 [`deploy/compose.yml`](deploy/compose.yml) runs it with a read-only root file
 system and no capabilities:
@@ -390,16 +392,33 @@ cp ../config.sample.toml config.toml     # edit it as in "Configure the notifier
 chmod 644 config.toml                    # read by UID 10001; holds no secrets
 cp serbero.env.sample serbero.env        # SERBERO_PRIVATE_KEY, TYPESAFE_API_KEY
 chmod 600 serbero.env
-docker compose up -d --build             # builds the image from this checkout
+echo SERBERO_VERSION=X.Y.Z > .env        # the release to run, without the v
+docker compose up -d
 docker compose logs -f serbero
 ```
 
-Keep secrets in `serbero.env`, never in `config.toml` or `compose.yml`. To
-inspect the database, run the queries below inside the container, for example
+Keep secrets in `serbero.env`, never in `config.toml`, `.env` or
+`compose.yml`. To inspect the database, run the queries below inside the
+container, for example
 `docker compose exec serbero sqlite3 serbero.db "SELECT ..."`.
 
-To update, `git pull` and run `docker compose up -d --build` again. Live
-mediation sessions resume where they were.
+To update, set the new version in `.env` and run `docker compose up -d`
+again. Live mediation sessions resume where they were.
+
+Each image carries a signed build provenance, so you can check that it was
+built from this repository by its release workflow:
+
+```sh
+gh attestation verify oci://ghcr.io/mostrop2p/serbero:X.Y.Z -R MostroP2P/serbero
+```
+
+To build the image from a checkout instead, add
+[`deploy/compose.build.yml`](deploy/compose.build.yml):
+
+```sh
+echo SERBERO_VERSION=dev > .env          # any label for the local image
+docker compose -f compose.yml -f compose.build.yml up -d --build
+```
 
 ## Run with systemd
 
@@ -537,7 +556,12 @@ question-set version and a new evaluation run
 
 The release workflow checks that the tag matches `Cargo.toml` and that the
 changelog has notes for it, runs the tests, builds every platform, and
-publishes the release with that section as its notes.
+publishes the release with that section as its notes. It also pushes the
+container image to `ghcr.io/mostrop2p/serbero` with build provenance.
+
+The first image push creates the GHCR package as private. Once, after that
+first release, an organization admin sets the package's visibility to public
+in its settings, so operators can pull it without logging in.
 
 ## License
 
