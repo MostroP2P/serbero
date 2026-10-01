@@ -249,6 +249,14 @@ tar -xzf serbero-vX.Y.Z-x86_64-unknown-linux-gnu.tar.gz
 cd serbero-vX.Y.Z-x86_64-unknown-linux-gnu    # ./serbero, config.sample.toml, deploy/
 ```
 
+With a Rust toolchain, you can also install it from
+[crates.io](https://crates.io/crates/serbero). The binary lands in
+`~/.cargo/bin/serbero`; take `config.sample.toml` from this repository:
+
+```sh
+cargo install serbero --locked
+```
+
 To build from source, you need the latest stable Rust toolchain:
 
 ```sh
@@ -546,27 +554,20 @@ question-set version and a new evaluation run
 ### Releasing
 
 Releases use [`cargo-release`](https://github.com/crate-ci/cargo-release)
-(`cargo install cargo-release`), configured in [`release.toml`](release.toml).
-It never publishes to crates.io.
+(`cargo install cargo-release`), configured in [`release.toml`](release.toml),
+and run from an up-to-date `main` (it refuses any other branch). You need a
+crates.io token with publish rights on `serbero` (`cargo login`).
 
-1. In a branch, bump the version. This sets it in `Cargo.toml` and
-   `Cargo.lock`, moves the `[Unreleased]` notes in
-   [`CHANGELOG.md`](CHANGELOG.md) under `## [X.Y.Z] - <today>`, and commits
-   `chore(release): X.Y.Z`. Open a PR with that commit:
+```sh
+git checkout main && git pull
+cargo release minor        # dry run: shows every change and step
+cargo release minor -x     # or patch / major / an exact X.Y.Z
+```
 
-   ```sh
-   git checkout -b release/vX.Y.Z
-   cargo release X.Y.Z --no-tag --no-push --execute
-   ```
-
-   Without `--execute`, the command only shows what it would change.
-2. After the PR merges, tag the merge commit on `main` and push the tag:
-
-   ```sh
-   git checkout main && git pull
-   cargo release tag --execute     # annotated tag vX.Y.Z
-   cargo release push --execute
-   ```
+It bumps the version in `Cargo.toml` and `Cargo.lock`, moves the
+`[Unreleased]` notes in [`CHANGELOG.md`](CHANGELOG.md) under
+`## [X.Y.Z] - <today>`, publishes the crate to crates.io, commits
+`chore(release): X.Y.Z`, tags `vX.Y.Z`, and pushes the commit and the tag.
 
 The release workflow checks that the tag matches `Cargo.toml` and that the
 changelog has notes for it, runs the tests, builds every platform, and

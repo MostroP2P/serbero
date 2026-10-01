@@ -39,12 +39,16 @@ works as in v0.1.0; the startup log also shows Serbero's npub.
   `ghcr.io/mostrop2p/serbero` with build provenance. `deploy/compose.yml`
   runs a pinned published version; `deploy/compose.build.yml` builds from a
   checkout instead.
-- `cargo release` support (`release.toml`): it bumps the version and dates
-  the changelog in a PR, then tags `main`. The crate is marked
-  `publish = false`, so it never goes to crates.io.
+- `cargo release minor -x` on `main` cuts a release in one step: it bumps the
+  version, dates the changelog, publishes the crate to crates.io
+  (`cargo install serbero`), and pushes the `vX.Y.Z` tag that publishes the
+  binaries and the container image.
 
 ### Changed
 
+- The evaluation binary is now `serbero-eval`
+  (`cargo run --bin serbero-eval`), so `cargo install serbero` does not
+  install a command named `eval`.
 - Logs are colored only on a terminal and never when `NO_COLOR` is set, so
   `docker logs` and the systemd journal carry no escape codes.
 - Solver DMs carry the dispute id in the message `id`, and every solver

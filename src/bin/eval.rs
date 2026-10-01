@@ -1,4 +1,4 @@
-//! `cargo run --bin eval -- --lang es`: runs the golden cases of one
+//! `cargo run --bin serbero-eval -- --lang es`: runs the golden cases of one
 //! language against a judge, writes the report, and saves the answers for
 //! `RecordedJudge` (`docs/evaluation.md`).
 
@@ -13,7 +13,7 @@ use serbero::judge::providers::recorded::RecordedJudge;
 use serbero::judge::providers::typesafe::TypeSafeJudge;
 use serbero::judge::questions::{Language, TurnQuestions};
 
-const USAGE: &str = "usage: eval --lang <code> [--cases <dir>] [--config <file>]
+const USAGE: &str = "usage: serbero-eval --lang <code> [--cases <dir>] [--config <file>]
             [--provider typesafe|recorded] [--model <model>] [--recording <file>]
             [--limit <n>] [--report <file>] [--record-to <file>] [--no-record]";
 

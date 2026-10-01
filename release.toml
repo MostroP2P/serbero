@@ -1,9 +1,10 @@
-# cargo-release configuration (README "Releasing"). A release is two steps:
-# a PR that bumps the version and dates the changelog, then a tag on main
-# that the release workflow turns into binaries, an image and notes.
+# cargo-release configuration (README "Releasing"). `cargo release minor -x`
+# on main bumps the version, dates the changelog, publishes the crate to
+# crates.io, commits, tags and pushes; the tag makes the release workflow
+# publish binaries, the container image and the notes.
 
-# Serbero is a daemon, not a library: never publish it to crates.io.
-publish = false
+# Releases are cut from main only, since cargo-release pushes there directly.
+allow-branch = ["main"]
 tag-name = "v{{version}}"
 tag-message = "Serbero {{tag_name}}"
 pre-release-commit-message = "chore(release): {{version}}"
