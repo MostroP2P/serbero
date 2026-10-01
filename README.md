@@ -306,8 +306,8 @@ source build.
    (`SERBERO_PRIVATE_KEY=<hex>`) or as a file named by the same variable with
    `_FILE` appended, never both. Prefer the file: it keeps the secret out of
    the process environment, out of `docker inspect`, and out of your shell
-   history. Serbero warns at startup when a secret file is readable by other
-   users. Docker and systemd setups use files by default
+   history. Serbero warns at startup when a secret file is readable by any
+   user. Docker and systemd setups use files by default
    ([Run with Docker](#run-with-docker), [Run with systemd](#run-with-systemd)).
 
    Solvers receive DMs from this identity. Serbero logs its public key, in hex

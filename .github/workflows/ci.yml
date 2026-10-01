@@ -90,11 +90,12 @@ jobs:
           # The key arrives as a credential file, never in the environment,
           # and the credential file raised no permission warning.
           pid=$(systemctl show -p MainPID --value serbero)
+          sudo stat -c 'credential: %a %U:%G' /run/credentials/serbero.service/serbero_private_key
           key=$(sudo cat /etc/serbero/credentials/serbero_private_key)
           if sudo cat "/proc/$pid/environ" | tr '\0' '\n' | grep -qF "$key"; then
             echo "the private key is in the process environment"; exit 1
           fi
-          if sudo journalctl -u serbero --no-pager | grep -q "readable by other users"; then
+          if sudo journalctl -u serbero --no-pager | grep -q "readable by any user"; then
             echo "the credential file was reported as shared"; exit 1
           fi
           test "$(sudo stat -c '%U %a' /var/lib/serbero)" = "serbero 700"

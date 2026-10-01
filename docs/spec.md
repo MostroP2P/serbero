@@ -771,7 +771,7 @@ Each `*_env` field names the environment variable that holds a secret. The
 secret can instead be read from the file named by the same variable with
 `_FILE` appended (`SERBERO_PRIVATE_KEY_FILE`), as Docker secrets and systemd
 credentials provide; setting both is a startup error. Surrounding whitespace is
-trimmed, and a file readable by other users is logged as a warning.
+trimmed, and a file readable by any user is logged as a warning.
 
 Startup fails fast on a missing key, an unknown language, or a solver list that
 cannot be parsed. With `[mediation].enabled = true` and no reachable judge, or

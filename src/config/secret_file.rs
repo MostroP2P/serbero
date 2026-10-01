@@ -15,7 +15,7 @@ pub const FILE_SUFFIX: &str = "_FILE";
 /// from exhausting memory.
 pub const MAX_SECRET_BYTES: usize = 4096;
 
-/// A secret file's contents and whether users other than its owner may read it.
+/// A secret file's contents and whether any user on the host may read it.
 pub struct SecretFile {
     pub contents: String,
     pub shared: bool,
@@ -25,7 +25,7 @@ pub struct SecretFile {
 #[derive(PartialEq)]
 pub struct Found {
     pub value: String,
-    /// Set when the file is readable by other users.
+    /// Set when any user on the host may read the file.
     pub warning: Option<String>,
 }
 
@@ -83,7 +83,7 @@ pub fn lookup(
         return Err(Error::Config(format!("{file_var} ({path}) is empty")));
     }
     let warning = file.shared.then(|| {
-        format!("{file_var} ({path}) is readable by other users; restrict it to its owner")
+        format!("{file_var} ({path}) is readable by any user; remove its access for others")
     });
     Ok(Some(Found { value, warning }))
 }
@@ -108,7 +108,9 @@ pub fn read_from_disk(path: &Path) -> std::io::Result<SecretFile> {
 #[cfg(unix)]
 fn is_shared(metadata: &std::fs::Metadata) -> bool {
     use std::os::unix::fs::PermissionsExt;
-    metadata.permissions().mode() & 0o077 != 0
+    // Group access is left to the operator: systemd credentials are readable
+    // by the service's own group.
+    metadata.permissions().mode() & 0o007 != 0
 }
 
 #[cfg(not(unix))]
@@ -238,19 +240,23 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn disk_reader_reports_group_or_other_access() {
+    fn disk_reader_reports_access_by_any_user() {
         use std::os::unix::fs::PermissionsExt;
         let path = std::env::temp_dir().join(format!("serbero-secret-{}", uuid::Uuid::new_v4()));
         std::fs::write(&path, "abc\n").unwrap();
 
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
         let private = read_from_disk(&path).unwrap();
+        // systemd credentials are readable by the service's own group.
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o440)).unwrap();
+        let group = read_from_disk(&path).unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
         let shared = read_from_disk(&path).unwrap();
         std::fs::remove_file(&path).unwrap();
 
         assert_eq!(private.contents, "abc\n");
         assert!(!private.shared);
+        assert!(!group.shared);
         assert!(shared.shared);
     }
 }
