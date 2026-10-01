@@ -237,6 +237,50 @@ fn asking_about_the_language_before_any_template_continues_normally() {
 }
 
 #[test]
+fn not_understanding_after_a_language_change_resends_the_last_template() {
+    // Staging: the buyer got both payment questions in English and wrote
+    // "no entiendo"; the simple variant was used, so nothing was sent.
+    let case = Case::new()
+        .sent(Party::Buyer, &[ASK_BUYER_SENT, ASK_BUYER_SENT_SIMPLE])
+        .wrote(Party::Buyer, MessageKind::NotUnderstood)
+        .with(|c| c.buyer.language_changed = true);
+
+    let next = case.next();
+
+    assert_eq!(next.buyer, [ASK_BUYER_SENT_SIMPLE]);
+    assert!(next.buyer_resend);
+    assert!(!next.counts_as_round(), "a language resend is not a round");
+}
+
+#[test]
+fn a_greeting_after_a_language_change_resends_the_last_template() {
+    let case = Case::new()
+        .sent(Party::Seller, &[ASK_SELLER_RECEIVED])
+        .wrote(Party::Seller, MessageKind::Greeting)
+        .with(|c| c.seller.language_changed = true);
+
+    let next = case.next();
+
+    assert_eq!(next.seller, [ASK_SELLER_RECEIVED]);
+    assert!(next.seller_resend);
+}
+
+#[test]
+fn an_answer_after_a_language_change_continues_normally() {
+    // The party answered, so the next question goes out in the new
+    // language instead of the answered one again.
+    let case = Case::new()
+        .sent(Party::Seller, &[ASK_SELLER_RECEIVED])
+        .wrote(Party::Seller, MessageKind::Answers)
+        .with(|c| {
+            c.seller.language_changed = true;
+            c.facts.seller_not_received = true;
+        });
+
+    assert_eq!(case.next(), seller(&[ASK_SELLER_CHECK_ACCOUNT]));
+}
+
+#[test]
 fn not_understanding_sends_the_simple_variant_of_the_last_question() {
     let case = Case::new()
         .sent(Party::Seller, &[ASK_SELLER_RECEIVED])

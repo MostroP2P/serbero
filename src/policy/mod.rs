@@ -40,8 +40,8 @@ pub mod template {
         QUESTIONS.contains(&id)
     }
 
-    /// Templates that may be sent again in a new language when a party
-    /// asks about the language (§4.1 step 1).
+    /// Templates that may be sent again when a party's language changes
+    /// before it answered (§4.1 step 1).
     const RESENDABLE: [&str; 9] = [
         ASK_BUYER_SENT,
         ASK_BUYER_SENT_SIMPLE,

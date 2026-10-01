@@ -58,25 +58,27 @@ fn for_party(party: Party, facts: &Facts, history: &History<'_>) -> (Vec<&'stati
     };
 
     // Step 1: what the party's messages are doing.
-    match party_facts.message_kind {
-        MessageKind::AsksLanguage if own.language_changed => {
-            // The only allowed repeat: the same template, now in the
-            // party's new language. Without a language change it would be
-            // a plain repeat, so the turn continues normally.
-            if let Some(last) = own.last_template.and_then(template::resendable) {
-                return (vec![last], true);
-            }
+    let answered = matches!(
+        party_facts.message_kind,
+        MessageKind::Answers | MessageKind::AsksNextStep
+    );
+    if own.language_changed && !answered {
+        // The only allowed repeat: the same template, now in the party's
+        // new language. A party who did not answer most likely could not
+        // read it ("no entiendo"); without a language change it would be a
+        // plain repeat, so the turn continues normally.
+        if let Some(last) = own.last_template.and_then(template::resendable) {
+            return (vec![last], true);
         }
-        MessageKind::NotUnderstood => {
-            let simple = own
-                .last_question
-                .and_then(template::simple_variant)
-                .filter(|s| !sent(s));
-            if let Some(simple) = simple {
-                return (vec![simple], false);
-            }
+    }
+    if party_facts.message_kind == MessageKind::NotUnderstood {
+        let simple = own
+            .last_question
+            .and_then(template::simple_variant)
+            .filter(|s| !sent(s));
+        if let Some(simple) = simple {
+            return (vec![simple], false);
         }
-        _ => {}
     }
     let mut templates = Vec::new();
     if party_facts.message_kind == MessageKind::AsksNextStep && !sent(template::WHAT_HAPPENS_NEXT) {
