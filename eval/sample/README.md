@@ -14,10 +14,10 @@ ten cases say nothing about calibration.
 
 ```sh
 set -a; . ./.env; set +a
-cargo run --bin eval -- --lang es --cases eval/sample/cases \
+cargo run --bin serbero-eval -- --lang es --cases eval/sample/cases \
     --report eval/sample/REPORT-es.md --record-to eval/sample/recorded-es.json
 
 # offline, from the recording:
-cargo run --bin eval -- --lang es --cases eval/sample/cases \
+cargo run --bin serbero-eval -- --lang es --cases eval/sample/cases \
     --provider recorded --recording eval/sample/recorded-es.json --report /tmp/replay.md
 ```

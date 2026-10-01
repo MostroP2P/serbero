@@ -76,7 +76,7 @@ least 5.
 
 ## 2. Metrics and targets
 
-Run with `cargo run --bin eval -- --lang es` against the judge configured in
+Run with `cargo run --bin serbero-eval -- --lang es` against the judge configured in
 `[judge]` (or `--provider typesafe --model jev-1.13.0`; pin a version, since answers from any other model are rejected). It sends each case, compares the answers with the labels, and writes a report.
 
 The binary reads cases from `eval/golden/` (`--cases` to change it) and, with

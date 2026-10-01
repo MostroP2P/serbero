@@ -5,8 +5,27 @@ edition = "2024"
 description = "Helps the parties of a Mostro dispute resolve it themselves, and escalates to a human solver when needed"
 license = "MIT"
 repository = "https://github.com/MostroP2P/serbero"
-# A daemon, not a library; see release.toml.
-publish = false
+readme = "README.md"
+keywords = ["mostro", "nostr", "bitcoin", "dispute", "p2p"]
+categories = ["command-line-utilities"]
+# What `cargo install serbero` needs to build, plus the files the README tells
+# operators to copy. Tests, golden cases and specs stay in the repository.
+include = [
+    "/src/**/*",
+    "/messages/*.toml",
+    "/build.rs",
+    "/config.sample.toml",
+    "/deploy/*",
+    "/README.md",
+    "/CHANGELOG.md",
+    "/LICENSE",
+]
+
+# Named so `cargo install serbero` does not put an `eval` command on PATH,
+# where it would shadow the shell builtin in scripts that call it by path.
+[[bin]]
+name = "serbero-eval"
+path = "src/bin/eval.rs"
 
 [dependencies]
 futures-util = "0.3.34"
