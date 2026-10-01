@@ -67,7 +67,7 @@ fn for_party(party: Party, facts: &Facts, history: &History<'_>) -> (Vec<&'stati
         // new language. A party who did not answer most likely could not
         // read it ("no entiendo"); without a language change it would be a
         // plain repeat, so the turn continues normally.
-        if let Some(last) = own.last_template.and_then(template::resendable) {
+        if let Some(last) = language_resend(&own) {
             return (vec![last], true);
         }
     }
@@ -92,6 +92,17 @@ fn for_party(party: Party, facts: &Facts, history: &History<'_>) -> (Vec<&'stati
         templates.push(template::THANKS_WAITING);
     }
     (templates, false)
+}
+
+/// The template a language resend repeats: the last one sent, except a
+/// reminder, which only points at the unanswered question, so the question
+/// itself goes out again and its response timer restarts.
+fn language_resend(own: &PartyHistory<'_>) -> Option<&'static str> {
+    let last = match own.last_template {
+        Some(template::REMINDER) => own.last_question,
+        last => last,
+    };
+    last.and_then(template::resendable)
 }
 
 /// The first question of the §4.1 table whose fact is needed and which was

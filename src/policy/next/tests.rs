@@ -253,6 +253,37 @@ fn not_understanding_after_a_language_change_resends_the_last_template() {
 }
 
 #[test]
+fn a_language_change_after_a_reminder_resends_the_unanswered_question() {
+    // The reminder only points at the earlier question; resending it would
+    // leave nothing to answer and no response timer running.
+    let case = Case::new()
+        .sent(Party::Buyer, &[ASK_BUYER_SENT, REMINDER])
+        .wrote(Party::Buyer, MessageKind::NotUnderstood)
+        .with(|c| c.buyer.language_changed = true);
+
+    let next = case.next();
+
+    assert_eq!(next.buyer, [ASK_BUYER_SENT]);
+    assert!(next.buyer_resend);
+}
+
+#[test]
+fn asking_what_happens_next_after_a_language_change_continues_normally() {
+    let case = Case::new()
+        .sent(Party::Seller, &[ASK_SELLER_RECEIVED])
+        .wrote(Party::Seller, MessageKind::AsksNextStep)
+        .with(|c| {
+            c.seller.language_changed = true;
+            c.facts.seller_not_received = true;
+        });
+
+    assert_eq!(
+        case.next(),
+        seller(&[WHAT_HAPPENS_NEXT, ASK_SELLER_CHECK_ACCOUNT])
+    );
+}
+
+#[test]
 fn a_greeting_after_a_language_change_resends_the_last_template() {
     let case = Case::new()
         .sent(Party::Seller, &[ASK_SELLER_RECEIVED])

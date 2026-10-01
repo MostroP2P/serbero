@@ -290,9 +290,10 @@ needed question changed and who has no question outstanding.
 1. **Message kind first.**
    - **Language resend.** When this turn changed the party's language and the
      party did not answer (`asks_language`, `not_understood`, `greeting` or
-     `other`), send the last template again in the new language. A party who
-     writes "no entiendo" after an English question most likely could not
-     read it. This is the only allowed repeat, and it does not count as a
+     `other`), send the last template again in the new language; after a
+     `reminder`, which only points at the unanswered question, send that
+     question instead. A party who writes "no entiendo" after an English
+     question most likely could not read it. This is the only allowed repeat, and it does not count as a
      round.
    - `not_understood`: send the `_simple` variant of the last question.
    - `asks_next_step`: send `what_happens_next` (once per party), then continue
