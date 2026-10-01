@@ -335,7 +335,7 @@ Mediation is opt-in and needs a few things in place first.
    |---|---|---|
    | `quiet_period` | `20s` | Wait after a party's last message, so a burst becomes one turn |
    | `response_timeout` | `30m` | Silence before a reminder, and again before handing off |
-   | `max_rounds` | `3` | Rounds of questions before handing off |
+   | `max_rounds` | `4` | Rounds of questions per party before handing off |
    | `self_resolution_timeout` | `2h` | Time for the parties to act after being guided |
    | `max_messages_per_turn` | `10` | Sending more than this twice hands off as flooding |
    | `max_message_chars` | `2000` | Longer messages are cut |

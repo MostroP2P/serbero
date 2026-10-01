@@ -267,7 +267,7 @@ checked in order and the first match wins.
 | 6 | `seller_received_for_guide` | `Guide(PaymentArrived)` if both parties' languages are validated ([spec.md §7.7](spec.md#77-languages)), otherwise `Handoff(facts_gathered)` |
 | 7 | `buyer_not_sent_for_guide` | `Guide(PaymentNotSent)` if both parties' languages are validated, otherwise `Handoff(facts_gathered)` |
 | 8 | `buyer_sent` and `seller_not_received` and `conflict` and details and check already asked (or known) | `Handoff(conflicting_claims)` |
-| 9 | `rounds ≥ max_rounds` | `Handoff(round_limit)` |
+| 9 | either party's rounds `≥ max_rounds` | `Handoff(round_limit)` |
 | 10 | Next questions (§4.1) produce at least one question template (`ask_*`) | `Ask { … }` with every template §4.1 picked |
 | 11 | A needed fact is still unknown after both of its variants were sent | `Handoff(uncertain)` |
 | 12 | Both payment facts are known | `Handoff(facts_gathered)` |
@@ -326,8 +326,12 @@ Two clarifications, as implemented in `src/policy/next.rs`:
   `asks_next_step`) in a new language gets the next step in that language
   instead of the answered question again.
 
-A round is counted whenever a turn sends at least one question template,
-except a language resend (`NextQuestions::counts_as_round`).
+Rounds are counted per party: a turn that sends a party a question template,
+other than a language resend, counts one round for that party
+(`NextQuestions::asks`). Row 9 hands off when either party reaches
+`max_rounds`, so a party who answers quickly never uses up the rounds of the
+other one. The session total (`rounds`), one per turn that asks anyone, is
+kept for the brief and the final report.
 
 ### 4.2 Timers
 

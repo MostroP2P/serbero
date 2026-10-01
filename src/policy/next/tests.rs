@@ -284,6 +284,28 @@ fn asking_what_happens_next_after_a_language_change_continues_normally() {
 }
 
 #[test]
+fn a_round_is_counted_only_for_the_party_asked() {
+    let case = Case::new()
+        .sent(Party::Buyer, &[ASK_BUYER_SENT])
+        .wrote(Party::Buyer, MessageKind::Answers);
+
+    let next = case.next();
+
+    assert!(next.asks(Party::Buyer));
+    assert!(!next.asks(Party::Seller));
+}
+
+#[test]
+fn a_language_resend_is_not_a_round_for_its_party() {
+    let case = Case::new()
+        .sent(Party::Buyer, &[ASK_BUYER_SENT])
+        .wrote(Party::Buyer, MessageKind::AsksLanguage)
+        .with(|c| c.buyer.language_changed = true);
+
+    assert!(!case.next().asks(Party::Buyer));
+}
+
+#[test]
 fn a_greeting_after_a_language_change_resends_the_last_template() {
     let case = Case::new()
         .sent(Party::Seller, &[ASK_SELLER_RECEIVED])

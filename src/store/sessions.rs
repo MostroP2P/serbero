@@ -45,13 +45,24 @@ pub struct Session {
     pub seller_lang: Option<String>,
     pub buyer_chat_cursor: Option<i64>,
     pub seller_chat_cursor: Option<i64>,
+    /// Question rounds in the session, for reports.
     pub rounds: u32,
+    /// Question rounds per party; the round limit applies to these.
+    pub buyer_rounds: u32,
+    pub seller_rounds: u32,
     pub handoff_reason: Option<String>,
     pub opened_at: i64,
     pub updated_at: i64,
 }
 
 impl Session {
+    pub fn rounds_of(&self, party: Party) -> u32 {
+        match party {
+            Party::Buyer => self.buyer_rounds,
+            Party::Seller => self.seller_rounds,
+        }
+    }
+
     pub fn trade_pubkey(&self, party: Party) -> &str {
         match party {
             Party::Buyer => &self.buyer_trade_pubkey,
@@ -125,7 +136,8 @@ pub fn insert(conn: &Connection, session: &NewSession<'_>) -> Result<bool> {
 
 const COLUMNS: &str = "session_id, dispute_id, state, buyer_trade_pubkey, seller_trade_pubkey,
      fiat_amount, fiat_code, payment_method, order_published_at, buyer_lang, seller_lang,
-     buyer_chat_cursor, seller_chat_cursor, rounds, handoff_reason, opened_at, updated_at";
+     buyer_chat_cursor, seller_chat_cursor, rounds, handoff_reason, opened_at, updated_at,
+     buyer_rounds, seller_rounds";
 
 pub fn get(conn: &Connection, session_id: &str) -> Result<Option<Session>> {
     conn.query_row(
@@ -180,11 +192,25 @@ pub fn set_language(
     Ok(updated == 1)
 }
 
-/// Counts one question round (`docs/judgments.md` §4.1).
-pub fn increment_rounds(conn: &Connection, session_id: &str, now: i64) -> Result<()> {
+/// Counts a question round for `party`, right after its question was sent
+/// (`docs/judgments.md` §4.1). `first_in_turn` also counts the turn in the
+/// session total, which reports use.
+pub fn count_round(
+    conn: &Connection,
+    session_id: &str,
+    party: Party,
+    first_in_turn: bool,
+    now: i64,
+) -> Result<()> {
+    let (buyer, seller) = match party {
+        Party::Buyer => (1, 0),
+        Party::Seller => (0, 1),
+    };
     conn.execute(
-        "UPDATE sessions SET rounds = rounds + 1, updated_at = ?2 WHERE session_id = ?1",
-        params![session_id, now],
+        "UPDATE sessions SET rounds = rounds + ?2, buyer_rounds = buyer_rounds + ?3,
+             seller_rounds = seller_rounds + ?4, updated_at = ?5
+         WHERE session_id = ?1",
+        params![session_id, i64::from(first_in_turn), buyer, seller, now],
     )?;
     Ok(())
 }
@@ -300,6 +326,8 @@ fn from_row(row: &Row<'_>) -> rusqlite::Result<Result<Session>> {
         handoff_reason: row.get(14)?,
         opened_at: row.get(15)?,
         updated_at: row.get(16)?,
+        buyer_rounds: row.get(17)?,
+        seller_rounds: row.get(18)?,
     }))
 }
 
@@ -418,10 +446,15 @@ mod tests {
     fn rounds_count_up() {
         let store = store_with_session();
 
-        increment_rounds(store.conn(), "s1", 300).unwrap();
-        increment_rounds(store.conn(), "s1", 301).unwrap();
+        // One turn asking both parties, then one asking only the seller.
+        count_round(store.conn(), "s1", Party::Buyer, true, 300).unwrap();
+        count_round(store.conn(), "s1", Party::Seller, false, 300).unwrap();
+        count_round(store.conn(), "s1", Party::Seller, true, 301).unwrap();
 
-        assert_eq!(get(store.conn(), "s1").unwrap().unwrap().rounds, 2);
+        let session = get(store.conn(), "s1").unwrap().unwrap();
+        assert_eq!(session.rounds, 2, "one round per turn");
+        assert_eq!(session.rounds_of(Party::Buyer), 1);
+        assert_eq!(session.rounds_of(Party::Seller), 2);
     }
 
     #[test]
