@@ -166,9 +166,11 @@ sample (`eval/sample/REPORT-es.md`) met every target with them, but 10 cases
 cannot place a threshold.
 
 A pilot runs with `validated_languages = []`: Serbero talks to both parties,
-gathers the facts, and hands every case to a solver with a brief
-(`facts_gathered`, `wants_human`, `fraud_signal`, ...). It never guides a fund
-action. A pilot never adds a language to `validated_languages`: a language
+gathers the facts, and hands every case to the solvers in `[[solvers]]` with a
+brief (`facts_gathered`, `wants_human`, `fraud_signal`, ...). It never guides a
+fund action. A pilot therefore needs at least one solver configured: with none,
+the brief reaches nobody and stays pending, and the timer retries it, like any
+brief that was not delivered. A pilot never adds a language to `validated_languages`: a language
 enters that list only when its golden set meets the targets of §2 for the
 active judge ([spec.md §7.7](spec.md#77-languages)), so no party receives
 guidance from a judge that was not measured in its language.

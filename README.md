@@ -373,8 +373,9 @@ Mediation is opt-in and needs a few things in place first.
 
    With `validated_languages = []`, Serbero talks to both parties, gathers the
    payment facts, notices requests for a human and fraud signals, and hands
-   every case to a solver with a brief. It never tells a party to release or
-   cancel. Keep the list empty during the pilot: a language is added only
+   every case to the solvers in `[[solvers]]` with a brief, so the pilot
+   needs at least one ([Configure the notifier](#configure-the-notifier)). It
+   never tells a party to release or cancel. Keep the list empty during the pilot: a language is added only
    when its golden set passes the evaluation, which is what lets Serbero
    guide the parties to resolve on their own in it
    ([`docs/evaluation.md` §3.1](docs/evaluation.md#31-pilot),
