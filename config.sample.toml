@@ -52,10 +52,12 @@ api_key_env = "TYPESAFE_API_KEY"          # the operator's own key
 timeout = "10s"
 max_retries = 3
 
-# Calibrated thresholds, one table per "<provider>/<model>". Without a table
-# for the configured judge, mediation stays disabled. These values are
-# illustrative only: uncomment them only after a calibration report for this
-# judge is committed (docs/evaluation.md §3).
+# Thresholds, one table per "<provider>/<model>". Without a table for the
+# configured judge, mediation stays disabled. These are the defaults of
+# docs/judgments.md §3, not yet calibrated on a full golden set: uncomment them
+# to run a pilot (docs/evaluation.md §3.1). With validated_languages empty,
+# Serbero gathers the facts and hands every case to the [[solvers]] above, so a
+# pilot needs at least one; it never guides the parties to release or cancel.
 # [judge.thresholds."typesafe/jev-1.13.0"]
 # guide = 0.90
 # fact = 0.80
@@ -63,4 +65,4 @@ max_retries = 3
 # fraud = 0.60
 # conflict = 0.75
 # outside_scope = 0.80
-# validated_languages = []               # languages whose golden set passed for this judge (spec §7.7)
+# validated_languages = []               # languages whose golden set passed for this judge (spec §7.7); empty in a pilot

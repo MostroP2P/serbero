@@ -338,7 +338,10 @@ pub trait Judge: Send + Sync {
 `model`, `api_base`, `api_key_env`) and restarting. Because calibration differs
 between models, thresholds are stored per provider
 (`[judge.thresholds."<provider>/<model>"]`), and a provider or model is enabled
-only after it passes the golden set. Production configs pin a concrete model
+only after it passes the golden set. The one exception is a pilot, which runs
+the uncalibrated defaults of [judgments.md §3](judgments.md#3-from-answers-to-facts)
+with `validated_languages = []`, so it gathers facts and hands every case off
+but never guides a fund action ([evaluation.md §3.1](evaluation.md#31-pilot)). Production configs pin a concrete model
 version rather than an alias such as `jev-latest`, so the calibrated thresholds
 always match the model that answers ([evaluation.md](evaluation.md)). An answer reporting any other model is rejected as `Malformed`, and error bodies are never kept, since they may echo party text. Every
 evaluation row records the judge id, so results from different providers are
@@ -775,8 +778,8 @@ trimmed, and a file readable by any user is logged as a warning.
 
 Startup fails fast on a missing key, an unknown language, or a solver list that
 cannot be parsed. With `[mediation].enabled = true` and no reachable judge, or
-no calibrated thresholds for the configured provider and model,
-Serbero logs an operator-actionable error and runs notification only.
+no thresholds table for the configured provider and model (calibrated, or the
+pilot defaults of [evaluation.md §3.1](evaluation.md#31-pilot)), Serbero logs an operator-actionable error and runs notification only.
 
 An observer must not be the Mostro node or a solver (a solver already gets
 every message in full) and may be listed once. Observers hear only about
