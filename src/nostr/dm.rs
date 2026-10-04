@@ -5,8 +5,7 @@
 use std::future::Future;
 
 use mostro_core::message::{Action, Message, Payload};
-use mostro_core::nip59::WrapOptions;
-use mostro_core::transport::wrap_message_nip44;
+use mostro_core::transport::{WrapOptions, wrap_message_nip44};
 use nostr_sdk::prelude::*;
 use uuid::Uuid;
 

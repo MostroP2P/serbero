@@ -8,8 +8,7 @@ use std::time::Duration;
 
 use mostro_core::dispute::SolverDisputeInfo;
 use mostro_core::message::{Action, Message, Payload};
-use mostro_core::nip59::WrapOptions;
-use mostro_core::transport::{unwrap_message_nip44, wrap_message_nip44};
+use mostro_core::transport::{WrapOptions, unwrap_message_nip44, wrap_message_nip44};
 use nostr_sdk::prelude::*;
 use uuid::Uuid;
 
