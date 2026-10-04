@@ -19,7 +19,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use mostro_core::message::{Action, Message, Payload};
-use mostro_core::nip59::WrapOptions;
+use mostro_core::transport::WrapOptions;
 use mostro_core::transport::wrap_message_nip44;
 use nostr_sdk::prelude::*;
 use serbero::chat::{Outbound, send_to_party};

@@ -29,7 +29,7 @@ path = "src/bin/eval.rs"
 
 [dependencies]
 futures-util = "0.3.34"
-mostro-core = "0.15.1"
+mostro-core = "0.17.0"
 nostr-sdk = "0.45.4"
 reqwest = { version = "0.13.5", default-features = false, features = ["json", "rustls-no-provider", "http2"] }
 rusqlite = { version = "0.40.2", features = ["bundled"] }
