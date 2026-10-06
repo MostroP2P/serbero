@@ -1,10 +1,17 @@
 # cargo-release configuration (README "Releasing"). `cargo release minor -x`
-# on main bumps the version, dates the changelog, publishes the crate to
-# crates.io, commits, tags and pushes; the tag makes the release workflow
-# publish binaries, the container image and the notes.
+# on main bumps the version, dates the changelog, commits, tags and pushes.
+# The tag makes the release workflow publish binaries, the container image
+# and the notes, and then the crate to crates.io. A crates.io version can
+# never be replaced, so it is published last, from CI, once everything else
+# is out; never from a local checkout.
 
 # Releases are cut from main only, since cargo-release pushes there directly.
 allow-branch = ["main"]
+publish = false
+
+# cargo-release only warns when main is behind origin/main; this stops it.
+pre-release-hook = ["scripts/release-check.sh"]
+
 tag-name = "v{{version}}"
 tag-message = "Serbero {{tag_name}}"
 pre-release-commit-message = "chore(release): {{version}}"
