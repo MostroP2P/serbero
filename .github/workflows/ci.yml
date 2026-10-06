@@ -28,6 +28,7 @@ jobs:
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
       - run: scripts/image-aliases.test.sh
+      - run: scripts/release-check.test.sh
 
   docker:
     name: container image

@@ -3,7 +3,8 @@ name: Release
 # A version tag (`v1.2.3`) builds the daemon for every supported platform and
 # publishes a GitHub release with the binaries, their checksums, and the
 # tag's section of CHANGELOG.md (plan T6.3). It also publishes a multi-arch
-# container image to GHCR, with build provenance (plan T6.8).
+# container image to GHCR, with build provenance (plan T6.8). The crate goes
+# to crates.io last, since a published version there can never be replaced.
 on:
   push:
     tags: ["v*"]
@@ -34,6 +35,8 @@ jobs:
         run: scripts/release-notes.sh "$GITHUB_REF_NAME" > /dev/null
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo test --locked
+      # Packaging errors show up before anything is published.
+      - run: cargo publish --dry-run --locked
 
   build:
     name: build ${{ matrix.target }}
@@ -218,3 +221,25 @@ jobs:
             --title "Serbero $GITHUB_REF_NAME" \
             --notes-file notes.md \
             --verify-tag
+
+  crate:
+    name: crates.io
+    # Last, once the GitHub release and the image are out: a failure before
+    # this leaves crates.io untouched, while those two can be fixed and
+    # re-run. Trusted publishing: crates.io trusts this workflow of this
+    # repository and hands it a short-lived token, so no token is stored.
+    needs: [release, image-manifest]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - id: auth
+        uses: rust-lang/crates-io-auth-action@v1
+      - run: cargo publish --locked
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}

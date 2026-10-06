@@ -640,8 +640,10 @@ question-set version and a new evaluation run
 
 Releases use [`cargo-release`](https://github.com/crate-ci/cargo-release)
 (`cargo install cargo-release`), configured in [`release.toml`](release.toml),
-and run from an up-to-date `main` (it refuses any other branch). You need a
-crates.io token with publish rights on `serbero` (`cargo login`).
+and run from `main`, exactly as it is on `origin` (it refuses any other
+branch, and [`scripts/release-check.sh`](scripts/release-check.sh) stops it
+when `main` is behind or has unpushed commits). No crates.io token is needed
+locally.
 
 ```sh
 git checkout main && git pull
@@ -651,13 +653,22 @@ cargo release minor -x     # or patch / major / an exact X.Y.Z
 
 It bumps the version in `Cargo.toml` and `Cargo.lock`, moves the
 `[Unreleased]` notes in [`CHANGELOG.md`](CHANGELOG.md) under
-`## [X.Y.Z] - <today>`, publishes the crate to crates.io, commits
-`chore(release): X.Y.Z`, tags `vX.Y.Z`, and pushes the commit and the tag.
+`## [X.Y.Z] - <today>`, commits `chore(release): X.Y.Z`, tags `vX.Y.Z`, and
+pushes the commit and the tag.
 
 The release workflow checks that the tag matches `Cargo.toml` and that the
-changelog has notes for it, runs the tests, builds every platform, and
-publishes the release with that section as its notes. It also pushes the
-container image to `ghcr.io/mostrop2p/serbero` with build provenance.
+changelog has notes for it, runs the tests, checks that the crate packages,
+builds every platform, and publishes the release with that section as its
+notes. It also pushes the container image to `ghcr.io/mostrop2p/serbero` with
+build provenance. Only when all of that succeeded does it publish the crate to
+crates.io, because a crates.io version can never be replaced: a failed run
+leaves crates.io untouched, and its failed jobs can be re-run.
+
+The crate is published with crates.io
+[trusted publishing](https://crates.io/docs/trusted-publishing), so no token
+is stored in GitHub. Once, an owner of the crate adds a trusted publisher in
+its crates.io settings: repository `MostroP2P/serbero`, workflow
+`release.yml`, no environment.
 
 The first image push creates the GHCR package as private. Once, after that
 first release, an organization admin sets the package's visibility to public
