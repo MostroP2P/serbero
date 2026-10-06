@@ -7,6 +7,10 @@ section `[X.Y.Z]` as its release notes.
 
 ## [Unreleased]
 
+Version 0.2.2 was published to crates.io by mistake, without the startup
+check below, and has been yanked. It was never tagged or released on
+GitHub. This release contains everything 0.2.2 had, and more.
+
 ### Changed
 
 - Startup rejects Serbero's own pubkey in `[[solvers]]` or `[[observers]]`.
@@ -16,7 +20,6 @@ section `[X.Y.Z]` as its release notes.
   upgrading.
 - The README explains how solvers read Serbero's messages in Mostrix
   (`trusted_dm_senders`, the admin key, shared relays).
-
 - Mediation can run as a pilot with the default thresholds of
   `docs/judgments.md` §3 until a calibration report is published. With
   `validated_languages = []`, which a pilot keeps, it gathers the facts and
