@@ -12,7 +12,7 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use nostr_sdk::prelude::{PublicKey, SecretKey};
+use nostr_sdk::prelude::{Keys, PublicKey, SecretKey};
 use serde::Deserialize;
 
 use crate::error::{Error, Result};
@@ -55,6 +55,7 @@ impl Settings {
         let config = Config::parse(text)?;
         let mut warnings = Vec::new();
         let secrets = Secrets::resolve(&config, &env, &read_file, &mut warnings)?;
+        config.check_not_serbero(&secrets)?;
         Ok(Self {
             config,
             secrets,
@@ -312,6 +313,35 @@ impl Config {
                 .any(|o| same(&o.pubkey, &observer.pubkey))
             {
                 return invalid(format!("{field} is listed twice"));
+            }
+        }
+        Ok(())
+    }
+
+    /// Serbero is itself registered on Mostro as a solver, so operators may
+    /// list its key in `[[solvers]]`; it would then message itself. Needs
+    /// the private key, so it runs once secrets are resolved.
+    fn check_not_serbero(&self, secrets: &Secrets) -> Result<()> {
+        let serbero = SecretKey::from_hex(secrets.private_key.expose())
+            .map(|sk| Keys::new(sk).public_key().to_hex())
+            .map_err(|_| Error::Config("invalid private key".into()))?;
+        let fields = self
+            .solvers
+            .iter()
+            .enumerate()
+            .map(|(i, s)| (format!("solvers[{i}].pubkey"), &s.pubkey))
+            .chain(
+                self.observers
+                    .iter()
+                    .enumerate()
+                    .map(|(i, o)| (format!("observers[{i}].pubkey"), &o.pubkey)),
+            );
+        for (field, pubkey) in fields {
+            if pubkey.eq_ignore_ascii_case(&serbero) {
+                return invalid(format!(
+                    "{field} is Serbero's own key; list only the human solvers \
+                     and services that Serbero should message"
+                ));
             }
         }
         Ok(())

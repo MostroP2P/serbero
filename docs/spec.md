@@ -781,8 +781,11 @@ cannot be parsed. With `[mediation].enabled = true` and no reachable judge, or
 no thresholds table for the configured provider and model (calibrated, or the
 pilot defaults of [evaluation.md §3.1](evaluation.md#31-pilot)), Serbero logs an operator-actionable error and runs notification only.
 
-An observer must not be the Mostro node or a solver (a solver already gets
-every message in full) and may be listed once. Observers hear only about
+`[[solvers]]` lists the people Serbero notifies, not Serbero itself: although
+Serbero is registered on Mostro as a `read` solver, its own key in
+`[[solvers]]` or `[[observers]]` is a startup error, since it would only
+message itself. An observer must not be the Mostro node or a solver (a solver
+already gets every message in full) and may be listed once. Observers hear only about
 mediation: with it disabled, Serbero logs a warning and sends them nothing
 ([messages.md](messages.md#observers)).
 

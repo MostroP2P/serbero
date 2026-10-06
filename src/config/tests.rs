@@ -550,3 +550,43 @@ fn the_mostro_node_cannot_be_an_observer() {
         "{err}"
     );
 }
+
+fn serbero_pubkey() -> String {
+    nostr_sdk::prelude::Keys::parse(PRIVATE_KEY)
+        .unwrap()
+        .public_key()
+        .to_hex()
+}
+
+#[test]
+fn serbero_cannot_be_one_of_its_own_solvers() {
+    // Serbero registers on Mostro as a solver, so operators may list it in
+    // [[solvers]]; it would then send every notification to itself.
+    let text = minimal(&format!(
+        "[[solvers]]\npubkey = \"{MOSTRO}\"\npermission = \"write\"\n\
+         [[solvers]]\npubkey = \"{}\"\npermission = \"read\"\n",
+        serbero_pubkey().to_uppercase()
+    ));
+
+    let err = error_of(&text, base_env());
+
+    assert!(
+        err.contains("solvers[1].pubkey is Serbero's own key"),
+        "{err}"
+    );
+}
+
+#[test]
+fn serbero_cannot_be_its_own_observer() {
+    let text = minimal(&format!(
+        "[[observers]]\npubkey = \"{}\"\n",
+        serbero_pubkey()
+    ));
+
+    let err = error_of(&text, base_env());
+
+    assert!(
+        err.contains("observers[0].pubkey is Serbero's own key"),
+        "{err}"
+    );
+}
