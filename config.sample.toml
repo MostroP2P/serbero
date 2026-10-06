@@ -14,7 +14,10 @@ pubkey = "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
 # Use relays verified to store kind 14 events (docs/spec.md §5.1).
 relays = ["wss://relay.mostro.network", "wss://nos.lol"]
 
-# One entry per solver to notify. `write` solvers receive handoffs first.
+# One entry per human solver to notify, with the pubkey of the key their
+# Mostro client uses (Mostrix: admin_privkey). `write` solvers receive handoffs
+# first. Do not list Serbero's own key here: it registers on Mostro as a
+# solver, but it does not message itself (startup rejects it).
 [[solvers]]
 pubkey = "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5"
 permission = "write"

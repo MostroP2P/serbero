@@ -9,6 +9,14 @@ section `[X.Y.Z]` as its release notes.
 
 ### Changed
 
+- Startup rejects Serbero's own pubkey in `[[solvers]]` or `[[observers]]`.
+  Serbero is registered on Mostro as a solver, but listed in its own config
+  it sent itself a copy of every notification, in addition to the other
+  configured solvers. If your config lists it, remove that entry before
+  upgrading.
+- The README explains how solvers read Serbero's messages in Mostrix
+  (`trusted_dm_senders`, the admin key, shared relays).
+
 - Mediation can run as a pilot with the default thresholds of
   `docs/judgments.md` §3 until a calibration report is published. With
   `validated_languages = []`, which a pilot keeps, it gathers the facts and

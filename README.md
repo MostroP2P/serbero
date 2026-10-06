@@ -190,6 +190,30 @@ Transcript (18 messages) follows in the next message.
 Quotes are always the parties' own words, in the language they wrote them.
 Screenshots and files are listed as attachments; Serbero cannot read them.
 
+### Read them in Mostrix
+
+Anyone can send a direct message to a solver, so Mostrix shows only messages
+from the senders a solver trusts. Mostrix v0.3.5 or later lists them in the
+**SERBERO** pane of each dispute in *Disputes in Progress*. In the solver's
+Mostrix `settings.toml`:
+
+```toml
+user_mode = "admin"
+admin_privkey = "nsec1..."   # the solver's key: its pubkey is in Serbero's [[solvers]]
+relays = ["wss://relay.mostro.network", "..."]   # at least one of Serbero's [mostro].relays
+trusted_dm_senders = ["npub1..."]   # Serbero's npub (or hex), from its startup log
+```
+
+Then restart Mostrix: it reads `trusted_dm_senders` only when it starts,
+reconnects, or reloads its keys, and then fetches the last 7 days of
+Serbero's messages. If a `settings.toml` sits next to the `mostrix` binary, it
+is the one Mostrix reads, instead of `~/.mostrix/settings.toml`.
+
+If the pane stays empty while Serbero logs `notification sent`, check that
+the pubkey of `admin_privkey` is exactly the `solver` in Serbero's log line:
+Serbero writes to that key only, and Mostrix silently skips messages that
+are not addressed to its own key.
+
 **Taking over.** To take a dispute from Serbero, take it from your Mostro
 client as you normally would (it needs `write` permission). Serbero stops
 writing to the parties immediately.
@@ -243,8 +267,8 @@ change ([`docs/spec.md` §7.7](docs/spec.md#77-languages)).
 
 ## Install
 
-From the next tagged release on, each release publishes prebuilt binaries for
-Linux (x86_64 and aarch64) and macOS (Apple silicon) on the
+Each release publishes prebuilt binaries for Linux (x86_64 and aarch64) and
+macOS (Apple silicon) on the
 [releases page](https://github.com/MostroP2P/serbero/releases), each with a
 SHA-256 checksum and the sample config:
 
@@ -284,9 +308,15 @@ source build.
    At minimum, set:
 
    - `[mostro].pubkey`: the hex pubkey of your Mostro node;
-   - `[mostro].relays`: the relays your node publishes to;
-   - one `[[solvers]]` entry per solver to notify, with their hex pubkey and
-     `read` or `write` permission.
+   - `[mostro].relays`: the relays your node publishes to. Serbero also
+     sends its messages to solvers there, so each solver's Mostro client must
+     read at least one of them;
+   - one `[[solvers]]` entry per human solver to notify, with the hex pubkey
+     of the key they use in their Mostro client and `read` or `write`
+     permission. Do not list Serbero itself: it is registered on Mostro as a
+     solver, but it does not message itself, and startup rejects its own key
+     here. Each solver then sets up their client to read Serbero's messages
+     ([Read them in Mostrix](#read-them-in-mostrix)).
 
    Optionally, add an `[[observers]]` entry with the hex pubkey of a service
    such as mostro-watchdog, to post mediation progress to your team chat. It
