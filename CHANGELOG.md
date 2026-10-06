@@ -11,8 +11,9 @@ section `[X.Y.Z]` as its release notes.
 
 - Startup rejects Serbero's own pubkey in `[[solvers]]` or `[[observers]]`.
   Serbero is registered on Mostro as a solver, but listed in its own config
-  it only sent every notification to itself. If your config lists it, remove
-  that entry before upgrading.
+  it sent itself a copy of every notification, in addition to the other
+  configured solvers. If your config lists it, remove that entry before
+  upgrading.
 - The README explains how solvers read Serbero's messages in Mostrix
   (`trusted_dm_senders`, the admin key, shared relays).
 
