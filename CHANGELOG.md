@@ -7,6 +7,8 @@ section `[X.Y.Z]` as its release notes.
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-10-06
+
 Version 0.2.2 was published to crates.io by mistake, without the startup
 check below, and has been yanked. It was never tagged or released on
 GitHub. This release contains everything 0.2.2 had, and more.
