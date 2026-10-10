@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use super::guide::FINISH_LOOKBACK_SECS;
 use super::handoff::{BRIEF_PENDING, BRIEF_SENT, HANDOFF_NOTICE, TurnReading};
-use super::hold::{self, HELD_EVENT};
+use super::hold;
 use super::{Mediator, OPENING_NOTICE_PENDING, OPENING_NOTICE_SENT, ReadyJudge};
 use crate::error::Result;
 use crate::judge::facts::{self, Facts};
@@ -67,7 +67,7 @@ pub fn clocks(session: &Session, messages: &[Message], history: &[Event], now: i
 
 /// How long after a handoff or guidance started its notices are left to
 /// that call before a tick resends what is missing.
-const RETRY_GRACE_SECS: i64 = 120;
+pub(super) const RETRY_GRACE_SECS: i64 = 120;
 
 /// The session's briefs no solver received yet: each `brief_pending` event
 /// id with what it was about, unless a `brief_sent` event covers it.
@@ -209,12 +209,16 @@ impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
                 events::list_for_dispute(store.conn(), &session.dispute_id)?,
             )
         };
-        // A handoff, guidance or hold still sending its brief and notices
-        // is left to finish first.
+        // A hold still sending its notices is left to finish first, for a
+        // delay that leaves the parties most of the grace.
+        let held = hold::held_at(session, &history)
+            .filter(|at| now - at >= hold::retry_after(self.settings.handoff_grace));
+        // A handoff or guidance still sending its brief and notices is left
+        // to finish first.
         let started = history
             .iter()
             .filter(|e| e.session_id.as_deref() == Some(&session.session_id))
-            .filter(|e| e.kind == "handoff" || e.kind == "guided" || e.kind == HELD_EVENT)
+            .filter(|e| e.kind == "handoff" || e.kind == "guided")
             .map(|e| e.created_at)
             .max();
         if started.is_some_and(|at| now - at < RETRY_GRACE_SECS) {
@@ -256,7 +260,7 @@ impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
             SessionState::Guiding => {
                 self.resend_guides(session).await?;
             }
-            SessionState::Active if hold::held_at(session, &history).is_some() => {
+            SessionState::Active if held.is_some() => {
                 self.send_hold_notices(session).await;
             }
             _ => {}
@@ -360,6 +364,7 @@ impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
 mod tests {
     use serde_json::json;
 
+    use super::super::hold::HELD_EVENT;
     use super::*;
     use crate::store::sessions::testing::store_with_session;
 

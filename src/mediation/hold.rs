@@ -4,9 +4,12 @@
 //! timer task hands off when the grace is over; the notifier closes the
 //! session as self-resolved if the dispute ends first.
 
+use std::time::Duration;
+
 use serde_json::json;
 
 use super::Mediator;
+use super::timers::RETRY_GRACE_SECS;
 use crate::error::Result;
 use crate::nostr::dm::DmSender;
 use crate::policy::HandoffReason;
@@ -18,6 +21,15 @@ pub(super) const HOLD_NOTICE: &str = "hold_notice";
 
 /// Records that the session holds for the parties; the timer reads its time.
 pub(super) const HELD_EVENT: &str = "held";
+
+/// How long after the hold started the timer task resends a notice that
+/// is missing: the usual retry grace, but never more than half of
+/// `handoff_grace`, so a short grace still leaves the parties time to act
+/// on the notice before the handoff.
+pub(super) fn retry_after(handoff_grace: Duration) -> i64 {
+    let half = i64::try_from(handoff_grace.as_secs() / 2).unwrap_or(i64::MAX);
+    RETRY_GRACE_SECS.min(half)
+}
 
 /// When the session started holding, if it did.
 pub(super) fn held_at(session: &Session, history: &[Event]) -> Option<i64> {
@@ -67,5 +79,18 @@ impl<S: DmSender> Mediator<S> {
                 tracing::warn!(session_id = %session.session_id, %party, error = %e, "hold notice not sent; the timer retries it");
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_missing_notice_is_retried_within_half_the_grace() {
+        assert_eq!(retry_after(Duration::from_secs(1800)), RETRY_GRACE_SECS);
+        assert_eq!(retry_after(Duration::from_secs(240)), RETRY_GRACE_SECS);
+        assert_eq!(retry_after(Duration::from_secs(100)), 50);
+        assert_eq!(retry_after(Duration::MAX), RETRY_GRACE_SECS);
     }
 }

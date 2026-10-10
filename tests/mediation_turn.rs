@@ -1108,6 +1108,43 @@ async fn facts_gathered_holds_for_the_parties_and_then_hands_off() {
 }
 
 #[tokio::test]
+async fn a_hold_notice_a_party_missed_is_sent_again_before_the_handoff() {
+    let script = pilot_script().await;
+    let mut buyer = buyer_side(&script).await;
+    let mut seller = seller_side(&script).await;
+    seller.say("sí, me llegó el pago").await;
+    assert_eq!(seller.next_from_serbero().await, en("thanks_waiting"));
+    buyer.say("yo pagué ayer por la app").await;
+    assert_eq!(buyer.next_from_serbero().await, en("hold_notice"));
+    assert_eq!(seller.next_from_serbero().await, en("hold_notice"));
+    // As if the seller's notice had not reached any relay.
+    script
+        .store
+        .lock()
+        .unwrap()
+        .conn()
+        .execute(
+            "DELETE FROM messages WHERE template_id = 'hold_notice' AND party = 'seller'",
+            [],
+        )
+        .unwrap();
+    let held = held_at(&script);
+
+    script.mediator.tick(held + 119).await.unwrap();
+    assert_eq!(
+        seller.next_within(QUIET).await,
+        None,
+        "the hold is still sending"
+    );
+
+    script.mediator.tick(held + 120).await.unwrap();
+
+    assert_eq!(seller.next_from_serbero().await, en("hold_notice"));
+    assert_eq!(buyer.next_within(QUIET).await, None, "not resent");
+    assert!(script.outbox.texts().is_empty(), "no handoff yet");
+}
+
+#[tokio::test]
 async fn a_dispute_resolved_during_the_hold_is_self_resolved() {
     let script = pilot_script().await;
     let mut buyer = buyer_side(&script).await;
