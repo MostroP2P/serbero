@@ -7,6 +7,8 @@ section `[X.Y.Z]` as its release notes.
 
 ## [Unreleased]
 
+## [0.2.5] - 2026-10-10
+
 ### Changed
 
 - A party who writes when Serbero has no template left for them is no longer
