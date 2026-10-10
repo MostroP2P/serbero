@@ -37,6 +37,7 @@ pub const TEMPLATE_IDS: &[&str] = &[
     "ask_seller_check_account",
     "what_happens_next",
     "thanks_waiting",
+    "waiting_other_party",
     "reminder",
     "guide_arrived_seller",
     "guide_arrived_buyer",

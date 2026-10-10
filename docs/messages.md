@@ -127,6 +127,22 @@ monitored and processed by an automated service.
 - **pt:** Obrigado, é tudo o que preciso de você por enquanto. Aviso se precisar
   de mais alguma coisa.
 
+### `waiting_other_party`
+
+Sent once to a party who wrote when no other template fits (every question
+for them was already used) and the other party still owes an answer
+([judgments.md §4.1](judgments.md#41-next-question-for-each-party) step 3).
+
+- **en:** Thanks, I've noted that. I'm now waiting for the other party to
+  answer; if they don't soon, the case goes to the assigned solver with
+  everything you told me.
+- **es:** Gracias, lo tengo anotado. Ahora estoy esperando la respuesta de la
+  otra parte; si no responde pronto, el caso pasa a la persona asignada con
+  todo lo que me dijiste.
+- **pt:** Obrigado, anotei. Agora estou aguardando a resposta da outra parte;
+  se ela não responder em breve, o caso passa para a pessoa responsável com
+  tudo o que você me disse.
+
 ### `reminder`
 
 - **en:** I'm still waiting for your answer to my previous question. If I don't

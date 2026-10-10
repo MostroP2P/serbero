@@ -132,7 +132,11 @@ fn a_payment_claim_without_details_asks_for_details_once() {
         .with(claim);
 
     assert_eq!(first.next(), buyer(&[ASK_BUYER_DETAILS]));
-    assert_eq!(again.next(), buyer(&[]));
+    assert_eq!(
+        again.next(),
+        buyer(&[WAITING_OTHER_PARTY]),
+        "the details are asked once; the buyer is then told the seller is awaited"
+    );
 }
 
 #[test]
@@ -179,7 +183,11 @@ fn nothing_needed_thanks_the_party_once() {
         .with(known);
 
     assert_eq!(first.next(), buyer(&[THANKS_WAITING]));
-    assert_eq!(again.next(), buyer(&[]));
+    assert_eq!(
+        again.next(),
+        buyer(&[WAITING_OTHER_PARTY]),
+        "thanked once; writing again, the buyer is told the seller is awaited"
+    );
 }
 
 #[test]
@@ -369,9 +377,126 @@ fn not_understanding_a_question_without_a_simple_variant_continues_normally() {
 
     assert_eq!(
         case.next(),
-        seller(&[]),
-        "the check question is never repeated"
+        seller(&[WAITING_OTHER_PARTY]),
+        "the check question is never repeated; the seller is told the buyer is awaited"
     );
+}
+
+// Step 3: a party left without a template is told the other is awaited.
+
+#[test]
+fn a_party_with_nothing_left_to_ask_is_told_the_other_is_awaited_once() {
+    let case = Case::new()
+        .sent(
+            Party::Seller,
+            &[ASK_SELLER_RECEIVED, ASK_SELLER_CHECK_ACCOUNT],
+        )
+        .wrote(Party::Seller, MessageKind::Answers)
+        .with(|c| c.facts.seller_not_received = true);
+
+    assert_eq!(case.next(), seller(&[WAITING_OTHER_PARTY]));
+    assert_eq!(
+        case.sent(Party::Seller, &[WAITING_OTHER_PARTY]).next(),
+        seller(&[]),
+        "said once"
+    );
+}
+
+#[test]
+fn nothing_is_said_about_the_other_party_when_it_owes_nothing() {
+    let case = Case::new()
+        .sent(
+            Party::Seller,
+            &[ASK_SELLER_RECEIVED, ASK_SELLER_CHECK_ACCOUNT],
+        )
+        .sent(Party::Buyer, &[ASK_BUYER_SENT, THANKS_WAITING])
+        .wrote(Party::Seller, MessageKind::Answers)
+        .with(|c| {
+            c.facts.seller_not_received = true;
+            // The buyer answered everything and was thanked.
+            c.facts.buyer_sent = true;
+            c.facts.buyer_has_details = true;
+            c.buyer.outstanding = false;
+        });
+
+    assert_eq!(case.next(), seller(&[]));
+}
+
+#[test]
+fn a_fact_unknown_after_both_variants_gets_no_waiting_notice() {
+    // Row 11 hands off as `uncertain`; nothing is said about waiting.
+    let case = Case::new()
+        .sent(Party::Buyer, &[ASK_BUYER_SENT, ASK_BUYER_SENT_SIMPLE])
+        .wrote(Party::Buyer, MessageKind::Answers);
+
+    assert_eq!(case.next(), buyer(&[]));
+}
+
+#[test]
+fn a_question_picked_for_the_other_party_this_turn_counts_as_owed() {
+    // Both wrote at once: the seller has no question left, the buyer's
+    // answer earns a follow-up, so the seller is told the buyer is awaited.
+    let case = Case::new()
+        .sent(
+            Party::Seller,
+            &[ASK_SELLER_RECEIVED, ASK_SELLER_CHECK_ACCOUNT],
+        )
+        .sent(Party::Buyer, &[ASK_BUYER_SENT])
+        .wrote(Party::Seller, MessageKind::Answers)
+        .wrote(Party::Buyer, MessageKind::Answers)
+        .with(|c| {
+            c.facts.seller_not_received = true;
+            c.facts.buyer_sent = true;
+        });
+
+    assert_eq!(
+        case.next(),
+        NextQuestions {
+            buyer: vec![ASK_BUYER_DETAILS],
+            seller: vec![WAITING_OTHER_PARTY],
+            ..NextQuestions::default()
+        }
+    );
+}
+
+#[test]
+fn a_courtesy_template_for_the_other_party_is_not_an_owed_answer() {
+    // Both wrote at once and the buyer is only thanked: nobody is awaited.
+    let case = Case::new()
+        .sent(
+            Party::Seller,
+            &[ASK_SELLER_RECEIVED, ASK_SELLER_CHECK_ACCOUNT],
+        )
+        .sent(Party::Buyer, &[ASK_BUYER_SENT])
+        .wrote(Party::Seller, MessageKind::Answers)
+        .wrote(Party::Buyer, MessageKind::Answers)
+        .with(|c| {
+            c.facts.seller_not_received = true;
+            c.facts.buyer_sent = true;
+            c.facts.buyer_has_details = true;
+        });
+
+    assert_eq!(
+        case.next(),
+        NextQuestions {
+            buyer: vec![THANKS_WAITING],
+            seller: vec![],
+            ..NextQuestions::default()
+        }
+    );
+}
+
+#[test]
+fn a_party_who_gets_a_template_is_not_also_told_to_wait() {
+    let thanked = Case::new()
+        .wrote(Party::Seller, MessageKind::Answers)
+        .with(|c| c.facts.seller_received = true);
+    let asked = Case::new()
+        .wrote(Party::Seller, MessageKind::Answers)
+        .with(|c| c.facts.seller_not_received = true);
+
+    assert_eq!(thanked.next(), seller(&[THANKS_WAITING]));
+    assert_eq!(asked.next(), seller(&[ASK_SELLER_CHECK_ACCOUNT]));
 }
 
 #[test]

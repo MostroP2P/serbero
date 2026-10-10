@@ -7,6 +7,17 @@ section `[X.Y.Z]` as its release notes.
 
 ## [Unreleased]
 
+### Changed
+
+- A party who writes when Serbero has no template left for them is no longer
+  left without a reply. In production a seller who had already been asked
+  to check their account wrote three more times and got nothing back, while
+  the buyer's response timers ran. When the other party still owes an
+  answer, such a party now gets the new `waiting_other_party` template once:
+  the other party is awaited, and the case goes to a person if they stay
+  silent (`docs/judgments.md` §4.1 step 3). The `es` and `pt` texts await a
+  native speaker's review.
+
 ## [0.2.4] - 2026-10-10
 
 ### Changed

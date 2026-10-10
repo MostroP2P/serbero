@@ -1185,6 +1185,29 @@ async fn a_dispute_resolved_during_the_hold_is_self_resolved() {
 }
 
 #[tokio::test]
+async fn a_party_with_nothing_left_to_ask_is_told_the_other_is_awaited_once() {
+    let script = script(&[("seller_receipt", ("says_not_received", 0.97))]).await;
+    let mut seller = seller_side(&script).await;
+    seller.say("no me llegó nada").await;
+    assert_eq!(
+        seller.next_from_serbero().await,
+        en("ask_seller_check_account")
+    );
+
+    seller.say("que no me llegó, no entiendes?").await;
+
+    assert_eq!(seller.next_from_serbero().await, en("waiting_other_party"));
+
+    seller.say("holaaa").await;
+
+    assert_eq!(
+        seller.next_within(Duration::from_secs(2)).await,
+        None,
+        "said once; the buyer's timers end the wait"
+    );
+}
+
+#[tokio::test]
 async fn a_handed_off_dispute_resolved_later_gets_no_thanks() {
     let script = script(&[("buyer_wants_human", ("yes", 0.95))]).await;
     let mut buyer = buyer_side(&script).await;

@@ -42,6 +42,8 @@ what_happens_next = "Estoy reuniendo lo que dice cada uno para que la persona as
 
 thanks_waiting = "Gracias, es todo lo que necesito de ti por ahora. Te aviso si hace falta algo más."
 
+waiting_other_party = "Gracias, lo tengo anotado. Ahora estoy esperando la respuesta de la otra parte; si no responde pronto, el caso pasa a la persona asignada con todo lo que me dijiste."
+
 reminder = "Sigo esperando tu respuesta a mi pregunta anterior. Si no tengo noticias pronto, el caso pasará a la persona asignada tal como está."
 
 guide_arrived_seller = "Gracias por confirmarlo. Si ya verificaste que los {amount} están en tu cuenta, puedes completar la operación tú mismo liberándola desde tu app de Mostro; eso también cierra esta disputa. Si algo no cuadra, dímelo aquí y una persona lo revisará."
