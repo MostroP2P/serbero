@@ -579,6 +579,8 @@ as resolved meanwhile, the session closes as self-resolved and the parties
 get `resolved_thanks`. If not, the timer task hands off with
 `facts_gathered` and the last turn's reading. A request for a human, a fraud
 signal or a dispute outside scope still hands off at once during the hold.
+A turn that asks a fact question again (a party retracted a claim) ends the
+hold; a new one starts once the facts are gathered again.
 `handoff_grace = "0s"` hands off as soon as the facts are gathered.
 
 Every handoff sends the parties the `handoff_notice` template and the solver

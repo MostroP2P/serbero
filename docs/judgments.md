@@ -287,6 +287,10 @@ finish themselves is not sent to a human first
 - `handoff_grace` over without a resolution: `Handoff(facts_gathered)` from
   the timer (§4.2). The dispute resolved meanwhile: the session closes as
   self-resolved.
+- A later turn that asks a fact question (row 10, after a retraction, say)
+  ends the hold: the facts are no longer gathered, so its deadline no longer
+  applies. A new hold, with a new notice, starts once they are gathered
+  again.
 
 Row 10 needs a question, not only `thanks_waiting` or `what_happens_next`:
 those ask nothing, so no response timer would run, and a session whose facts

@@ -61,7 +61,7 @@ pub fn clocks(session: &Session, messages: &[Message], history: &[Event], now: i
             .filter(|e| e.session_id.as_deref() == Some(&session.session_id) && e.kind == "guided")
             .map(|e| e.created_at)
             .max(),
-        held_at: hold::held_at(session, history),
+        held_at: hold::current(session, history, messages).map(|h| h.at),
     }
 }
 
@@ -211,8 +211,8 @@ impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
         };
         // A hold still sending its notices is left to finish first, for a
         // delay that leaves the parties most of the grace.
-        let held = hold::held_at(session, &history)
-            .filter(|at| now - at >= hold::retry_after(self.settings.handoff_grace));
+        let held = hold::current(session, &history, &messages)
+            .filter(|h| now - h.at >= hold::retry_after(self.settings.handoff_grace));
         // A handoff or guidance still sending its brief and notices is left
         // to finish first.
         let started = history
@@ -260,8 +260,8 @@ impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
             SessionState::Guiding => {
                 self.resend_guides(session).await?;
             }
-            SessionState::Active if held.is_some() => {
-                self.send_hold_notices(session).await;
+            SessionState::Active if let Some(hold) = held => {
+                self.send_hold_notices(session, hold.cutoff).await;
             }
             _ => {}
         }

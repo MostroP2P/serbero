@@ -273,7 +273,7 @@ impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
             next: &next,
             buyer_heard: heard(Party::Buyer),
             seller_heard: heard(Party::Seller),
-            held: self.held(&session)?,
+            held: self.held(&session, &messages)?,
             handoff_grace: self.settings.handoff_grace,
         });
 
@@ -311,17 +311,19 @@ impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
                 };
                 self.guide(&session, *path, reading, now).await?;
             }
-            Action::Hold => self.hold(&session, now).await?,
+            // The grace starts when the hold does, not when the turn did:
+            // the judge may have taken a while.
+            Action::Hold => self.hold(&session, crate::daemon::now().max(now)).await?,
             Action::Wait => {}
         }
         Ok(TurnOutcome::Decided(action))
     }
 
     /// Whether the session holds for the parties (`Action::Hold` was taken).
-    fn held(&self, session: &Session) -> Result<bool> {
+    fn held(&self, session: &Session, messages: &[Message]) -> Result<bool> {
         let store = self.lock_store()?;
         let history = events::list_for_dispute(store.conn(), &session.dispute_id)?;
-        Ok(hold::held_at(session, &history).is_some())
+        Ok(hold::current(session, &history, messages).is_some())
     }
 
     /// Records a flood strike for each party over `max_messages_per_turn`
