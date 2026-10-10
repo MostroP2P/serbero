@@ -46,6 +46,7 @@ max_rounds = 4                            # question rounds per party before han
 max_message_chars = 2000
 max_messages_per_turn = 10
 self_resolution_timeout = "2h"
+handoff_grace = "30m"                     # facts gathered → time for the parties before the handoff
 
 [judge]
 provider = "typesafe"                     # typesafe | recorded

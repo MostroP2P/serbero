@@ -28,6 +28,18 @@ pub struct Clocks {
     pub seller: PartyClock,
     /// When the guidance was sent, while guiding.
     pub guided_at: Option<i64>,
+    /// When the session started holding for the parties (`Action::Hold`).
+    pub held_at: Option<i64>,
+}
+
+/// The `[mediation]` durations the timers read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Timeouts {
+    pub response: Duration,
+    pub self_resolution: Duration,
+    /// How long a held session waits for the parties before the
+    /// `facts_gathered` handoff.
+    pub handoff_grace: Duration,
 }
 
 /// What the timer task does for a session.
@@ -49,27 +61,31 @@ pub const FLOOD_STRIKES: u32 = 2;
 /// `response_timeout` after the question, and the session hands off as
 /// `unresponsive` `response_timeout` after the reminder. The reminder is
 /// sent once per session: a later unanswered question hands off at its own
-/// timeout. While guiding, no question awaits an answer; only
+/// timeout. A held session hands off as `facts_gathered` `handoff_grace`
+/// after the hold started; its response timers keep running meanwhile.
+/// While guiding, no question awaits an answer; only
 /// `self_resolution_timeout` after the guidance applies.
-pub fn check(
-    clocks: &Clocks,
-    response_timeout: Duration,
-    self_resolution_timeout: Duration,
-) -> Timer {
+pub fn check(clocks: &Clocks, timeouts: &Timeouts) -> Timer {
     if clocks.phase == Phase::Guiding {
         let stalled = clocks
             .guided_at
-            .is_some_and(|at| clocks.now >= at.saturating_add(secs(self_resolution_timeout)));
+            .is_some_and(|at| clocks.now >= at.saturating_add(secs(timeouts.self_resolution)));
         return if stalled {
             Timer::Handoff(HandoffReason::SelfResolutionStalled)
         } else {
             Timer::Nothing
         };
     }
+    let grace_over = clocks
+        .held_at
+        .is_some_and(|at| clocks.now >= at.saturating_add(secs(timeouts.handoff_grace)));
+    if grace_over {
+        return Timer::Handoff(HandoffReason::FactsGathered);
+    }
 
     let mut remind = Vec::new();
     for (party, clock) in [(Party::Buyer, clocks.buyer), (Party::Seller, clocks.seller)] {
-        match response(&clock, clocks.now, secs(response_timeout)) {
+        match response(&clock, clocks.now, secs(timeouts.response)) {
             Response::Unresponsive => return Timer::Handoff(HandoffReason::Unresponsive),
             Response::Remind => remind.push(party),
             Response::Waiting => {}

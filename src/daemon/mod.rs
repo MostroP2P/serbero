@@ -156,6 +156,7 @@ fn start_mediation(
             max_messages_per_turn: config.mediation.max_messages_per_turn,
             response_timeout: config.mediation.response_timeout,
             self_resolution_timeout: config.mediation.self_resolution_timeout,
+            handoff_grace: config.mediation.handoff_grace,
         },
         sender: RelayDmSender::new(client.clone(), keys.clone()),
         solvers: solvers.to_vec(),

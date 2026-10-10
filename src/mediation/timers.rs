@@ -7,12 +7,13 @@ use std::time::Duration;
 
 use super::guide::FINISH_LOOKBACK_SECS;
 use super::handoff::{BRIEF_PENDING, BRIEF_SENT, HANDOFF_NOTICE, TurnReading};
+use super::hold::{self, HELD_EVENT};
 use super::{Mediator, OPENING_NOTICE_PENDING, OPENING_NOTICE_SENT, ReadyJudge};
 use crate::error::Result;
 use crate::judge::facts::{self, Facts};
 use crate::judge::{Answers, state};
 use crate::nostr::dm::DmSender;
-use crate::policy::timers::{Clocks, PartyClock, Timer, check};
+use crate::policy::timers::{Clocks, PartyClock, Timeouts, Timer, check};
 use crate::policy::{HandoffReason, Path, Phase, template};
 use crate::solver::Subject;
 use crate::store::events::Event;
@@ -60,6 +61,7 @@ pub fn clocks(session: &Session, messages: &[Message], history: &[Event], now: i
             .filter(|e| e.session_id.as_deref() == Some(&session.session_id) && e.kind == "guided")
             .map(|e| e.created_at)
             .max(),
+        held_at: hold::held_at(session, history),
     }
 }
 
@@ -207,12 +209,12 @@ impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
                 events::list_for_dispute(store.conn(), &session.dispute_id)?,
             )
         };
-        // A handoff or guidance still sending its brief and notices is left
-        // to finish first.
+        // A handoff, guidance or hold still sending its brief and notices
+        // is left to finish first.
         let started = history
             .iter()
             .filter(|e| e.session_id.as_deref() == Some(&session.session_id))
-            .filter(|e| e.kind == "handoff" || e.kind == "guided")
+            .filter(|e| e.kind == "handoff" || e.kind == "guided" || e.kind == HELD_EVENT)
             .map(|e| e.created_at)
             .max();
         if started.is_some_and(|at| now - at < RETRY_GRACE_SECS) {
@@ -254,6 +256,9 @@ impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
             SessionState::Guiding => {
                 self.resend_guides(session).await?;
             }
+            SessionState::Active if hold::held_at(session, &history).is_some() => {
+                self.send_hold_notices(session).await;
+            }
             _ => {}
         }
         Ok(())
@@ -269,8 +274,11 @@ impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
         };
         let timer = check(
             &clocks(session, &messages, &history, now),
-            self.settings.response_timeout,
-            self.settings.self_resolution_timeout,
+            &Timeouts {
+                response: self.settings.response_timeout,
+                self_resolution: self.settings.self_resolution_timeout,
+                handoff_grace: self.settings.handoff_grace,
+            },
         );
         match timer {
             Timer::Nothing => {}
@@ -479,5 +487,27 @@ mod tests {
 
         assert_eq!(clocks.phase, Phase::Guiding);
         assert_eq!(clocks.guided_at, Some(50));
+        assert_eq!(clocks.held_at, None);
+    }
+
+    #[test]
+    fn the_hold_time_comes_from_the_sessions_held_event() {
+        let event = |session: &str, kind: &str, at: i64| Event {
+            id: 0,
+            dispute_id: "d1".into(),
+            session_id: Some(session.into()),
+            kind: kind.into(),
+            payload: json!({}),
+            created_at: at,
+        };
+        let history = [event("s0", HELD_EVENT, 40), event("s1", HELD_EVENT, 60)];
+
+        let clocks = clocks(&session(SessionState::Active), &[], &history, 99);
+
+        assert_eq!(
+            clocks.held_at,
+            Some(60),
+            "another session's hold is not ours"
+        );
     }
 }

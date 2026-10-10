@@ -205,10 +205,16 @@ impl Judge for ScriptedJudge {
 }
 
 fn thresholds() -> Thresholds {
+    thresholds_with(&["en", "es"])
+}
+
+/// The default thresholds with these languages validated; none for a
+/// pilot (`docs/evaluation.md` §3.1).
+fn thresholds_with(validated: &[&str]) -> Thresholds {
     serde_json::from_value(serde_json::json!({
         "guide": 0.9, "fact": 0.8, "human_request": 0.8,
         "fraud": 0.6, "conflict": 0.75, "outside_scope": 0.8,
-        "validated_languages": ["en", "es"]
+        "validated_languages": validated
     }))
     .unwrap()
 }
@@ -257,6 +263,8 @@ struct Options {
     handed_off: bool,
     /// A second live session, `s2` of dispute `d2`.
     second_session: bool,
+    /// A pilot: no language is validated, so no guidance is ever sent.
+    pilot: bool,
 }
 
 /// The observer some scripts add, e.g. mostro-watchdog relaying to a team
@@ -403,6 +411,7 @@ async fn script_with(picks: &[(&'static str, (&'static str, f64))], options: Opt
             max_messages_per_turn: MAX_PER_TURN,
             response_timeout: Duration::from_secs(1800),
             self_resolution_timeout: Duration::from_secs(7200),
+            handoff_grace: Duration::from_secs(1800),
         },
         sender: outbox.clone(),
         solvers: if options.no_solvers {
@@ -426,7 +435,11 @@ async fn script_with(picks: &[(&'static str, (&'static str, f64))], options: Opt
     if !options.not_ready {
         mediator.set_ready(ReadyJudge {
             judge: Arc::clone(&judge) as Arc<dyn Judge>,
-            thresholds: thresholds(),
+            thresholds: if options.pilot {
+                thresholds_with(&[])
+            } else {
+                thresholds()
+            },
             turn: TurnQuestions::new(&languages),
         });
     }
@@ -1008,6 +1021,129 @@ async fn a_buyers_claim_alone_never_guides() {
             .as_deref()
             .is_some_and(|t| t.starts_with("guide_"))),
         "no guidance from the buyer's word alone"
+    );
+}
+
+/// A pilot script where the seller says the payment arrived and the buyer
+/// says they paid, so the facts are gathered once both wrote.
+async fn pilot_script() -> Script {
+    script_with(
+        &[
+            ("seller_receipt", ("says_received", 0.97)),
+            ("buyer_payment", ("says_sent", 0.9)),
+        ],
+        Options {
+            pilot: true,
+            ..Default::default()
+        },
+    )
+    .await
+}
+
+/// When the session's hold started, from its `held` event.
+fn held_at(script: &Script) -> i64 {
+    events::list_for_dispute(script.store.lock().unwrap().conn(), "d1")
+        .unwrap()
+        .into_iter()
+        .find(|e| e.kind == "held")
+        .unwrap()
+        .created_at
+}
+
+#[tokio::test]
+async fn in_a_pilot_one_partys_word_does_not_hand_off() {
+    let script = pilot_script().await;
+    let mut seller = seller_side(&script).await;
+
+    seller.say("sí, me llegó el pago").await;
+
+    assert_eq!(seller.next_from_serbero().await, en("thanks_waiting"));
+    assert!(
+        script.outbox.texts().is_empty(),
+        "no brief while the buyer is still awaited"
+    );
+    let store = script.store.lock().unwrap();
+    assert_eq!(
+        sessions::get(store.conn(), "s1").unwrap().unwrap().state,
+        SessionState::Active
+    );
+    assert!(
+        !events::list_for_dispute(store.conn(), "d1")
+            .unwrap()
+            .iter()
+            .any(|e| e.kind == "held" || e.kind == "handoff"),
+        "neither held nor handed off"
+    );
+}
+
+#[tokio::test]
+async fn facts_gathered_holds_for_the_parties_and_then_hands_off() {
+    let script = pilot_script().await;
+    let mut buyer = buyer_side(&script).await;
+    let mut seller = seller_side(&script).await;
+    seller.say("sí, me llegó el pago").await;
+    assert_eq!(seller.next_from_serbero().await, en("thanks_waiting"));
+
+    buyer.say("yo pagué ayer por la app").await;
+
+    assert_eq!(buyer.next_from_serbero().await, en("hold_notice"));
+    assert_eq!(seller.next_from_serbero().await, en("hold_notice"));
+    assert!(
+        script.outbox.texts().is_empty(),
+        "the solvers are not briefed during the hold"
+    );
+    let held = held_at(&script);
+    script.mediator.tick(held + 1799).await.unwrap();
+    assert!(script.outbox.texts().is_empty(), "not before the grace");
+
+    script.mediator.tick(held + 1800).await.unwrap();
+
+    let brief = wait_for_text(&script.outbox, "Dispute d1 · handed off: facts_gathered\n").await;
+    assert!(
+        brief.contains("Seller — says received (0.97)"),
+        "the last turn's reading: {brief}"
+    );
+    assert_eq!(buyer.next_from_serbero().await, en("handoff_notice"));
+    assert_eq!(seller.next_from_serbero().await, en("handoff_notice"));
+}
+
+#[tokio::test]
+async fn a_dispute_resolved_during_the_hold_is_self_resolved() {
+    let script = pilot_script().await;
+    let mut buyer = buyer_side(&script).await;
+    let mut seller = seller_side(&script).await;
+    seller.say("sí, me llegó el pago").await;
+    assert_eq!(seller.next_from_serbero().await, en("thanks_waiting"));
+    buyer.say("yo pagué ayer por la app").await;
+    assert_eq!(buyer.next_from_serbero().await, en("hold_notice"));
+    assert_eq!(seller.next_from_serbero().await, en("hold_notice"));
+    let held = held_at(&script);
+
+    script
+        .notifier
+        .handle_event(&dispute_event(&script.mostro, "released"), 9_001)
+        .await
+        .unwrap();
+
+    assert_eq!(buyer.next_from_serbero().await, en("resolved_thanks"));
+    assert_eq!(seller.next_from_serbero().await, en("resolved_thanks"));
+    let report = wait_for_text(&script.outbox, "Dispute d1 · resolved: released\n").await;
+    assert!(report.contains("outcome: self_resolved"), "{report}");
+    assert_eq!(
+        sessions::get(script.store.lock().unwrap().conn(), "s1")
+            .unwrap()
+            .unwrap()
+            .state,
+        SessionState::Closed
+    );
+    script.mediator.tick(held + 1800).await.unwrap();
+    assert!(
+        !script
+            .outbox
+            .texts()
+            .iter()
+            .any(|t| t.contains("handed off")),
+        "a closed session is never handed off"
     );
 }
 

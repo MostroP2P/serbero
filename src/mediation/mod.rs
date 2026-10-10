@@ -11,6 +11,7 @@ pub mod feedback;
 pub mod guide;
 pub mod handoff;
 pub mod history;
+pub mod hold;
 pub mod observers;
 pub mod settle;
 pub mod timers;
@@ -91,6 +92,7 @@ pub struct MediationSettings {
     pub max_messages_per_turn: u32,
     pub response_timeout: Duration,
     pub self_resolution_timeout: Duration,
+    pub handoff_grace: Duration,
 }
 
 /// A judge that passed its startup checks, with what judging needs.

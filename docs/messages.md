@@ -215,6 +215,27 @@ assisting.
 - **es:** La disputa ya está cerrada. Gracias a los dos por resolverla.
 - **pt:** A disputa foi encerrada. Obrigado a ambos por resolvê-la.
 
+### `hold_notice`
+
+Sent to both parties when the facts are gathered and the session holds for
+`handoff_grace` before the `facts_gathered` handoff
+([spec.md §7.6](spec.md#76-handoff-reasons)). It names no fund action: it
+only says the dispute closes by itself if they resolve it, and goes to a
+person otherwise.
+
+- **en:** Thank you both, I have what I need. If you reach an agreement and
+  resolve it between you from your Mostro apps, this dispute closes on its
+  own. Otherwise it goes to the assigned solver shortly, with everything you
+  told me.
+- **es:** Gracias a los dos, ya tengo lo que necesito. Si llegan a un acuerdo
+  y lo resuelven entre ustedes desde sus apps de Mostro, esta disputa se
+  cierra sola. Si no, en breve pasará a la persona asignada con todo lo que me
+  contaron.
+- **pt:** Obrigado a ambos, já tenho o que preciso. Se chegarem a um acordo e
+  resolverem entre vocês pelos seus apps do Mostro, esta disputa se encerra
+  sozinha. Caso contrário, em breve ela passará para a pessoa responsável com
+  tudo o que me contaram.
+
 ### `handoff_notice`
 
 Sent to both parties on every handoff.

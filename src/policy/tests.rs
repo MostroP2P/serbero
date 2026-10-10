@@ -1,9 +1,12 @@
+use std::time::Duration;
+
 use super::template::*;
 use super::*;
 use crate::judge::facts::{MessageKind, PartyFacts};
 
 /// A turn that matches no row but the last: gathering, nothing known, both
-/// parties in a validated language, no rounds used, nothing to ask.
+/// parties heard and in a validated language, no rounds used, nothing to
+/// ask, not held.
 struct Case {
     phase: Phase,
     facts: Facts,
@@ -14,9 +17,14 @@ struct Case {
     seller_rounds: u32,
     asked: Asked,
     next: NextQuestions,
+    buyer_heard: bool,
+    seller_heard: bool,
+    held: bool,
+    handoff_grace: Duration,
 }
 
 const MAX_ROUNDS: u32 = 3;
+const GRACE: Duration = Duration::from_secs(1800);
 
 impl Case {
     fn new() -> Self {
@@ -30,6 +38,10 @@ impl Case {
             seller_rounds: 0,
             asked: Asked::default(),
             next: NextQuestions::default(),
+            buyer_heard: true,
+            seller_heard: true,
+            held: false,
+            handoff_grace: GRACE,
         }
     }
 
@@ -45,6 +57,10 @@ impl Case {
             max_rounds: MAX_ROUNDS,
             asked: &self.asked,
             next: &self.next,
+            buyer_heard: self.buyer_heard,
+            seller_heard: self.seller_heard,
+            held: self.held,
+            handoff_grace: self.handoff_grace,
         })
     }
 
@@ -114,6 +130,21 @@ fn uncertain(c: &mut Case) {
 fn both_known(c: &mut Case) {
     c.facts.buyer_sent = true;
     c.facts.seller_not_received = true;
+}
+fn pilot(c: &mut Case) {
+    c.validated.clear();
+}
+fn buyer_silent(c: &mut Case) {
+    c.buyer_heard = false;
+}
+fn seller_silent(c: &mut Case) {
+    c.seller_heard = false;
+}
+fn held(c: &mut Case) {
+    c.held = true;
+}
+fn no_grace(c: &mut Case) {
+    c.handoff_grace = Duration::ZERO;
 }
 
 fn ask_buyer_sent() -> Action {
@@ -254,7 +285,11 @@ fn row_8_needs_a_conflict() {
         .with(conflict_answered)
         .with(|c| c.facts.conflict = false);
 
-    assert_eq!(case.decide(), Action::Handoff(HandoffReason::FactsGathered));
+    assert_eq!(
+        case.decide(),
+        Action::Hold,
+        "no conflict: the facts are gathered"
+    );
 }
 
 #[test]
@@ -314,7 +349,8 @@ fn row_10_a_pending_question_is_asked() {
 #[test]
 fn row_10_needs_a_question_not_only_courtesy_templates() {
     // Both facts known: sending only thanks_waiting would leave the session
-    // with no question and no timer; it hands off instead.
+    // with no question and no timer; it holds instead, and the hold's own
+    // timer ends it.
     let case = Case::new().with(both_known).with(|c| {
         c.next = NextQuestions {
             buyer: vec![THANKS_WAITING],
@@ -323,7 +359,7 @@ fn row_10_needs_a_question_not_only_courtesy_templates() {
         }
     });
 
-    assert_eq!(case.decide(), Action::Handoff(HandoffReason::FactsGathered));
+    assert_eq!(case.decide(), Action::Hold);
 }
 
 #[test]
@@ -354,11 +390,8 @@ fn row_11_does_not_apply_once_the_fact_is_known() {
 }
 
 #[test]
-fn row_12_both_payment_facts_known_hand_off() {
-    assert_eq!(
-        Case::new().with(both_known).decide(),
-        Action::Handoff(HandoffReason::FactsGathered)
-    );
+fn row_12_both_payment_facts_known_hold_before_handing_off() {
+    assert_eq!(Case::new().with(both_known).decide(), Action::Hold);
 }
 
 #[test]
@@ -366,6 +399,106 @@ fn row_12_needs_both_facts() {
     let buyer_only = Case::new().with(|c| c.facts.buyer_sent = true);
 
     assert_eq!(buyer_only.decide(), Action::Wait);
+}
+
+// The hold before `facts_gathered`: both parties heard, then a grace
+// period for them to resolve it themselves.
+
+#[test]
+fn facts_gathered_waits_until_both_parties_wrote() {
+    for silent in [buyer_silent as fn(&mut Case), seller_silent] {
+        for facts in [
+            both_known as fn(&mut Case),
+            |c| {
+                seller_confirms(c);
+                pilot(c)
+            },
+            |c| {
+                buyer_denies(c);
+                pilot(c)
+            },
+        ] {
+            let case = Case::new().with(facts).with(silent);
+
+            assert_eq!(case.decide(), Action::Wait, "a silent party is awaited");
+        }
+    }
+}
+
+#[test]
+fn a_party_who_answered_everything_is_still_thanked_while_the_other_is_awaited() {
+    let case = Case::new()
+        .with(seller_confirms)
+        .with(pilot)
+        .with(buyer_silent)
+        .with(|c| c.next.seller = vec![THANKS_WAITING]);
+
+    assert_eq!(
+        case.decide(),
+        Action::Ask {
+            buyer: vec![],
+            seller: vec![THANKS_WAITING],
+        }
+    );
+}
+
+#[test]
+fn guidance_needs_only_the_actors_own_word() {
+    // A validated path follows the actor's statement (P3): the other party
+    // need not have written yet.
+    assert_eq!(
+        Case::new()
+            .with(seller_confirms)
+            .with(buyer_silent)
+            .decide(),
+        Action::Guide(Path::PaymentArrived)
+    );
+    assert_eq!(
+        Case::new().with(buyer_denies).with(seller_silent).decide(),
+        Action::Guide(Path::PaymentNotSent)
+    );
+}
+
+#[test]
+fn a_held_session_waits_for_the_parties() {
+    for facts in [
+        both_known as fn(&mut Case),
+        |c| {
+            seller_confirms(c);
+            pilot(c)
+        },
+        |c| {
+            buyer_denies(c);
+            pilot(c)
+        },
+    ] {
+        assert_eq!(Case::new().with(facts).with(held).decide(), Action::Wait);
+    }
+}
+
+#[test]
+fn a_held_session_still_hands_off_for_a_human_fraud_or_scope() {
+    for (set, expected) in [
+        (human as fn(&mut Case), HandoffReason::HumanRequested),
+        (fraud, HandoffReason::FraudSignal),
+        (outside, HandoffReason::OutsideScope),
+    ] {
+        let case = Case::new().with(both_known).with(held).with(set);
+
+        assert_eq!(case.decide(), Action::Handoff(expected));
+    }
+}
+
+#[test]
+fn without_a_grace_period_facts_gathered_hands_off_at_once() {
+    for facts in [both_known as fn(&mut Case), |c| {
+        seller_confirms(c);
+        pilot(c)
+    }] {
+        let case = Case::new().with(facts).with(no_grace);
+
+        assert_eq!(case.decide(), Action::Handoff(HandoffReason::FactsGathered));
+    }
 }
 
 #[test]
@@ -414,7 +547,7 @@ fn guidance_needs_the_for_guide_facts_not_only_the_facts() {
 }
 
 #[test]
-fn a_conversational_language_hands_off_instead_of_guiding() {
+fn a_conversational_language_holds_instead_of_guiding() {
     for (buyer, seller) in [("pt", "es"), ("es", "pt"), ("pt", "pt")] {
         for path in [seller_confirms as fn(&mut Case), buyer_denies] {
             let case = Case::new().with(path).with(|c| {
@@ -424,7 +557,7 @@ fn a_conversational_language_hands_off_instead_of_guiding() {
 
             assert_eq!(
                 case.decide(),
-                Action::Handoff(HandoffReason::FactsGathered),
+                Action::Hold,
                 "buyer {buyer}, seller {seller}"
             );
         }
@@ -433,11 +566,13 @@ fn a_conversational_language_hands_off_instead_of_guiding() {
 
 #[test]
 fn no_language_is_validated_before_calibration() {
-    let case = Case::new()
-        .with(seller_confirms)
-        .with(|c| c.validated.clear());
+    let case = Case::new().with(seller_confirms).with(pilot);
 
-    assert_eq!(case.decide(), Action::Handoff(HandoffReason::FactsGathered));
+    assert_eq!(case.decide(), Action::Hold);
+    assert_eq!(
+        case.with(no_grace).decide(),
+        Action::Handoff(HandoffReason::FactsGathered)
+    );
 }
 
 // Precedence: each row wins over the next one when both apply.
@@ -468,11 +603,7 @@ fn rows_are_checked_in_order() {
         ("9", rounds_used, Action::Handoff(HandoffReason::RoundLimit)),
         ("10", question_pending, ask_buyer_sent()),
         ("11", uncertain, Action::Handoff(HandoffReason::Uncertain)),
-        (
-            "12",
-            both_known,
-            Action::Handoff(HandoffReason::FactsGathered),
-        ),
+        ("12", both_known, Action::Hold),
     ];
 
     for (i, (row, set, expected)) in rows.iter().enumerate() {
@@ -536,6 +667,10 @@ fn actions_serialize_with_the_spec_names() {
     assert_eq!(
         serde_json::to_value(Action::Wait).unwrap(),
         serde_json::json!("wait")
+    );
+    assert_eq!(
+        serde_json::to_value(Action::Hold).unwrap(),
+        serde_json::json!("hold")
     );
     for reason in [
         HandoffReason::SelfResolutionStalled,

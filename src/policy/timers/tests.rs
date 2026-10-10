@@ -1,10 +1,14 @@
 use super::*;
 
-const RESPONSE: Duration = Duration::from_secs(1800);
-const SELF_RESOLUTION: Duration = Duration::from_secs(7200);
+const TIMEOUTS: Timeouts = Timeouts {
+    response: Duration::from_secs(1800),
+    self_resolution: Duration::from_secs(7200),
+    handoff_grace: Duration::from_secs(3600),
+};
 const T0: i64 = 1_700_000_000;
 const R: i64 = 1800;
 const S: i64 = 7200;
+const G: i64 = 3600;
 
 fn gathering(now: i64, buyer: PartyClock, seller: PartyClock) -> Clocks {
     Clocks {
@@ -13,6 +17,7 @@ fn gathering(now: i64, buyer: PartyClock, seller: PartyClock) -> Clocks {
         buyer,
         seller,
         guided_at: None,
+        held_at: None,
     }
 }
 
@@ -24,7 +29,42 @@ fn asked_at(t: i64) -> PartyClock {
 }
 
 fn check_at(clocks: &Clocks) -> Timer {
-    check(clocks, RESPONSE, SELF_RESOLUTION)
+    check(clocks, &TIMEOUTS)
+}
+
+#[test]
+fn a_held_session_hands_off_as_facts_gathered_after_the_grace() {
+    let held = |now| Clocks {
+        held_at: Some(T0),
+        ..gathering(now, PartyClock::default(), PartyClock::default())
+    };
+
+    assert_eq!(check_at(&held(T0 + G - 1)), Timer::Nothing);
+    assert_eq!(
+        check_at(&held(T0 + G)),
+        Timer::Handoff(HandoffReason::FactsGathered)
+    );
+}
+
+#[test]
+fn the_hold_wins_over_a_reminder_and_keeps_the_response_timers_meanwhile() {
+    // The seller still owes an answer to a later question: its reminder
+    // goes out during the hold, and the hold ends the session at its own
+    // time, before the seller's silence would.
+    let during = Clocks {
+        held_at: Some(T0),
+        ..gathering(T0 + R, PartyClock::default(), asked_at(T0))
+    };
+    let over = Clocks {
+        held_at: Some(T0),
+        ..gathering(T0 + G, PartyClock::default(), asked_at(T0 + G - R))
+    };
+
+    assert_eq!(check_at(&during), Timer::Remind(vec![Party::Seller]));
+    assert_eq!(
+        check_at(&over),
+        Timer::Handoff(HandoffReason::FactsGathered)
+    );
 }
 
 #[test]
@@ -125,6 +165,7 @@ fn guidance_that_does_not_resolve_in_time_hands_off() {
         buyer: PartyClock::default(),
         seller: PartyClock::default(),
         guided_at: Some(T0),
+        held_at: None,
     };
 
     assert_eq!(check_at(&guiding(T0 + S - 1)), Timer::Nothing);
@@ -142,6 +183,7 @@ fn while_guiding_an_old_question_never_times_out() {
         buyer: asked_at(T0),
         seller: PartyClock::default(),
         guided_at: Some(T0 + R),
+        held_at: None,
     };
 
     assert_eq!(check_at(&clocks), Timer::Nothing);
@@ -165,7 +207,13 @@ fn flooding_twice_hands_off() {
 fn a_huge_timeout_never_overflows() {
     let clocks = gathering(T0, asked_at(T0), PartyClock::default());
 
-    assert_eq!(check(&clocks, Duration::MAX, Duration::MAX), Timer::Nothing);
+    let huge = Timeouts {
+        response: Duration::MAX,
+        self_resolution: Duration::MAX,
+        handoff_grace: Duration::MAX,
+    };
+
+    assert_eq!(check(&clocks, &huge), Timer::Nothing);
 }
 
 #[test]

@@ -10,7 +10,7 @@ use tokio::task::JoinSet;
 use tokio::time::Instant;
 
 use super::handoff::{TurnReading, last_seen};
-use super::{Mediator, ReadyJudge, history, settle::Settle};
+use super::{Mediator, ReadyJudge, history, hold, settle::Settle};
 use crate::error::{Error, Result};
 use crate::judge::brief::BriefQuestions;
 use crate::judge::facts::{self, Facts};
@@ -255,6 +255,11 @@ impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
         );
         let session = self.reload(session_id)?;
         let default = self.settings.default_language.as_str();
+        let heard = |party| {
+            messages
+                .iter()
+                .any(|m| m.direction == Direction::In && m.party == party)
+        };
         let action = decide(&Turn {
             phase,
             facts: &facts,
@@ -266,6 +271,10 @@ impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
             max_rounds: self.settings.max_rounds,
             asked: &asked,
             next: &next,
+            buyer_heard: heard(Party::Buyer),
+            seller_heard: heard(Party::Seller),
+            held: self.held(&session)?,
+            handoff_grace: self.settings.handoff_grace,
         });
 
         self.record_evaluation(
@@ -302,9 +311,17 @@ impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
                 };
                 self.guide(&session, *path, reading, now).await?;
             }
+            Action::Hold => self.hold(&session, now).await?,
             Action::Wait => {}
         }
         Ok(TurnOutcome::Decided(action))
+    }
+
+    /// Whether the session holds for the parties (`Action::Hold` was taken).
+    fn held(&self, session: &Session) -> Result<bool> {
+        let store = self.lock_store()?;
+        let history = events::list_for_dispute(store.conn(), &session.dispute_id)?;
+        Ok(hold::held_at(session, &history).is_some())
     }
 
     /// Records a flood strike for each party over `max_messages_per_turn`

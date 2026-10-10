@@ -166,6 +166,11 @@ pub struct MediationConfig {
     pub max_messages_per_turn: u32,
     #[serde(deserialize_with = "duration::deserialize")]
     pub self_resolution_timeout: Duration,
+    /// Once the facts are gathered from both parties, how long they get to
+    /// resolve the dispute themselves before the `facts_gathered` handoff
+    /// (`docs/spec.md` §7.6). Zero hands off at once.
+    #[serde(deserialize_with = "duration::deserialize")]
+    pub handoff_grace: Duration,
 }
 
 impl Default for MediationConfig {
@@ -184,6 +189,7 @@ impl Default for MediationConfig {
             max_message_chars: 2_000,
             max_messages_per_turn: 10,
             self_resolution_timeout: Duration::from_secs(2 * 3_600),
+            handoff_grace: Duration::from_secs(30 * 60),
         }
     }
 }
