@@ -7,6 +7,16 @@ section `[X.Y.Z]` as its release notes.
 
 ## [Unreleased]
 
+### Fixed
+
+- `deploy/serbero.service` referred to the credentials directory with the `%d`
+  specifier, which needs systemd 251. On systemd 247 to 250, which includes
+  Ubuntu 22.04 LTS, systemd dropped that `Environment=` line and the service
+  failed to start with `SERBERO_PRIVATE_KEY_FILE ... is not set`, pointing at
+  `config.toml` although the credential was delivered correctly. The unit now
+  refers to that directory by its literal path, which works on every systemd
+  that has `LoadCredential=`.
+
 ## [0.2.3] - 2026-10-06
 
 Version 0.2.2 was published to crates.io by mistake, without the startup

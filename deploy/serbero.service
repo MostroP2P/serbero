@@ -9,10 +9,12 @@
 #   install -m 644 deploy/serbero.service /etc/systemd/system/serbero.service
 #   systemctl daemon-reload && systemctl enable --now serbero
 #
-# Needs systemd 247 or later for LoadCredential= and the %d specifier.
+# Needs systemd 247 or later, when LoadCredential= and the credentials
+# directory were introduced. The unit refers to that directory by its
+# literal path rather than the %d specifier, which needs systemd 251.
 #
 # Secrets are systemd credentials: root-only files that systemd hands to the
-# service in a private directory ($CREDENTIALS_DIRECTORY, %d), so they never
+# service in a private directory ($CREDENTIALS_DIRECTORY), so they never
 # enter the environment. To keep them encrypted at rest, create them with
 # `systemd-creds encrypt` and use LoadCredentialEncrypted= instead.
 #
@@ -32,10 +34,10 @@ Type=exec
 ExecStart=/usr/local/bin/serbero
 Environment=SERBERO_CONFIG=/etc/serbero/config.toml
 LoadCredential=serbero_private_key:/etc/serbero/credentials/serbero_private_key
-Environment=SERBERO_PRIVATE_KEY_FILE=%d/serbero_private_key
+Environment=SERBERO_PRIVATE_KEY_FILE=/run/credentials/serbero.service/serbero_private_key
 # With mediation enabled, also add the judge key:
 # LoadCredential=typesafe_api_key:/etc/serbero/credentials/typesafe_api_key
-# Environment=TYPESAFE_API_KEY_FILE=%d/typesafe_api_key
+# Environment=TYPESAFE_API_KEY_FILE=/run/credentials/serbero.service/typesafe_api_key
 # Optional non-secret settings, such as SERBERO_LOG.
 EnvironmentFile=-/etc/serbero/serbero.env
 User=serbero
