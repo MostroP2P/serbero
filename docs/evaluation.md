@@ -168,7 +168,10 @@ cannot place a threshold.
 A pilot runs with `validated_languages = []`: Serbero talks to both parties,
 gathers the facts, and hands every case to the solvers in `[[solvers]]` with a
 brief (`facts_gathered`, `wants_human`, `fraud_signal`, ...). It never guides a
-fund action. A pilot therefore needs at least one solver configured: with none,
+fund action. A case whose facts are gathered is still held for
+`handoff_grace` first, with a notice that names no fund action, so the
+parties can finish the trade on their own before a solver is brought in
+([spec.md §7.6](spec.md#76-handoff-reasons)). A pilot therefore needs at least one solver configured: with none,
 the brief reaches nobody and stays pending, and the timer retries it, like any
 brief that was not delivered. A pilot never adds a language to `validated_languages`: a language
 enters that list only when its golden set meets the targets of §2 for the

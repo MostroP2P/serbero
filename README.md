@@ -16,7 +16,8 @@ send. The parties act from their own Mostro apps, and a human solver always
 has the final word.
 
 > **Status.** The notifier is released. Assisted mediation ships **off** and
-> can be turned on as a **pilot**, which gathers the facts and hands every
+> can be turned on as a **pilot**, which gathers the facts from both parties,
+> gives them a while to finish the trade on their own, and otherwise hands the
 > case to a solver ([Enable mediation](#enable-mediation)). Calibrating its
 > judge on labeled conversations, so it can also guide the parties, is the
 > remaining work ([`docs/plan.md`](docs/plan.md), tasks T3.8 to T3.10).
@@ -105,8 +106,11 @@ Step by step:
    fixed decision table, and treats any uncertain answer as unknown.
 5. **Guide or hand off.** When the facts are clear, Serbero explains the option
    Mostro already gives the parties, and only to the party who would act,
-   after that party stated the fact the option depends on. In every other case
-   it hands the dispute to a human solver.
+   after that party stated the fact the option depends on. When it cannot
+   guide, it tells both parties it has what it needs and gives them a while
+   (`handoff_grace`, 30 minutes by default) to finish the trade on their own.
+   In every other case, or when that time runs out, it hands the dispute to a
+   human solver.
 6. **Close.** When Mostro reports the dispute resolved, Serbero thanks the
    parties (if they resolved it themselves) and sends the solvers a short
    final report.
@@ -405,7 +409,9 @@ Mediation is opt-in and needs a few things in place first.
    payment facts, notices requests for a human and fraud signals, and hands
    every case to the solvers in `[[solvers]]` with a brief, so the pilot
    needs at least one ([Configure the notifier](#configure-the-notifier)). It
-   never tells a party to release or cancel. Keep the list empty during the pilot: a language is added only
+   never tells a party to release or cancel. Once both parties wrote and the
+   facts are gathered, it waits `handoff_grace` (30 minutes by default) for
+   them to resolve it themselves before the handoff. Keep the list empty during the pilot: a language is added only
    when its golden set passes the evaluation, which is what lets Serbero
    guide the parties to resolve on their own in it
    ([`docs/evaluation.md` §3.1](docs/evaluation.md#31-pilot),

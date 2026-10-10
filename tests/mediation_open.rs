@@ -310,6 +310,7 @@ async fn harness(
             max_messages_per_turn: 10,
             response_timeout: Duration::from_secs(1800),
             self_resolution_timeout: Duration::from_secs(7200),
+            handoff_grace: Duration::from_secs(1800),
         },
         sender: outbox.clone(),
         solvers: vec![Solver {

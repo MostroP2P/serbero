@@ -53,4 +53,6 @@ guide_not_sent_seller = "The buyer reports the payment has not been sent. You ca
 
 resolved_thanks = "The dispute is now closed. Thank you both for resolving it."
 
+hold_notice = "Thank you both, I have what I need. If you reach an agreement and resolve it between you from your Mostro apps, this dispute closes on its own. Otherwise it goes to the assigned solver shortly, with everything you told me."
+
 handoff_notice = "Thank you both. I've passed everything you said to the assigned solver, who will continue with the case. They may contact you here."

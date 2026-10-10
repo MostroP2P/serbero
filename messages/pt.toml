@@ -55,4 +55,6 @@ guide_not_sent_seller = "O comprador informa que o pagamento não foi enviado. V
 
 resolved_thanks = "A disputa foi encerrada. Obrigado a ambos por resolvê-la."
 
+hold_notice = "Obrigado a ambos, já tenho o que preciso. Se chegarem a um acordo e resolverem entre vocês pelos seus apps do Mostro, esta disputa se encerra sozinha. Caso contrário, em breve ela passará para a pessoa responsável com tudo o que me contaram."
+
 handoff_notice = "Obrigado a ambos. Passei tudo o que vocês disseram para a pessoa responsável, que continuará com o caso. Ela pode entrar em contato por aqui."

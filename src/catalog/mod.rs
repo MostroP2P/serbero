@@ -43,6 +43,7 @@ pub const TEMPLATE_IDS: &[&str] = &[
     "guide_not_sent_buyer",
     "guide_not_sent_seller",
     "resolved_thanks",
+    "hold_notice",
     "handoff_notice",
 ];
 

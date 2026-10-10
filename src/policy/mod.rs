@@ -4,9 +4,12 @@
 //! Code owns decisions (AGENTS.md rule 7): the judge only supplies facts.
 //! Every path toward a human is checked before any path that guides the
 //! parties, and guidance needs both parties' languages to be validated for
-//! the active judge (`docs/spec.md` §7.7).
+//! the active judge (`docs/spec.md` §7.7). A `facts_gathered` handoff
+//! waits until both parties were heard, then holds for `handoff_grace`
+//! so they can resolve the dispute themselves (§7.6).
 
 use std::collections::BTreeSet;
+use std::time::Duration;
 
 use serde::Serialize;
 
@@ -71,8 +74,8 @@ pub mod template {
 
 /// What Serbero does after a turn (`docs/spec.md` §7.3).
 /// Serialized as `{"ask": {"buyer": [...], "seller": [...]}}`,
-/// `{"guide": "payment_arrived"}`, `{"handoff": "fraud_signal"}` or
-/// `"wait"`, and stored with each evaluation.
+/// `{"guide": "payment_arrived"}`, `{"handoff": "fraud_signal"}`, `"hold"`
+/// or `"wait"`, and stored with each evaluation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Action {
@@ -85,6 +88,10 @@ pub enum Action {
     Guide(Path),
     /// Brief the solver and send the parties `handoff_notice`.
     Handoff(HandoffReason),
+    /// The facts are gathered: tell both parties (`hold_notice`) and give
+    /// them `handoff_grace` to resolve it before the `facts_gathered`
+    /// handoff.
+    Hold,
     /// Nothing to send; a timer or the next message moves the session.
     Wait,
 }
@@ -242,6 +249,13 @@ pub struct Turn<'a> {
     pub max_rounds: u32,
     pub asked: &'a Asked,
     pub next: &'a NextQuestions,
+    /// The party wrote at least once in this session.
+    pub buyer_heard: bool,
+    pub seller_heard: bool,
+    /// The session already holds for the parties (`Action::Hold` was taken).
+    pub held: bool,
+    /// `[mediation].handoff_grace`; zero hands off at once.
+    pub handoff_grace: Duration,
 }
 
 /// The decision table of `docs/judgments.md` §4: rows in order, first
@@ -270,11 +284,15 @@ pub fn decide(turn: &Turn<'_>) -> Action {
     if guiding {
         return Action::Wait;
     }
-    if facts.seller_received_for_guide {
-        return guide_or_hand_off(turn, Path::PaymentArrived);
+    if facts.seller_received_for_guide
+        && let Some(action) = guide_or_hold(turn, Path::PaymentArrived)
+    {
+        return action;
     }
-    if facts.buyer_not_sent_for_guide {
-        return guide_or_hand_off(turn, Path::PaymentNotSent);
+    if facts.buyer_not_sent_for_guide
+        && let Some(action) = guide_or_hold(turn, Path::PaymentNotSent)
+    {
+        return action;
     }
     if conflict_with_both_sides_answered(turn) {
         return Action::Handoff(HandoffReason::ConflictingClaims);
@@ -297,8 +315,11 @@ pub fn decide(turn: &Turn<'_>) -> Action {
     if unknown_after_both_variants(turn) {
         return Action::Handoff(HandoffReason::Uncertain);
     }
-    if !facts.buyer_payment_unknown() && !facts.seller_receipt_unknown() {
-        return Action::Handoff(HandoffReason::FactsGathered);
+    if !facts.buyer_payment_unknown()
+        && !facts.seller_receipt_unknown()
+        && let Some(action) = facts_gathered(turn)
+    {
+        return action;
     }
     // Row 13: nothing to ask, but a party who answered everything is still
     // told so (`thanks_waiting`, `what_happens_next`) while the other one
@@ -314,14 +335,34 @@ pub fn decide(turn: &Turn<'_>) -> Action {
 }
 
 /// Guidance mentions a fund action, so it needs both parties' languages to
-/// be validated for the judge; otherwise the facts go to a human (§7.7).
-fn guide_or_hand_off(turn: &Turn<'_>, path: Path) -> Action {
+/// be validated for the judge; otherwise the facts go to a human (§7.7),
+/// as `facts_gathered` does. Guidance follows the actor's own word (P3), so
+/// it does not wait for the other party.
+fn guide_or_hold(turn: &Turn<'_>, path: Path) -> Option<Action> {
     let validated = |lang: &str| turn.validated_languages.iter().any(|v| v == lang);
     if validated(turn.buyer_language) && validated(turn.seller_language) {
-        Action::Guide(path)
+        Some(Action::Guide(path))
     } else {
-        Action::Handoff(HandoffReason::FactsGathered)
+        facts_gathered(turn)
     }
+}
+
+/// The `facts_gathered` handoff, once both parties were heard: a hold
+/// first, so they can resolve it themselves, unless the session already
+/// holds (the timer ends it) or no grace is configured. `None` while a
+/// party is still awaited: the table goes on to the courtesy templates, and
+/// the response timers cover the silent party.
+fn facts_gathered(turn: &Turn<'_>) -> Option<Action> {
+    if !(turn.buyer_heard && turn.seller_heard) {
+        return None;
+    }
+    Some(if turn.held {
+        Action::Wait
+    } else if turn.handoff_grace.is_zero() {
+        Action::Handoff(HandoffReason::FactsGathered)
+    } else {
+        Action::Hold
+    })
 }
 
 /// Row 8: the buyer says they paid, the seller says nothing arrived, the

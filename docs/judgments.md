@@ -264,20 +264,39 @@ checked in order and the first match wins.
 | 3 | `outside_scope` | `Handoff(outside_scope)` |
 | 4 | State is `guiding` and `rejects_path(buyer)` or `rejects_path(seller)` | `Handoff(self_resolution_stalled)` |
 | 5 | State is `guiding` | `Wait` (resolution or `self_resolution_timeout` ends it) |
-| 6 | `seller_received_for_guide` | `Guide(PaymentArrived)` if both parties' languages are validated ([spec.md §7.7](spec.md#77-languages)), otherwise `Handoff(facts_gathered)` |
-| 7 | `buyer_not_sent_for_guide` | `Guide(PaymentNotSent)` if both parties' languages are validated, otherwise `Handoff(facts_gathered)` |
+| 6 | `seller_received_for_guide` | `Guide(PaymentArrived)` if both parties' languages are validated ([spec.md §7.7](spec.md#77-languages)); otherwise the facts are gathered (see row 12) |
+| 7 | `buyer_not_sent_for_guide` | `Guide(PaymentNotSent)` if both parties' languages are validated; otherwise the facts are gathered (see row 12) |
 | 8 | `buyer_sent` and `seller_not_received` and `conflict` and details and check already asked (or known) | `Handoff(conflicting_claims)` |
 | 9 | either party's rounds `≥ max_rounds` | `Handoff(round_limit)` |
 | 10 | Next questions (§4.1) produce at least one question template (`ask_*`) | `Ask { … }` with every template §4.1 picked |
 | 11 | A needed fact is still unknown after both of its variants were sent | `Handoff(uncertain)` |
-| 12 | Both payment facts are known | `Handoff(facts_gathered)` |
+| 12 | Both payment facts are known | The facts are gathered: `Hold` once both parties wrote, `Wait` if the session already holds, `Handoff(facts_gathered)` if `handoff_grace` is zero; while a party has not written yet, go on to row 13 |
 | 13 | Otherwise | `Ask { … }` with the courtesy templates §4.1 picked (`thanks_waiting`, `what_happens_next`) if any, not a round; else `Wait` (the response timeout covers silence) |
+
+**Facts gathered** (rows 6, 7 and 12 when no guidance applies): the handoff
+waits for both parties and for a grace period, so a dispute the parties can
+finish themselves is not sent to a human first
+([spec.md §7.6](spec.md#76-handoff-reasons)).
+
+- A party who never wrote is awaited: the party who did is thanked
+  (row 13), and the response timers cover the silent one (`reminder`, then
+  `unresponsive`).
+- Once both wrote, `Hold` sends both parties `hold_notice` and starts
+  `handoff_grace`. Rows 1 to 3 still hand off at once during the hold; the
+  rows that found the facts gathered return `Wait`.
+- `handoff_grace` over without a resolution: `Handoff(facts_gathered)` from
+  the timer (§4.2). The dispute resolved meanwhile: the session closes as
+  self-resolved.
+- A later turn that asks a fact question (row 10, after a retraction, say)
+  ends the hold: the facts are no longer gathered, so its deadline no longer
+  applies. A new hold, with a new notice, starts once they are gathered
+  again.
 
 Row 10 needs a question, not only `thanks_waiting` or `what_happens_next`:
 those ask nothing, so no response timer would run, and a session whose facts
-are all known would wait for a message instead of handing off (row 12).
-Courtesy templates are still sent in row 13, when the session goes on
-waiting for the other party.
+are all known would wait for a message instead of holding (row 12), whose
+timer ends it. Courtesy templates are still sent in row 13, when the
+session goes on waiting for the other party.
 
 The policy is `policy::decide` in `src/policy/mod.rs`; it takes the §4.1
 templates as input, so each row is tested on its own.
@@ -342,6 +361,7 @@ kept for the brief and the final report.
 | `response_timeout` after a question with no reply from that party | Send `reminder` (once per party) |
 | `response_timeout` after the reminder | `Handoff(unresponsive)` |
 | Party sends more than `max_messages_per_turn` twice | `Handoff(flood)` |
+| `handoff_grace` after a `Hold` without the dispute resolving | `Handoff(facts_gathered)` |
 | `self_resolution_timeout` after a `Guide` without the dispute resolving | `Handoff(self_resolution_stalled)` |
 
 Timers never call Jev. They are pure functions in `src/policy/timers.rs`:
@@ -350,6 +370,8 @@ Timers never call Jev. They are pure functions in `src/policy/timers.rs`:
   unanswered hands off with `unresponsive` at its own `response_timeout`.
 - While guiding, no question awaits an answer, so only
   `self_resolution_timeout` applies.
+- A held session keeps its response timers (a reminder may still go out),
+  and `handoff_grace` wins over them when both fall due.
 - A reply is a party message stored after the question, in arrival order;
   the timestamp the party's client set is not used.
 - "Twice" for `flood` is `FLOOD_STRIKES = 2` turns over the limit. A turn's

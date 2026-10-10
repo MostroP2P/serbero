@@ -485,6 +485,7 @@ enum Action {
     Ask { buyer: Vec<TemplateId>, seller: Vec<TemplateId> },  // in sending order (e.g. what_happens_next, then a question)
     Guide(Path),                    // explain a self-resolution path to the parties
     Handoff(HandoffReason),         // brief to solver, notice to parties
+    Hold,                           // facts gathered: hold_notice to the parties, handoff_grace runs
     Wait,                           // nothing new to ask, still inside limits
 }
 
@@ -539,7 +540,10 @@ opening ─▶ active ─┬─▶ guiding ─┬─▶ closed          (parties
                    └─▶ superseded                    (human solver took over)
 ```
 
-- `active`: Serbero is gathering facts.
+- `active`: Serbero is gathering facts. Once they are gathered from both
+  parties, the session **holds** (a `held` event, still `active`): the parties
+  get `hold_notice` and `handoff_grace` to resolve it themselves before the
+  `facts_gathered` handoff ([§7.6](#76-handoff-reasons)).
 - `guiding`: a path was explained; Serbero watches for the resolution and keeps
   judging turns without asking new fact questions.
 - `handed_off`: the brief was sent; Serbero sends no more questions. New party
@@ -552,7 +556,7 @@ opening ─▶ active ─┬─▶ guiding ─┬─▶ closed          (parties
 | Reason | Trigger |
 |---|---|
 | `self_resolution_stalled` | A path was explained but the dispute did not resolve in time, or a party rejected it. |
-| `facts_gathered` | Both payment claims are known, no self-resolution path applies, and nothing useful remains to ask. |
+| `facts_gathered` | Both parties were heard, both payment claims are known, no self-resolution path can be offered, nothing useful remains to ask, and the dispute did not resolve within `handoff_grace` of the hold. |
 | `conflicting_claims` | The parties' accounts contradict each other with both sides answered. |
 | `fraud_signal` | Fraud signal above threshold. |
 | `human_requested` | A party explicitly asks for a person. Honored at any point. |
@@ -563,6 +567,21 @@ opening ─▶ active ─┬─▶ guiding ─┬─▶ closed          (parties
 | `judge_unavailable` | The judge failed after retries. The brief carries the transcript without judgments. |
 | `flood` | A party sent more than `max_messages_per_turn` in one turn repeatedly. |
 | `opening_failed` | Serbero took the dispute but could not open the session: the node sent no trade keys, or no opening message reached a party. |
+
+**The hold before `facts_gathered`.** Gathering the facts is not a reason to
+bring in a person by itself (P2): with the facts on the table, the parties
+can usually finish the trade from their own apps. So the turn that finds the
+facts gathered waits until both parties wrote at least once (a silent party
+is covered by the response timers), then **holds**: it records a `held`
+event, sends both parties `hold_notice`, which names no fund action, and
+starts `handoff_grace` (default 30 minutes). If Mostro publishes the dispute
+as resolved meanwhile, the session closes as self-resolved and the parties
+get `resolved_thanks`. If not, the timer task hands off with
+`facts_gathered` and the last turn's reading. A request for a human, a fraud
+signal or a dispute outside scope still hands off at once during the hold.
+A turn that asks a fact question again (a party retracted a claim) ends the
+hold; a new one starts once the facts are gathered again.
+`handoff_grace = "0s"` hands off as soon as the facts are gathered.
 
 Every handoff sends the parties the `handoff_notice` template and the solver
 the brief ([messages.md §3](messages.md#3-solver-messages)). The recipient is
@@ -616,8 +635,11 @@ that language reliably.
 
 A self-resolution path is offered only when both parties' current languages
 are validated for the active judge. Otherwise the turn that would have guided
-the parties hands off with `facts_gathered`, so a conversational language never
-exposes the parties to guidance the judge has not been measured on.
+the parties treats the facts as gathered: it holds for `handoff_grace` and
+then hands off with `facts_gathered` ([§7.6](#76-handoff-reasons)), so a
+conversational language never exposes the parties to guidance the judge has
+not been measured on, while the parties still get time to finish the trade
+on their own.
 
 **Adding a language:**
 
@@ -751,6 +773,7 @@ max_rounds = 4                            # question rounds per party before han
 max_message_chars = 2000
 max_messages_per_turn = 10
 self_resolution_timeout = "2h"           # guiding → handed_off if not resolved
+handoff_grace = "30m"                    # facts gathered → time for the parties before the handoff; "0s" hands off at once
 
 [judge]                                   # see §5.2; switching provider is a config change
 provider = "typesafe"                     # typesafe | recorded | <future providers>

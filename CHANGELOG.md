@@ -7,6 +7,26 @@ section `[X.Y.Z]` as its release notes.
 
 ## [Unreleased]
 
+### Changed
+
+- A `facts_gathered` handoff now waits for both parties. In production,
+  Serbero handed disputes to a solver minutes after the first party wrote,
+  before the other had said anything (the seller's own statement, or the
+  buyer's, was enough). The rows of the decision table that find the facts
+  gathered now wait until both parties wrote at least once; the party who
+  did is thanked, and the response timers (`reminder`, `unresponsive`)
+  cover the silent one (`docs/judgments.md` §4). Validated guidance still
+  follows the actor's own word and does not wait.
+- Before the `facts_gathered` handoff, the session holds for a grace
+  period so the parties can resolve the dispute themselves. A new
+  `[mediation].handoff_grace` (default `"30m"`) starts once both parties
+  were heard: both get the new `hold_notice` template, which names no fund
+  action, and the dispute is handed off only if it is not resolved in time.
+  Resolved meanwhile, it closes as self-resolved and the parties get
+  `resolved_thanks`. `handoff_grace = "0s"` restores the immediate handoff
+  (`docs/spec.md` §7.6). The `es` and `pt` texts of `hold_notice` await a
+  native speaker's review.
+
 ## [0.2.3] - 2026-10-06
 
 Version 0.2.2 was published to crates.io by mistake, without the startup
