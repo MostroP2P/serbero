@@ -40,6 +40,8 @@ what_happens_next = "I'm collecting what each of you says so the assigned solver
 
 thanks_waiting = "Thank you, that's all I need from you for now. I'll let you know if anything else is needed."
 
+waiting_other_party = "Thanks, I've noted that. I'm now waiting for the other party to answer; if they don't soon, the case goes to the assigned solver with everything you told me."
+
 reminder = "I'm still waiting for your answer to my previous question. If I don't hear from you soon, the case will go to the assigned solver as it is."
 
 guide_arrived_seller = "Thanks for confirming. If you have checked that the {amount} is in your account, you can complete the trade yourself by releasing it from your Mostro app; that also closes this dispute. If anything doesn't add up, tell me here and a person will review it."

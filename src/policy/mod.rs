@@ -26,6 +26,7 @@ pub mod template {
     pub const ASK_SELLER_CHECK_ACCOUNT: &str = "ask_seller_check_account";
     pub const WHAT_HAPPENS_NEXT: &str = "what_happens_next";
     pub const THANKS_WAITING: &str = "thanks_waiting";
+    pub const WAITING_OTHER_PARTY: &str = "waiting_other_party";
     pub const REMINDER: &str = "reminder";
 
     /// Templates that ask a party for a fact. A turn that sends one counts
@@ -45,7 +46,7 @@ pub mod template {
 
     /// Templates that may be sent again when a party's language changes
     /// before it answered (§4.1 step 1).
-    const RESENDABLE: [&str; 9] = [
+    const RESENDABLE: [&str; 10] = [
         ASK_BUYER_SENT,
         ASK_BUYER_SENT_SIMPLE,
         ASK_BUYER_DETAILS,
@@ -54,6 +55,7 @@ pub mod template {
         ASK_SELLER_CHECK_ACCOUNT,
         WHAT_HAPPENS_NEXT,
         THANKS_WAITING,
+        WAITING_OTHER_PARTY,
         REMINDER,
     ];
 

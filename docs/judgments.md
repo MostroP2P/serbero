@@ -331,7 +331,15 @@ needed question changed and who has no question outstanding.
    | seller | `seller_not_received`, not checked | `ask_seller_check_account` |
    | either | nothing needed | `thanks_waiting` (once per party) |
 
-3. **Never repeat.** A template already sent to a party (in any language) is
+3. **Nothing fits.** A party who wrote and gets no template from the steps
+   above (its questions were all used, a fact is still needed from it) while
+   the other party has a question outstanding is sent `waiting_other_party`,
+   once per party. It says the other party is awaited and that the case goes
+   to a person if they stay silent, so nobody writes into silence; it is not
+   a round, and it is not sent when the other party owes nothing, nor when
+   the party's own payment fact is still unknown after both of its questions
+   (that session hands off as `uncertain`, §4 row 11).
+4. **Never repeat.** A template already sent to a party (in any language) is
    never sent to that party again, except for the language rule above. If the
    needed template was already used, fall through the table.
 

@@ -91,6 +91,22 @@ fn for_party(party: Party, facts: &Facts, history: &History<'_>) -> (Vec<&'stati
     } else if nothing_needed(party, facts) && !sent(template::THANKS_WAITING) {
         templates.push(template::THANKS_WAITING);
     }
+    // Step 3: nothing fits (its questions were all used) while the other
+    // party still owes an answer: say so, once, rather than leave the party
+    // who wrote without any reply. Not when the party's own payment fact is
+    // still unknown: that session hands off as `uncertain` (§4 row 11).
+    let other = match party {
+        Party::Buyer => history.seller,
+        Party::Seller => history.buyer,
+    };
+    let unknown = match party {
+        Party::Buyer => facts.buyer_payment_unknown(),
+        Party::Seller => facts.seller_receipt_unknown(),
+    };
+    if templates.is_empty() && !unknown && other.outstanding && !sent(template::WAITING_OTHER_PARTY)
+    {
+        templates.push(template::WAITING_OTHER_PARTY);
+    }
     (templates, false)
 }
 
