@@ -7,6 +7,8 @@ section `[X.Y.Z]` as its release notes.
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-10-10
+
 ### Changed
 
 - A `facts_gathered` handoff now waits for both parties. In production,
