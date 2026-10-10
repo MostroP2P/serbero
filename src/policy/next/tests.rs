@@ -433,6 +433,60 @@ fn a_fact_unknown_after_both_variants_gets_no_waiting_notice() {
 }
 
 #[test]
+fn a_question_picked_for_the_other_party_this_turn_counts_as_owed() {
+    // Both wrote at once: the seller has no question left, the buyer's
+    // answer earns a follow-up, so the seller is told the buyer is awaited.
+    let case = Case::new()
+        .sent(
+            Party::Seller,
+            &[ASK_SELLER_RECEIVED, ASK_SELLER_CHECK_ACCOUNT],
+        )
+        .sent(Party::Buyer, &[ASK_BUYER_SENT])
+        .wrote(Party::Seller, MessageKind::Answers)
+        .wrote(Party::Buyer, MessageKind::Answers)
+        .with(|c| {
+            c.facts.seller_not_received = true;
+            c.facts.buyer_sent = true;
+        });
+
+    assert_eq!(
+        case.next(),
+        NextQuestions {
+            buyer: vec![ASK_BUYER_DETAILS],
+            seller: vec![WAITING_OTHER_PARTY],
+            ..NextQuestions::default()
+        }
+    );
+}
+
+#[test]
+fn a_courtesy_template_for_the_other_party_is_not_an_owed_answer() {
+    // Both wrote at once and the buyer is only thanked: nobody is awaited.
+    let case = Case::new()
+        .sent(
+            Party::Seller,
+            &[ASK_SELLER_RECEIVED, ASK_SELLER_CHECK_ACCOUNT],
+        )
+        .sent(Party::Buyer, &[ASK_BUYER_SENT])
+        .wrote(Party::Seller, MessageKind::Answers)
+        .wrote(Party::Buyer, MessageKind::Answers)
+        .with(|c| {
+            c.facts.seller_not_received = true;
+            c.facts.buyer_sent = true;
+            c.facts.buyer_has_details = true;
+        });
+
+    assert_eq!(
+        case.next(),
+        NextQuestions {
+            buyer: vec![THANKS_WAITING],
+            seller: vec![],
+            ..NextQuestions::default()
+        }
+    );
+}
+
+#[test]
 fn a_party_who_gets_a_template_is_not_also_told_to_wait() {
     let thanked = Case::new()
         .wrote(Party::Seller, MessageKind::Answers)

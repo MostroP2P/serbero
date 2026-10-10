@@ -28,14 +28,56 @@ pub struct History<'a> {
 
 /// Picks the templates to send each party this turn.
 pub fn next_questions(facts: &Facts, history: &History<'_>) -> NextQuestions {
-    let (buyer, buyer_resend) = for_party(Party::Buyer, facts, history);
-    let (seller, seller_resend) = for_party(Party::Seller, facts, history);
+    let (mut buyer, buyer_resend) = for_party(Party::Buyer, facts, history);
+    let (mut seller, seller_resend) = for_party(Party::Seller, facts, history);
+    // Step 3, once both parties' templates are known: what the other party
+    // owes includes a question picked for it this turn.
+    let buyer_waits = waits_for_other(Party::Buyer, facts, history, &buyer, &seller);
+    let seller_waits = waits_for_other(Party::Seller, facts, history, &seller, &buyer);
+    if buyer_waits {
+        buyer.push(template::WAITING_OTHER_PARTY);
+    }
+    if seller_waits {
+        seller.push(template::WAITING_OTHER_PARTY);
+    }
     NextQuestions {
         buyer,
         seller,
         buyer_resend,
         seller_resend,
     }
+}
+
+/// Step 3: the party wrote and nothing fits (its questions were all used)
+/// while the other party still owes an answer, to a question outstanding
+/// or to one picked this turn: say so, once, rather than leave the party
+/// who wrote without any reply. Not when the party's own payment fact is
+/// still unknown: that session hands off as `uncertain` (§4 row 11).
+fn waits_for_other(
+    party: Party,
+    facts: &Facts,
+    history: &History<'_>,
+    own: &[&'static str],
+    others: &[&'static str],
+) -> bool {
+    let (wrote, unknown, other) = match party {
+        Party::Buyer => (
+            facts.buyer.is_some(),
+            facts.buyer_payment_unknown(),
+            history.seller,
+        ),
+        Party::Seller => (
+            facts.seller.is_some(),
+            facts.seller_receipt_unknown(),
+            history.buyer,
+        ),
+    };
+    let other_owes = other.outstanding || others.iter().any(|t| template::is_question(t));
+    wrote
+        && own.is_empty()
+        && !unknown
+        && other_owes
+        && !history.asked.sent(party, template::WAITING_OTHER_PARTY)
 }
 
 /// Serbero writes only to a party who wrote this turn, or to a silent party
@@ -90,22 +132,6 @@ fn for_party(party: Party, facts: &Facts, history: &History<'_>) -> (Vec<&'stati
         templates.push(question);
     } else if nothing_needed(party, facts) && !sent(template::THANKS_WAITING) {
         templates.push(template::THANKS_WAITING);
-    }
-    // Step 3: nothing fits (its questions were all used) while the other
-    // party still owes an answer: say so, once, rather than leave the party
-    // who wrote without any reply. Not when the party's own payment fact is
-    // still unknown: that session hands off as `uncertain` (§4 row 11).
-    let other = match party {
-        Party::Buyer => history.seller,
-        Party::Seller => history.buyer,
-    };
-    let unknown = match party {
-        Party::Buyer => facts.buyer_payment_unknown(),
-        Party::Seller => facts.seller_receipt_unknown(),
-    };
-    if templates.is_empty() && !unknown && other.outstanding && !sent(template::WAITING_OTHER_PARTY)
-    {
-        templates.push(template::WAITING_OTHER_PARTY);
     }
     (templates, false)
 }

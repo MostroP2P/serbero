@@ -333,7 +333,8 @@ needed question changed and who has no question outstanding.
 
 3. **Nothing fits.** A party who wrote and gets no template from the steps
    above (its questions were all used, a fact is still needed from it) while
-   the other party has a question outstanding is sent `waiting_other_party`,
+   the other party owes an answer, to a question outstanding or to one picked
+   for it in this same turn, is sent `waiting_other_party`,
    once per party. It says the other party is awaited and that the case goes
    to a person if they stay silent, so nobody writes into silence; it is not
    a round, and it is not sent when the other party owes nothing, nor when
