@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="serbero.jpg" alt="Serbero" width="400">
+  <img src="serbero.png" alt="Serbero" width="400">
 </p>
 
 # Serbero
