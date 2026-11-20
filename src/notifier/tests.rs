@@ -540,6 +540,75 @@ mod sessions_end {
         assert_eq!(ended.session_id.as_deref(), Some("s1"));
     }
 
+    fn pending_briefs(n: &Notifier<FakeSender>) -> Vec<serde_json::Value> {
+        let store = n.store.lock().unwrap();
+        events::list_for_dispute(store.conn(), "d1")
+            .unwrap()
+            .into_iter()
+            .filter(|e| e.kind == "brief_pending")
+            .map(|e| e.payload)
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn a_takeover_records_the_solvers_brief_as_pending_and_calls_the_hook() {
+        let mostro = Keys::generate();
+        let n = notifier(&mostro);
+        let called = Arc::new(Mutex::new(Vec::<String>::new()));
+        let seen = Arc::clone(&called);
+        n.on_superseded(Box::new(move |dispute_id| {
+            seen.lock().unwrap().push(dispute_id.to_owned());
+        }));
+        n.handle_event(&dispute_event(&mostro, "d1", "initiated", 100), 1_000)
+            .await
+            .unwrap();
+        with_session(&n);
+        n.handle_event(&dispute_event(&mostro, "d1", "in-progress", 200), 1_001)
+            .await
+            .unwrap();
+
+        n.handle_event(&dispute_event(&mostro, "d1", "in-progress", 2_000), 2_001)
+            .await
+            .unwrap();
+
+        assert_eq!(state(&n), SessionState::Superseded);
+        assert_eq!(
+            pending_briefs(&n),
+            vec![serde_json::json!({ "taken_over": true })]
+        );
+        assert!(called.lock().unwrap().contains(&"d1".to_owned()));
+    }
+
+    #[tokio::test]
+    async fn a_takeover_of_a_handed_off_session_records_no_brief() {
+        let mostro = Keys::generate();
+        let n = notifier(&mostro);
+        n.handle_event(&dispute_event(&mostro, "d1", "initiated", 100), 1_000)
+            .await
+            .unwrap();
+        with_session(&n);
+        n.handle_event(&dispute_event(&mostro, "d1", "in-progress", 200), 1_001)
+            .await
+            .unwrap();
+        sessions::hand_off(
+            n.store.lock().unwrap().conn(),
+            "s1",
+            "human_requested",
+            1_500,
+        )
+        .unwrap();
+
+        n.handle_event(&dispute_event(&mostro, "d1", "in-progress", 2_000), 2_001)
+            .await
+            .unwrap();
+
+        assert_eq!(state(&n), SessionState::Superseded);
+        assert!(
+            pending_briefs(&n).is_empty(),
+            "its brief went out at the handoff"
+        );
+    }
+
     #[tokio::test]
     async fn a_takeover_is_caught_even_if_serberos_own_take_was_missed() {
         let mostro = Keys::generate();

@@ -397,6 +397,11 @@ new ──notify──▶ notified ──(s=in-progress)──▶ taken ──(t
    otherwise the solver is recorded as unknown. An `in-progress` revision newer
    than Serbero's own take means a `write` solver took it over: the session
    ends as `superseded` and Serbero stops writing to the parties immediately.
+   Unless the session was already handed off, the solvers get the brief and
+   the transcript (subject `solver took over`, [messages.md §3](messages.md#3-solver-messages)),
+   so the person now holding the dispute sees what the parties told Serbero.
+   The brief is recorded as `brief_pending` in the transaction that ends the
+   session and retried like a handoff's.
 5. **Resolved.** On a terminal dispute status, close any open session and, if
    mediation took part, send the final report. Terminal statuses (as published
    by Mostro, kebab-case) are `settled` and `seller-refunded`, set by a solver,
@@ -549,7 +554,8 @@ opening ─▶ active ─┬─▶ guiding ─┬─▶ closed          (parties
 - `handed_off`: the brief was sent; Serbero sends no more questions. New party
   messages are appended to the transcript and forwarded to the solver in the
   next update DM, batched by `quiet_period`.
-- `closed` / `superseded`: terminal.
+- `closed` / `superseded`: terminal. A `superseded` session still gets its
+  takeover brief to the solvers (§6, step 4), but nothing to the parties.
 
 ### 7.6 Handoff reasons
 
@@ -829,7 +835,7 @@ mediation: with it disabled, Serbero logs a warning and sends them nothing
 | Judge `Unavailable` (overload, rate limit, network, timeout) | Retry with backoff up to `max_retries`, then `Handoff(judge_unavailable)`. |
 | Judge `Unauthorized` / `InvalidRequest` / `Malformed` | No retry; `Handoff(judge_unavailable)` and an operator error log (key, adapter, or question-set bug). |
 | Restart mid-session | Chat keys re-derived from stored trade pubkeys; subscription rebuilt from the stored cursors; pending turns re-evaluated from `messages`. |
-| Human solver takes over | Session `superseded`; Serbero goes silent immediately. |
+| Human solver takes over | Session `superseded`; Serbero goes silent to the parties immediately and sends the solvers the brief and the transcript, unless it had handed the session off. |
 | Serbero offline | Mostro and solvers work exactly as without Serbero. |
 
 ## 11. Privacy and security

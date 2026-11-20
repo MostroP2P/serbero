@@ -185,6 +185,19 @@ fn start_mediation(
         solvers.to_vec(),
         background.registry(),
     )));
+    // A takeover's brief is recorded as pending by the notifier; this sends
+    // it at once, and the timer task retries what does not get through
+    // (including takeovers the first backlog sync applied before this hook).
+    let briefing = Arc::clone(&mediator);
+    notifier.on_superseded(Box::new(move |dispute_id| {
+        let mediator = Arc::clone(&briefing);
+        let dispute_id = dispute_id.to_owned();
+        tokio::spawn(async move {
+            if let Err(e) = mediator.brief_takeover(&dispute_id, now()).await {
+                tracing::warn!(dispute_id, error = %e, "takeover brief not sent; the timer retries it");
+            }
+        });
+    }));
     let closing = Arc::clone(&mediator);
     notifier.on_resolved(Box::new(move |dispute_id, status, by_parties| {
         let mediator = Arc::clone(&closing);
