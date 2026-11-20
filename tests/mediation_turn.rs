@@ -431,6 +431,7 @@ async fn script_with(picks: &[(&'static str, (&'static str, f64))], options: Opt
         own_takes: Arc::default(),
         judge: Default::default(),
         finishing: Default::default(),
+        briefing: Default::default(),
     });
     if !options.not_ready {
         mediator.set_ready(ReadyJudge {
@@ -2269,4 +2270,83 @@ async fn a_takeover_brief_no_solver_received_is_retried_by_the_timer() {
 
     script.mediator.tick(9_001 + 1200).await.unwrap();
     assert_eq!(script.outbox.texts().len(), 2, "sent once");
+}
+
+fn dispute_event_at(mostro: &Keys, status: &str, at: u64) -> Event {
+    let tags = [
+        vec!["d", "d1"],
+        vec!["s", status],
+        vec!["initiator", "buyer"],
+        vec!["y", "mostro"],
+        vec!["z", "dispute"],
+    ]
+    .into_iter()
+    .map(|t| Tag::parse(t).unwrap());
+    EventBuilder::new(Kind::Custom(38386), "")
+        .tags(tags)
+        .custom_created_at(Timestamp::from_secs(at))
+        .finalize(mostro)
+        .unwrap()
+}
+
+fn takeover_briefs(script: &Script) -> usize {
+    script
+        .outbox
+        .texts()
+        .iter()
+        .filter(|t| t.starts_with("Dispute d1 · solver took over\n"))
+        .count()
+}
+
+/// Found by the independent review of #82: a second `in-progress`
+/// revision while the first takeover brief is still being sent.
+#[tokio::test]
+async fn a_takeover_brief_is_sent_once_when_two_revisions_arrive_together() {
+    let script = script(&[]).await;
+    *script.outbox.stall.lock().unwrap() = Duration::from_millis(600);
+    take_over(&script).await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    script
+        .notifier
+        .handle_event(
+            &dispute_event_at(&script.mostro, "in-progress", 9_100),
+            9_101,
+        )
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_secs(4)).await;
+
+    assert_eq!(takeover_briefs(&script), 1, "{:?}", event_kinds(&script));
+    assert_eq!(open_briefs(&script), 0);
+}
+
+/// Found by the independent review of #82: a later `brief_sent` of another
+/// brief must not hide the takeover's pending one from the retry.
+#[tokio::test]
+async fn a_takeover_brief_is_retried_even_after_another_brief_got_through() {
+    let script = script(&[]).await;
+    {
+        let store = script.store.lock().unwrap();
+        events::append(
+            store.conn(),
+            &events::NewEvent {
+                dispute_id: "d1",
+                session_id: Some("s1"),
+                kind: "brief_pending",
+                payload: serde_json::json!({ "path": "payment_arrived" }),
+                now: 8_000,
+            },
+        )
+        .unwrap();
+    }
+    script.outbox.fail_on(Some("solver took over"));
+    take_over(&script).await;
+    wait_for_text(&script.outbox, "Dispute d1 · guidance sent").await;
+    tokio::time::sleep(QUIET).await;
+    script.outbox.fail_on(None);
+
+    script.mediator.tick(9_001 + 600).await.unwrap();
+
+    assert_eq!(takeover_briefs(&script), 1, "{:?}", event_kinds(&script));
+    assert_eq!(open_briefs(&script), 0);
 }

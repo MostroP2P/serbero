@@ -165,6 +165,7 @@ fn start_mediation(
         own_takes: notifier.own_takes(),
         judge: Default::default(),
         finishing: Default::default(),
+        briefing: Default::default(),
     });
     if !mediator.observers.is_empty() {
         background.push(tokio::spawn(Arc::clone(&mediator).run_observer_notices()));

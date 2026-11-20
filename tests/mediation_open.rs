@@ -322,6 +322,7 @@ async fn harness(
         own_takes: Arc::default(),
         judge: Default::default(),
         finishing: Default::default(),
+        briefing: Default::default(),
     };
     if ready {
         mediator.set_ready(ReadyJudge {

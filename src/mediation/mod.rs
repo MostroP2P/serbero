@@ -125,6 +125,9 @@ pub struct Mediator<S> {
     pub judge: RwLock<Option<Arc<ReadyJudge>>>,
     /// Held while a resolved dispute's closing runs (`guide::finish`).
     pub finishing: tokio::sync::Mutex<()>,
+    /// Held while pending briefs are sent (`timers::send_pending_briefs`),
+    /// so a takeover's hook and the timer task never send one twice.
+    pub briefing: tokio::sync::Mutex<()>,
 }
 
 /// What the node's instance-info event says about protocol support.

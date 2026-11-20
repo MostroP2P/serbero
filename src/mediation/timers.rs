@@ -179,10 +179,10 @@ impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
     async fn retry_takeover_briefs(&self, now: i64) {
         let superseded = match self.lock_store().and_then(|store| {
             // No age limit: a brief stays pending until a solver got it.
-            let disputes = events::still_pending(store.conn(), BRIEF_PENDING, BRIEF_SENT, 0)?;
+            let ids = events::sessions_with_open_briefs(store.conn(), BRIEF_PENDING, BRIEF_SENT)?;
             let mut superseded = Vec::new();
-            for dispute_id in disputes {
-                if let Some(session) = sessions::latest_for_dispute(store.conn(), &dispute_id)?
+            for session_id in ids {
+                if let Some(session) = sessions::get(store.conn(), &session_id)?
                     && session.state == SessionState::Superseded
                 {
                     superseded.push(session);
@@ -215,6 +215,9 @@ impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
         now: i64,
         min_age: i64,
     ) -> Result<()> {
+        // History is read under the lock, so a brief another caller has just
+        // delivered is seen as sent.
+        let _briefing = self.briefing.lock().await;
         let (messages, history) = {
             let store = self.lock_store()?;
             (
