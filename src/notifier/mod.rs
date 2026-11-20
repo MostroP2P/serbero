@@ -54,6 +54,10 @@ pub type NewDisputeHook = Box<dyn Fn(&str) + Send + Sync>;
 /// resolved it themselves, once it resolved.
 pub type ResolvedHook = Box<dyn Fn(&str, &str, bool) + Send + Sync>;
 
+/// Called with a dispute's id once a `write` solver took it over from a
+/// live session.
+pub type SupersededHook = Box<dyn Fn(&str) + Send + Sync>;
+
 pub struct Notifier<S> {
     store: Arc<Mutex<Store>>,
     gate: Arc<crate::chat::OutboundGate>,
@@ -63,6 +67,7 @@ pub struct Notifier<S> {
     own_takes: OwnTakes,
     on_new_dispute: OnceLock<NewDisputeHook>,
     on_resolved: OnceLock<ResolvedHook>,
+    on_superseded: OnceLock<SupersededHook>,
 }
 
 impl<S: DmSender> Notifier<S> {
@@ -86,6 +91,7 @@ impl<S: DmSender> Notifier<S> {
             own_takes: OwnTakes::default(),
             on_new_dispute: OnceLock::new(),
             on_resolved: OnceLock::new(),
+            on_superseded: OnceLock::new(),
         }
     }
 
@@ -109,6 +115,23 @@ impl<S: DmSender> Notifier<S> {
     pub fn on_resolved(&self, hook: ResolvedHook) {
         if self.on_resolved.set(hook).is_err() {
             tracing::warn!("a resolution hook is already installed");
+        }
+    }
+
+    /// Installs the hook called once a `write` solver took a dispute over
+    /// from a live session, so the solvers are briefed. Only the first hook
+    /// is kept.
+    pub fn on_superseded(&self, hook: SupersededHook) {
+        if self.on_superseded.set(hook).is_err() {
+            tracing::warn!("a takeover hook is already installed");
+        }
+    }
+
+    /// Lets mediation brief the solvers on a takeover. It sends only what the
+    /// notifier recorded as pending, so calling it for any take is harmless.
+    fn taken_over(&self, dispute_id: &str) {
+        if let Some(hook) = self.on_superseded.get() {
+            hook(dispute_id);
         }
     }
 
@@ -162,6 +185,9 @@ impl<S: DmSender> Notifier<S> {
                 }
             }
             Change::Taken => {
+                // A takeover reads as a first take when Serbero missed its
+                // own `in-progress` revision.
+                self.taken_over(&dispute.dispute_id);
                 let by_serbero = self.taken_by_serbero(&dispute.dispute_id)?;
                 let text = text::taken(&dispute.dispute_id, by_serbero);
                 notify_solvers(
@@ -175,6 +201,7 @@ impl<S: DmSender> Notifier<S> {
                 )
                 .await?;
             }
+            Change::TakenAgain => self.taken_over(&dispute.dispute_id),
             Change::Resolved(status) => {
                 if let Some(hook) = self.on_resolved.get() {
                     let by_parties = dispute_event::resolved_by_parties(status);
@@ -429,6 +456,21 @@ fn end_live_session(
             now,
         },
     )?;
+    // The solver who took it over must see what the parties already told
+    // Serbero. Recorded here, in the same transaction, so it is sent even if
+    // the process stops now; a handed-off session was briefed already.
+    if state == SessionState::Superseded && session.state != SessionState::HandedOff {
+        events::append(
+            conn,
+            &events::NewEvent {
+                dispute_id: &dispute.dispute_id,
+                session_id: Some(&session.session_id),
+                kind: crate::mediation::handoff::BRIEF_PENDING,
+                payload: crate::mediation::handoff::takeover_brief(),
+                now,
+            },
+        )?;
+    }
     tracing::info!(dispute_id = %dispute.dispute_id, session_id = %session.session_id, %state, "session ended");
     Ok(())
 }

@@ -28,9 +28,15 @@ const UPDATE_EVENT: &str = "update_sent";
 
 /// A brief no solver has received yet, recorded before it is sent; the
 /// timer task retries it until a `brief_sent` event closes it.
-pub(super) const BRIEF_PENDING: &str = "brief_pending";
+pub const BRIEF_PENDING: &str = "brief_pending";
 /// Closes a `brief_pending` event (`{"pending": <its id>}`).
 pub(super) const BRIEF_SENT: &str = "brief_sent";
+
+/// The `brief_pending` payload of a takeover's brief, recorded by the
+/// notifier in the transaction that supersedes the session.
+pub fn takeover_brief() -> Value {
+    json!({ "taken_over": true })
+}
 
 /// The last turn's judge reading, when there is one.
 #[derive(Debug, Clone, Copy)]
@@ -156,9 +162,9 @@ impl<S: DmSender> Mediator<S> {
             )
         };
         let ready = self.ready_judge();
-        let brief = match (reading, &ready) {
-            (Some(reading), Some(ready)) => {
-                self.ask_brief(ready, session, reading, subject, now).await
+        let brief = match (reading, &ready, brief_action(subject)) {
+            (Some(reading), Some(ready), Some(action)) => {
+                self.ask_brief(ready, session, reading, action, now).await
             }
             _ => Brief::default(),
         };
@@ -251,15 +257,11 @@ impl<S: DmSender> Mediator<S> {
         ready: &ReadyJudge,
         session: &Session,
         reading: TurnReading<'_>,
-        subject: Subject,
+        action: Action,
         now: i64,
     ) -> Brief {
         let state = reading.state;
         let questions = BriefQuestions::new().for_state(state);
-        let action = match subject {
-            Subject::Handoff(reason) => Action::Handoff(reason),
-            Subject::Guide(path) => Action::Guide(path),
-        };
         // A retry of an undelivered brief reuses the judgment made for it:
         // one brief request per handoff or guidance, however long delivery
         // takes.
@@ -530,6 +532,18 @@ fn lines(messages: &[Message]) -> Vec<Line<'_>> {
             attachments: m.attachments,
         })
         .collect()
+}
+
+/// The judgment a brief is made with: a handoff's or a guidance's own brief
+/// request (`docs/judgments.md` §5). A takeover has none: it is briefed with
+/// the last turn's reading as it stands, so it costs no judge call and its
+/// brief has no selected quotes.
+fn brief_action(subject: Subject) -> Option<Action> {
+    match subject {
+        Subject::Handoff(reason) => Some(Action::Handoff(reason)),
+        Subject::Guide(path) => Some(Action::Guide(path)),
+        Subject::TakenOver => None,
+    }
 }
 
 #[cfg(test)]

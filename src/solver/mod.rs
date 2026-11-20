@@ -20,11 +20,17 @@ pub const MEDIATING: &str = "mediating";
 /// Subject of the "mediation could not start" notice's first line.
 pub const OPENING_FAILED: &str = "mediation could not start";
 
+/// Subject of the brief sent when a `write` solver took a mediated dispute
+/// over before Serbero handed it off.
+pub const TAKEN_OVER: &str = "solver took over";
+
 /// Why the brief is sent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Subject {
     Handoff(HandoffReason),
     Guide(Path),
+    /// A `write` solver took the dispute over from a live session.
+    TakenOver,
 }
 
 /// The order facts Serbero knows; unknown ones are left out.
@@ -102,6 +108,7 @@ impl Subject {
         match self {
             Self::Handoff(reason) => format!("handed off: {}", reason.as_str()),
             Self::Guide(path) => format!("guidance sent: {}", path.as_str()),
+            Self::TakenOver => TAKEN_OVER.to_owned(),
         }
     }
 }

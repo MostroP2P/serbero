@@ -396,7 +396,9 @@ Timers never call Jev. They are pure functions in `src/policy/timers.rs`:
   recipient: a brief (`brief_pending`, reusing the brief already judged
   for it), the handoff notice to each party on its own, guidance (not
   within 2 minutes of the handoff or guidance, which may still be sending
-  them), and a resolved dispute's closing.
+  them), a takeover's brief (its session is superseded, so it is found by
+  its pending event; not within 2 minutes of the takeover), and a resolved
+  dispute's closing.
 - A `flood` handoff shows the solvers the last judged turn's reading; the
   flooding turn itself is not judged.
 - A turn whose session was handed off or ended while the judge worked is

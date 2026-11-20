@@ -277,8 +277,10 @@ prose, so two things are a contract:
 - The message `id` (the `MessageKind` id) is the dispute id.
 - The first line is always `Dispute <dispute_id> · <subject>`, where
   `<subject>` starts with one of: `new`, `unattended`, `taken`, `mediating`,
-  `mediation could not start`, `handed off:`, `guidance sent:`, `transcript`,
-  `new messages since handoff`, `resolved:`. Everything after the first line
+  `mediation could not start`, `handed off:`, `guidance sent:`,
+  `solver took over`, `transcript`, `new messages since handoff`,
+  `resolved:`. `solver took over` is not a prefix of any other subject, nor
+  is any other a prefix of it. Everything after the first line
   is for the solver to read and may change.
 
 ### New dispute / reminder / taken
@@ -311,7 +313,7 @@ Dispute <dispute_id> · mediation could not start
 Serbero took this dispute but could not start mediation. Please take it over; Serbero will not write to the parties.
 ```
 
-### Brief (on handoff or guidance)
+### Brief (on handoff, guidance or takeover)
 
 Rendered from the last turn's facts and the brief request
 ([judgments.md §5](judgments.md#5-brief-request)). Every quote is verbatim.
@@ -346,6 +348,14 @@ Rendering details (`src/solver/mod.rs`):
 
 - A brief sent with guidance starts `Dispute <dispute_id> · guidance sent:
   payment_arrived` (or `payment_not_sent`).
+- A brief sent because a `write` solver took the dispute over before Serbero
+  handed it off starts `Dispute <dispute_id> · solver took over`, and the
+  transcript follows as after a handoff. It is rendered from the last turn's
+  reading without a brief request, so it lacks what that request adds: no
+  selected quotes (none under a party's line, no `First to read`) and no
+  `Reading of the conversation` evidence balance. Before any turn was judged
+  it reads `Automated reading unavailable`. A session already handed off is not
+  briefed again.
 - The transcript starts with `Dispute <dispute_id> · transcript (18 messages,
   times UTC)`. A transcript longer than 30,000 characters is split into
   numbered parts (`…, part 1/2`), so no DM grows past what relays accept.

@@ -431,6 +431,7 @@ async fn script_with(picks: &[(&'static str, (&'static str, f64))], options: Opt
         own_takes: Arc::default(),
         judge: Default::default(),
         finishing: Default::default(),
+        briefing: Default::default(),
     });
     if !options.not_ready {
         mediator.set_ready(ReadyJudge {
@@ -499,6 +500,13 @@ async fn script_with(picks: &[(&'static str, (&'static str, f64))], options: Opt
         .unwrap();
     }
 
+    let briefing = Arc::clone(&mediator);
+    notifier.on_superseded(Box::new(move |dispute_id| {
+        let (mediator, dispute_id) = (Arc::clone(&briefing), dispute_id.to_owned());
+        tokio::spawn(async move {
+            mediator.brief_takeover(&dispute_id, 10_000).await.unwrap();
+        });
+    }));
     let closing = Arc::clone(&mediator);
     notifier.on_resolved(Box::new(move |dispute_id, status, by_parties| {
         let (mediator, dispute_id, status) = (
@@ -2134,4 +2142,211 @@ async fn a_silent_relay_never_delays_dispute_events_while_the_timer_sends() {
         started.elapsed()
     );
     timer.abort();
+}
+
+/// A takeover: a `write` solver took the dispute from Serbero (an
+/// `in-progress` revision newer than the session's opening).
+async fn take_over(script: &Script) {
+    script
+        .notifier
+        .handle_event(&dispute_event(&script.mostro, "in-progress"), 9_001)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn a_takeover_sends_the_solvers_the_brief_and_the_transcript() {
+    let script = script(&[
+        ("buyer_payment", ("says_sent", 0.99)),
+        ("buyer_details", ("yes", 0.99)),
+    ])
+    .await;
+    let mut buyer = buyer_side(&script).await;
+    buyer
+        .say("ya pagué a las 14:10 por mercado pago, ref 8841")
+        .await;
+    assert_eq!(buyer.next_from_serbero().await, en("thanks_waiting"));
+    let judged = script.judge.calls.load(Ordering::SeqCst);
+
+    take_over(&script).await;
+
+    let brief = wait_for_text(&script.outbox, "Dispute d1 · solver took over\n").await;
+    assert!(brief.contains("Buyer — says sent (0.99)"), "{brief}");
+    assert!(
+        !brief.contains("First to read") && !brief.contains("Reading of the conversation"),
+        "what only the brief request adds is left out: {brief}"
+    );
+    let transcript = wait_for_text(&script.outbox, "Dispute d1 · transcript (").await;
+    assert!(
+        transcript.contains("buyer: ya pagué a las 14:10 por mercado pago, ref 8841"),
+        "{transcript}"
+    );
+    assert_eq!(open_briefs(&script), 0, "the brief was delivered");
+    assert_eq!(
+        script.judge.calls.load(Ordering::SeqCst),
+        judged,
+        "the brief reuses the last turn's reading: no brief request"
+    );
+    assert_eq!(
+        buyer.next_within(QUIET).await,
+        None,
+        "nothing to the parties"
+    );
+    let session = sessions::get(script.store.lock().unwrap().conn(), "s1")
+        .unwrap()
+        .unwrap();
+    assert_eq!(session.state, SessionState::Superseded);
+}
+
+#[tokio::test]
+async fn a_takeover_before_any_turn_still_sends_the_transcript() {
+    let script = script(&[]).await;
+
+    take_over(&script).await;
+
+    let brief = wait_for_text(&script.outbox, "Dispute d1 · solver took over\n").await;
+    assert!(brief.contains("Automated reading unavailable"), "{brief}");
+    wait_for_text(&script.outbox, "Dispute d1 · transcript (").await;
+}
+
+#[tokio::test]
+async fn a_takeover_after_a_handoff_sends_nothing_new() {
+    let script = script_with(
+        &[],
+        Options {
+            handed_off: true,
+            ..Options::default()
+        },
+    )
+    .await;
+
+    take_over(&script).await;
+    tokio::time::sleep(QUIET).await;
+
+    assert!(
+        script.outbox.texts().is_empty(),
+        "{:?}",
+        script.outbox.texts()
+    );
+    assert_eq!(open_briefs(&script), 0, "{:?}", event_kinds(&script));
+}
+
+#[tokio::test]
+async fn a_takeover_brief_no_solver_received_is_retried_by_the_timer() {
+    let script = script(&[]).await;
+    script.outbox.fail(true);
+
+    take_over(&script).await;
+    tokio::time::timeout(WAIT, async {
+        while !event_kinds(&script).contains(&"session_superseded".to_owned()) {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+    tokio::time::sleep(QUIET).await;
+
+    assert!(script.outbox.texts().is_empty());
+    assert_eq!(open_briefs(&script), 1, "{:?}", event_kinds(&script));
+    script.outbox.fail(false);
+
+    script.mediator.tick(9_001 + 60).await.unwrap();
+    assert!(
+        script.outbox.texts().is_empty(),
+        "left to the takeover's own send for a while"
+    );
+
+    script.mediator.tick(9_001 + 600).await.unwrap();
+    let texts = script.outbox.texts();
+    assert!(
+        texts[0].starts_with("Dispute d1 · solver took over\n"),
+        "{texts:?}"
+    );
+    assert!(
+        texts[1].starts_with("Dispute d1 · transcript ("),
+        "{texts:?}"
+    );
+    assert_eq!(open_briefs(&script), 0);
+
+    script.mediator.tick(9_001 + 1200).await.unwrap();
+    assert_eq!(script.outbox.texts().len(), 2, "sent once");
+}
+
+fn dispute_event_at(mostro: &Keys, status: &str, at: u64) -> Event {
+    let tags = [
+        vec!["d", "d1"],
+        vec!["s", status],
+        vec!["initiator", "buyer"],
+        vec!["y", "mostro"],
+        vec!["z", "dispute"],
+    ]
+    .into_iter()
+    .map(|t| Tag::parse(t).unwrap());
+    EventBuilder::new(Kind::Custom(38386), "")
+        .tags(tags)
+        .custom_created_at(Timestamp::from_secs(at))
+        .finalize(mostro)
+        .unwrap()
+}
+
+fn takeover_briefs(script: &Script) -> usize {
+    script
+        .outbox
+        .texts()
+        .iter()
+        .filter(|t| t.starts_with("Dispute d1 · solver took over\n"))
+        .count()
+}
+
+/// Found by the independent review of #82: a second `in-progress`
+/// revision while the first takeover brief is still being sent.
+#[tokio::test]
+async fn a_takeover_brief_is_sent_once_when_two_revisions_arrive_together() {
+    let script = script(&[]).await;
+    *script.outbox.stall.lock().unwrap() = Duration::from_millis(600);
+    take_over(&script).await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    script
+        .notifier
+        .handle_event(
+            &dispute_event_at(&script.mostro, "in-progress", 9_100),
+            9_101,
+        )
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_secs(4)).await;
+
+    assert_eq!(takeover_briefs(&script), 1, "{:?}", event_kinds(&script));
+    assert_eq!(open_briefs(&script), 0);
+}
+
+/// Found by the independent review of #82: a later `brief_sent` of another
+/// brief must not hide the takeover's pending one from the retry.
+#[tokio::test]
+async fn a_takeover_brief_is_retried_even_after_another_brief_got_through() {
+    let script = script(&[]).await;
+    {
+        let store = script.store.lock().unwrap();
+        events::append(
+            store.conn(),
+            &events::NewEvent {
+                dispute_id: "d1",
+                session_id: Some("s1"),
+                kind: "brief_pending",
+                payload: serde_json::json!({ "path": "payment_arrived" }),
+                now: 8_000,
+            },
+        )
+        .unwrap();
+    }
+    script.outbox.fail_on(Some("solver took over"));
+    take_over(&script).await;
+    wait_for_text(&script.outbox, "Dispute d1 · guidance sent").await;
+    tokio::time::sleep(QUIET).await;
+    script.outbox.fail_on(None);
+
+    script.mediator.tick(9_001 + 600).await.unwrap();
+
+    assert_eq!(takeover_briefs(&script), 1, "{:?}", event_kinds(&script));
+    assert_eq!(open_briefs(&script), 0);
 }

@@ -70,8 +70,9 @@ pub fn clocks(session: &Session, messages: &[Message], history: &[Event], now: i
 pub(super) const RETRY_GRACE_SECS: i64 = 120;
 
 /// The session's briefs no solver received yet: each `brief_pending` event
-/// id with what it was about, unless a `brief_sent` event covers it.
-fn pending_briefs(session: &Session, history: &[Event]) -> Vec<(i64, Subject)> {
+/// id with what it was about and when it was recorded, unless a
+/// `brief_sent` event covers it.
+fn pending_briefs(session: &Session, history: &[Event]) -> Vec<(i64, Subject, i64)> {
     let ours = || {
         history
             .iter()
@@ -85,10 +86,12 @@ fn pending_briefs(session: &Session, history: &[Event]) -> Vec<(i64, Subject)> {
         .filter_map(|e| {
             let subject = if let Some(reason) = e.payload["reason"].as_str() {
                 Subject::Handoff(HandoffReason::parse(reason)?)
+            } else if e.payload["taken_over"].as_bool() == Some(true) {
+                Subject::TakenOver
             } else {
                 Subject::Guide(Path::parse(e.payload["path"].as_str()?)?)
             };
-            Some((e.id, subject))
+            Some((e.id, subject, e.created_at))
         })
         .collect()
 }
@@ -148,6 +151,95 @@ impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
         }
         self.finish_pending(now - FINISH_LOOKBACK_SECS, now).await;
         self.retry_opening_notices(now).await;
+        self.retry_takeover_briefs(now).await;
+        Ok(())
+    }
+
+    /// Briefs the solvers on a dispute a `write` solver took over from a
+    /// live session (`docs/spec.md` §6): the brief and the transcript the
+    /// notifier recorded as pending when it superseded the session. A brief
+    /// no solver received stays pending for the timer task.
+    pub async fn brief_takeover(&self, dispute_id: &str, now: i64) -> Result<()> {
+        let session = {
+            let store = self.lock_store()?;
+            sessions::latest_for_dispute(store.conn(), dispute_id)?
+        };
+        match session {
+            Some(session) if session.state == SessionState::Superseded => {
+                self.send_pending_briefs(&session, now, 0).await
+            }
+            _ => Ok(()),
+        }
+    }
+
+    /// Resends the briefs of disputes a solver took over that no solver
+    /// received: their sessions are superseded, so the pass over live
+    /// sessions never sees them. Each is left to the takeover's own send
+    /// for `RETRY_GRACE_SECS` first.
+    async fn retry_takeover_briefs(&self, now: i64) {
+        let superseded = match self.lock_store().and_then(|store| {
+            // No age limit: a brief stays pending until a solver got it.
+            let ids = events::sessions_with_open_briefs(store.conn(), BRIEF_PENDING, BRIEF_SENT)?;
+            let mut superseded = Vec::new();
+            for session_id in ids {
+                if let Some(session) = sessions::get(store.conn(), &session_id)?
+                    && session.state == SessionState::Superseded
+                {
+                    superseded.push(session);
+                }
+            }
+            Ok(superseded)
+        }) {
+            Ok(superseded) => superseded,
+            Err(e) => {
+                tracing::error!(error = %e, "cannot list pending takeover briefs");
+                return;
+            }
+        };
+        for session in superseded {
+            if let Err(e) = self
+                .send_pending_briefs(&session, now, RETRY_GRACE_SECS)
+                .await
+            {
+                tracing::warn!(session_id = %session.session_id, error = %e, "takeover brief not sent; retried on the next tick");
+            }
+        }
+    }
+
+    /// Sends the session's pending briefs recorded at least `min_age`
+    /// seconds ago, each with the last turn's reading, and marks the ones a
+    /// solver received.
+    pub(super) async fn send_pending_briefs(
+        &self,
+        session: &Session,
+        now: i64,
+        min_age: i64,
+    ) -> Result<()> {
+        // History is read under the lock, so a brief another caller has just
+        // delivered is seen as sent.
+        let _briefing = self.briefing.lock().await;
+        let (messages, history) = {
+            let store = self.lock_store()?;
+            (
+                messages::list_for_session(store.conn(), &session.session_id)?,
+                events::list_for_dispute(store.conn(), &session.dispute_id)?,
+            )
+        };
+        for (pending, subject, recorded_at) in pending_briefs(session, &history) {
+            if now - recorded_at < min_age {
+                continue;
+            }
+            let last = self.last_reading(session, &messages)?;
+            let reading = last.as_ref().map(|l| TurnReading {
+                state: &l.state,
+                answers: &l.answers,
+                facts: &l.facts,
+                last_message_id: l.last_message_id,
+            });
+            if self.brief_solvers(session, subject, reading, now).await? > 0 {
+                self.brief_delivered(session, pending, now)?;
+            }
+        }
         Ok(())
     }
 
@@ -224,18 +316,7 @@ impl<S: DmSender + Send + Sync + 'static> Mediator<S> {
         if started.is_some_and(|at| now - at < RETRY_GRACE_SECS) {
             return Ok(());
         }
-        for (pending, subject) in pending_briefs(session, &history) {
-            let last = self.last_reading(session, &messages)?;
-            let reading = last.as_ref().map(|l| TurnReading {
-                state: &l.state,
-                answers: &l.answers,
-                facts: &l.facts,
-                last_message_id: l.last_message_id,
-            });
-            if self.brief_solvers(session, subject, reading, now).await? > 0 {
-                self.brief_delivered(session, pending, now)?;
-            }
-        }
+        self.send_pending_briefs(session, now, 0).await?;
         // An opening that failed never reached the parties: Serbero writes
         // nothing more to them (`docs/spec.md` §7.2).
         let opening_failed =

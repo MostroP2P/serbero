@@ -166,6 +166,27 @@ pub fn still_pending(
     rows.map(|r| r.map_err(Into::into)).collect()
 }
 
+/// Sessions with a `pending` event that no `done` event names by its id
+/// (`{"pending": <id>}`), oldest first. Unlike [`still_pending`], another
+/// brief delivered later in the same dispute does not hide one.
+pub fn sessions_with_open_briefs(
+    conn: &Connection,
+    pending: &str,
+    done: &str,
+) -> Result<Vec<String>> {
+    let mut stmt = conn.prepare(
+        "SELECT p.session_id FROM events p
+         WHERE p.kind = ?1 AND p.session_id IS NOT NULL
+           AND NOT EXISTS (SELECT 1 FROM events d
+                           WHERE d.kind = ?2 AND d.session_id = p.session_id
+                             AND json_extract(d.payload_json, '$.pending') = p.id)
+         GROUP BY p.session_id
+         ORDER BY min(p.id)",
+    )?;
+    let rows = stmt.query_map(params![pending, done], |row| row.get(0))?;
+    rows.map(|r| r.map_err(Into::into)).collect()
+}
+
 /// A mediated dispute that reached its final status.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Resolution {
